@@ -1,6 +1,6 @@
 const gdt = @import("gdt.zig");
 
-const GateDesc = packed struct {
+const IDTDesc = packed struct {
     offset_1: u16,
     selector: u16,
     ist: u8,
@@ -10,16 +10,16 @@ const GateDesc = packed struct {
     zero: u32
 };
 
-const IDTDesc = packed struct {
+const IDTR = packed struct {
     limit: u16,
-    base: *[256]GateDesc
+    base: *[256]IDTDesc
 };
 
 var idt: [256]IDTEntry = undefined;
 
-const idtr = IDTDesc {
+const idtr = IDTR {
     .limit = @as(u16, @sizeOf(@TypeOf(idt)) - 1),
-    .base  = &idt,
+    .base  = &idt
 };
 
 pub fn init() void {
