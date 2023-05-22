@@ -37,5 +37,5 @@ pub fn set_gate(n: u8, type_attr: u8, offset: u64) void {
     idt[n].type_attr = type_attr;
     idt[n].ist = 0;
     idt[n].zero = 0;
-    idt[n].selector = gdt.KERNEL_CODE;
+    idt[n].selector = gdt.kernel_code;
 }
