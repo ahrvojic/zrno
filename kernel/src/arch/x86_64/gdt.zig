@@ -1,21 +1,24 @@
 // GDT long mode offsets
-pub const kernel_code_offset = 0x08;
-pub const kernel_data_offset = 0x10;
-pub const user_code_offset = 0x18;
-pub const user_data_offset = 0x20;
-pub const tss_offset = 0x28;
+pub const kernel_code = 0x08;
+pub const kernel_data = 0x10;
+pub const user_code   = 0x18;
+pub const user_data   = 0x20;
+pub const tss         = 0x28;
 
 // Access byte:
-// | P | DPL | S | E | DC | RW | A |
-const kernel_code_access = 0x9A;
-const kernel_data_access = 0x92;
-const user_code_access = 0xFA;
-const user_data_access = 0xF2;
-const tss_access = 0x89;
+// | P | DPL(2) | S | E | DC | RW | A |
+const kernel_code_access = 0b10011010;
+const kernel_data_access = 0b10010010;
+const user_code_access   = 0b11111010;
+const user_data_access   = 0b11110010;
+
+// System access byte:
+// | P | DPL(2) | S | Type(4) |
+const tss_access = 0b10001001;
 
 // Flags byte:
-// | G | DB | L | Reserved |
-const lm_flags = 0xA;
+// | G | DB | L | - | - | - | - | - |
+const lm_flags = 0b1010000;
 
 const GDTDesc = packed struct {
     limit: u16,
@@ -44,12 +47,12 @@ fn make_desc(base: u32, limit: u16, access: u8, flags: u8) void {
 }
 
 var gdt align(4) = []GDTDesc {
-    make_desc(0, 0, 0, 0),
+    make_desc(0, 0, 0, 0), // null descriptor
     make_desc(0, 0xFFFF, kernel_code_access, lm_flags),
     make_desc(0, 0xFFFF, kernel_data_access, lm_flags),
     make_desc(0, 0xFFFF, user_code_access, lm_flags),
     make_desc(0, 0xFFFF, user_data_access, lm_flags),
-    make_desc(0, 0xFFFF, tss_access, 0) // TODO: Set TSS base and limit
+    make_desc(0, 0, 0, 0) // TSS placeholder
 };
 
 var gdtr = GDTR {
@@ -58,5 +61,6 @@ var gdtr = GDTR {
 };
 
 pub fn init() void {
-    // TODO
+    // TODO: Load GDT
+    // TODO: Load TSS
 }
