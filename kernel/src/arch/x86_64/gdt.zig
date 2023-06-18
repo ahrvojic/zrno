@@ -61,6 +61,7 @@ var gdtr = GDTR {
 };
 
 pub fn init() void {
-    // TODO: Load GDT
+    load_gdt(&gdtr);
+
     // TODO: Load TSS
 }
