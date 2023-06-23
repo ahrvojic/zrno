@@ -32,7 +32,7 @@ export const idtr = IDTR {
     .base  = &idt
 };
 
-extern fn load_idt() void;
+extern fn load_idt() void; // see idt.s
 
 pub fn init() void {
     load_idt();
