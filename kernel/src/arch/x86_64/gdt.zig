@@ -55,13 +55,15 @@ var gdt align(4) = []GDTDesc {
     make_desc(0, 0, 0, 0) // TSS placeholder
 };
 
-var gdtr = GDTR {
+export const gdtr = GDTR {
     .limit = @as(u16, @sizeOf(@TypeOf(gdt)) - 1),
     .base = &gdt[0]
 };
 
+extern fn load_gdt() void;
+
 pub fn init() void {
-    load_gdt(&gdtr);
+    load_gdt();
 
     // TODO: Load TSS
 }
