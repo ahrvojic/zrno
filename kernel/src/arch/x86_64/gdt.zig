@@ -60,7 +60,7 @@ export const gdtr = GDTR {
     .base = &gdt[0]
 };
 
-extern fn load_gdt() void;
+extern fn load_gdt() void; // see gdt.s
 
 pub fn init() void {
     load_gdt();
