@@ -1,6 +1,7 @@
+.global load_gdt
 .type load_gdt, @function
 load_gdt:
-    lgdt (%rdi) // first parameter is gdtr struct address
+    lgdt (gdtr)
 
 .reload_segments:
     pushq $0x08 // kernel code segment
