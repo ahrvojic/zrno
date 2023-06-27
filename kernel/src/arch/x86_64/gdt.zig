@@ -1,9 +1,9 @@
-// GDT long mode offsets
-pub const kernel_code = 0x08;
-pub const kernel_data = 0x10;
-pub const user_code   = 0x18;
-pub const user_data   = 0x20;
-pub const tss         = 0x28;
+// GDT long mode segments
+pub const kernel_code_seg = 0x08;
+pub const kernel_data_seg = 0x10;
+pub const user_code_seg   = 0x18;
+pub const user_data_seg   = 0x20;
+pub const tss_seg         = 0x28;
 
 // Access byte:
 // | P | DPL(2) | S | E | DC | RW | A |
@@ -17,10 +17,11 @@ const user_data_access   = 0b11110010;
 const tss_access = 0b10001001;
 
 // Flags byte:
-// | G | DB | L | - | - | - | - | - |
-const lm_flags = 0b1010000;
+// | G | DB | L | Reserved(5) |
+const seg_flags = 0b1010000;
+const tss_flags = 0b0010000;
 
-const GDTDesc = packed struct {
+const GDTEntry = packed struct {
     limit: u16,
     base_1: u16,
     base_2: u8,
@@ -32,38 +33,65 @@ const GDTDesc = packed struct {
 
 const GDTR = packed struct {
     limit: u16,
-    base: *const GDTDesc
+    base: *const GDTEntry
+};
+
+const TSS = packed struct {
+    limit_1: u16,
+    base_1: u16,
+    base_2: u8,
+    access: u8,
+    limit_2: u4,
+    flags: u4,
+    base_3: u8,
+    base_4: u32,
+    zero: u32
 };
 
 fn make_desc(base: u32, limit: u16, access: u8, flags: u8) void {
-    return GDTDesc {
-        .limit = limit,
+    return GDTEntry {
         .base_1 = @truncate(u16, base),
         .base_2 = @truncate(u8, base >> 16),
         .base_3 = @truncate(u8, base >> 24),
+        .limit  = limit,
         .access = access,
-        .flags = flags
+        .flags  = flags,
+        .zero   = 0
     };
 }
 
-var gdt align(4) = []GDTDesc {
+const gdt align(8) = []GDTEntry {
     make_desc(0, 0, 0, 0), // null descriptor
-    make_desc(0, 0xFFFF, kernel_code_access, lm_flags),
-    make_desc(0, 0xFFFF, kernel_data_access, lm_flags),
-    make_desc(0, 0xFFFF, user_code_access, lm_flags),
-    make_desc(0, 0xFFFF, user_data_access, lm_flags),
-    make_desc(0, 0, 0, 0) // TSS placeholder
+    make_desc(0, 0xFFFF, kernel_code_access, seg_flags),
+    make_desc(0, 0xFFFF, kernel_data_access, seg_flags),
+    make_desc(0, 0xFFFF, user_code_access, seg_flags),
+    make_desc(0, 0xFFFF, user_data_access, seg_flags)
 };
 
 export const gdtr = GDTR {
     .limit = @as(u16, @sizeOf(@TypeOf(gdt)) - 1),
-    .base = &gdt[0]
+    .base  = &gdt[0]
 };
 
-extern fn load_gdt() void; // see gdt.s
+const tss_base = @ptrToInt(&tss_seg);
+const tss_limit = @sizeOf(TSS);
+export const tss_seg align(8) = TSS {
+    .base_1  = @truncate(u16, tss_base),
+    .base_2  = @truncate(u8, tss_base >> 16),
+    .base_3  = @truncate(u8, tss_base >> 24),
+    .base_4  = @truncate(u32, tss_base >> 32),
+    .limit_1 = @truncate(u16, tss_limit),
+    .limit_2 = @truncate(u4, tss_limit >> 16),
+    .access  = tss_access,
+    .flags   = tss_flags,
+    .zero    = 0
+};
+
+// See gdt.s
+extern fn load_gdt() void;
+extern fn load_tss() void;
 
 pub fn init() void {
     load_gdt();
-
-    // TODO: Load TSS
+    load_tss();
 }
