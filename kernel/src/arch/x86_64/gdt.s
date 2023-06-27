@@ -19,5 +19,5 @@ load_gdt:
 .global load_tss
 .type load_tss, @function
 load_tss:
-    ltr (tss_seg)
+    ltr tss_seg
     ret
