@@ -1,6 +1,6 @@
 const gdt = @import("gdt.zig");
 
-const IDTDesc = packed struct {
+const IDTEntry = packed struct {
     offset_1: u16,
     selector: u16,
     ist: u8,
@@ -12,7 +12,7 @@ const IDTDesc = packed struct {
 
 const IDTR = packed struct {
     limit: u16,
-    base: *[256]IDTDesc
+    base: *[256]IDTEntry
 };
 
 var idt: [256]IDTEntry = undefined;
@@ -21,10 +21,10 @@ pub fn set_gate(n: u8, type_attr: u8, offset: u64) void {
     idt[n].offset_1 = @truncate(u16, offset);
     idt[n].offset_2 = @truncate(u16, offset >> 16);
     idt[n].offset_3 = @truncate(u32, offset >> 32);
-    idt[n].type_attr = type_attr;
+    idt[n].selector = gdt.kernel_code_seg;
     idt[n].ist = 0;
+    idt[n].type_attr = type_attr;
     idt[n].zero = 0;
-    idt[n].selector = gdt.kernel_code;
 }
 
 export const idtr = IDTR {
@@ -32,7 +32,8 @@ export const idtr = IDTR {
     .base  = &idt
 };
 
-extern fn load_idt() void; // see idt.s
+// See idt.s
+extern fn load_idt() void;
 
 pub fn init() void {
     load_idt();
