@@ -6,29 +6,30 @@ pub const user_data_seg   = 0x20;
 pub const tss_seg         = 0x28;
 
 // Access byte:
-// | P | DPL(2) | S | E | DC | RW | A |
+// | P | DPL(2) | S | 1 | C | R | A |
 const kernel_code_access = 0b10011010;
-const kernel_data_access = 0b10010010;
 const user_code_access   = 0b11111010;
+// | P | DPL(2) | S | 0 | E | W | A |
+const kernel_data_access = 0b10010010;
 const user_data_access   = 0b11110010;
 
 // System access byte:
 // | P | DPL(2) | S | Type(4) |
 const tss_access = 0b10001001;
 
-// Flags byte:
-// | G | DB | L | Reserved(5) |
-const seg_flags = 0b1010000;
-const tss_flags = 0b0010000;
+// Flags nibble:
+// | G | DB | L | AVL |
+const seg_flags = 0b1010;
+const tss_flags = 0b0010;
 
 const GDTEntry = packed struct {
-    limit: u16,
+    limit_1: u16,
     base_1: u16,
     base_2: u8,
     access: u8,
-    flags: u8,
-    base_3: u8,
-    zero: u32
+    flags: u4,
+    limit_2: u4,
+    base_3: u8
 };
 
 const GDTR = packed struct {
@@ -48,15 +49,15 @@ const TSS = packed struct {
     zero: u32
 };
 
-fn make_desc(base: u32, limit: u16, access: u8, flags: u8) void {
+fn make_desc(base: u32, limit: u32, access: u8, flags: u8) void {
     return GDTEntry {
-        .base_1 = @truncate(u16, base),
-        .base_2 = @truncate(u8, base >> 16),
-        .base_3 = @truncate(u8, base >> 24),
-        .limit  = limit,
-        .access = access,
-        .flags  = flags,
-        .zero   = 0
+        .base_1  = @truncate(u16, base),
+        .base_2  = @truncate(u8, base >> 16),
+        .base_3  = @truncate(u8, base >> 24),
+        .limit_1 = @truncate(u16, limit),
+        .limit_2 = @truncate(u4, limit >> 16),
+        .access  = access,
+        .flags   = flags
     };
 }
 
