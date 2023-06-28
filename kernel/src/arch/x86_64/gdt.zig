@@ -119,7 +119,7 @@ export const gdtr = GDTR {
     .base = &gdt[0]
 };
 
-var tss align(8) = TSS {
+var tss = TSS {
     .reserved_1 = 0,
     .reserved_2 = 0,
     .reserved_3 = 0,
