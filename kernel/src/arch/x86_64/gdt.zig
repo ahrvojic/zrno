@@ -38,6 +38,36 @@ const GDTR = packed struct {
 };
 
 const TSS = packed struct {
+    reserved_1: u32,
+    rsp0l: u32,
+    rsp0h: u32,
+    rsp1l: u32,
+    rsp1h: u32,
+    rsp2l: u32,
+    rsp2h: u32,
+    reserved_2: u32,
+    reserved_3: u32,
+    ist1l: u32,
+    ist1h: u32,
+    ist2l: u32,
+    ist2h: u32,
+    ist3l: u32,
+    ist3h: u32,
+    ist4l: u32,
+    ist4h: u32,
+    ist5l: u32,
+    ist5h: u32,
+    ist6l: u32,
+    ist6h: u32,
+    ist7l: u32,
+    ist7h: u32,
+    reserved_4: u32,
+    reserved_5: u32,
+    reserved_6: u16,
+    io_map_base_addr: u16
+};
+
+const TSSEntry = packed struct {
     limit_1: u16,
     base_1: u16,
     base_2: u8,
@@ -46,46 +76,56 @@ const TSS = packed struct {
     flags: u4,
     base_3: u8,
     base_4: u32,
-    zero: u32
+    reserved: u32
 };
 
-fn make_desc(base: u32, limit: u32, access: u8, flags: u8) void {
+fn make_gdt_entry(base: u32, limit: u32, access: u8, flags: u8) void {
     return GDTEntry {
-        .base_1  = @truncate(u16, base),
-        .base_2  = @truncate(u8, base >> 16),
-        .base_3  = @truncate(u8, base >> 24),
+        .base_1 = @truncate(u16, base),
+        .base_2 = @truncate(u8, base >> 16),
+        .base_3 = @truncate(u8, base >> 24),
         .limit_1 = @truncate(u16, limit),
         .limit_2 = @truncate(u4, limit >> 16),
-        .access  = access,
-        .flags   = flags
+        .access = access,
+        .flags = flags
     };
 }
 
-const gdt align(8) = []GDTEntry {
-    make_desc(0, 0, 0, 0), // null descriptor
-    make_desc(0, 0xFFFF, kernel_code_access, seg_flags),
-    make_desc(0, 0xFFFF, kernel_data_access, seg_flags),
-    make_desc(0, 0xFFFF, user_code_access, seg_flags),
-    make_desc(0, 0xFFFF, user_data_access, seg_flags)
+fn make_tss_entry(base: u64, limit: u32, access: u8, flags: u8) void {
+    return TSSEntry {
+        .base_1 = @truncate(u16, base),
+        .base_2 = @truncate(u8, base >> 16),
+        .base_3 = @truncate(u8, base >> 24),
+        .base_4 = @truncate(u32, base >> 32),
+        .limit_1 = @truncate(u16, limit),
+        .limit_2 = @truncate(u4, limit >> 16),
+        .access = access,
+        .flags = flags,
+        .reserved = 0
+    };
+}
+
+var gdt align(8) = []GDTEntry {
+    make_gdt_entry(0, 0, 0, 0), // null descriptor
+    make_gdt_entry(0, 0xFFFF, kernel_code_access, seg_flags),
+    make_gdt_entry(0, 0xFFFF, kernel_data_access, seg_flags),
+    make_gdt_entry(0, 0xFFFF, user_code_access, seg_flags),
+    make_gdt_entry(0, 0xFFFF, user_data_access, seg_flags),
+    make_gdt_entry(0, 0, 0, 0) // TSS placeholder
 };
 
 export const gdtr = GDTR {
     .limit = @as(u16, @sizeOf(@TypeOf(gdt)) - 1),
-    .base  = &gdt[0]
+    .base = &gdt[0]
 };
 
-const tss_base = @ptrToInt(&tss_seg);
-const tss_limit = @sizeOf(TSS);
-export const tss_seg align(8) = TSS {
-    .base_1  = @truncate(u16, tss_base),
-    .base_2  = @truncate(u8, tss_base >> 16),
-    .base_3  = @truncate(u8, tss_base >> 24),
-    .base_4  = @truncate(u32, tss_base >> 32),
-    .limit_1 = @truncate(u16, tss_limit),
-    .limit_2 = @truncate(u4, tss_limit >> 16),
-    .access  = tss_access,
-    .flags   = tss_flags,
-    .zero    = 0
+var tss align(8) = TSS {
+    .reserved_1 = 0,
+    .reserved_2 = 0,
+    .reserved_3 = 0,
+    .reserved_4 = 0,
+    .reserved_5 = 0,
+    .reserved_6 = 0
 };
 
 // See gdt.s
@@ -94,5 +134,8 @@ extern fn load_tss() void;
 
 pub fn init() void {
     load_gdt();
+
+    // Replace TSS placeholder in GDT
+    gdt[5] = make_tss_entry(@ptrToInt(&tss), @sizeOf(TSS), tss_access, tss_flags);
     load_tss();
 }
