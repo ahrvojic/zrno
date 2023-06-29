@@ -27,14 +27,14 @@ pub fn set_gate(n: u8, type_attr: u8, offset: u64) void {
     idt[n].zero = 0;
 }
 
-export const idtr = IDTR {
+const idtr = IDTR {
     .limit = @as(u16, @sizeOf(@TypeOf(idt)) - 1),
     .base  = &idt
 };
 
 // See idt.s
-extern fn load_idt() void;
+extern fn load_idt(idtr: *const IDTR) void;
 
 pub fn init() void {
-    load_idt();
+    load_idt(&idtr);
 }
