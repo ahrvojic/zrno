@@ -1,5 +1,7 @@
 const limine = @import("limine");
 const std = @import("std");
+const gdt = @import("arch/x86_64/gdt.zig");
+const idt = @import("arch/x86_64/idt.zig");
 
 // The Limine requests can be placed anywhere, but it is important that
 // the compiler does not optimise them away, so, usually, they should
@@ -42,6 +44,9 @@ export fn _start() callconv(.C) noreturn {
             @as(*u32, @ptrCast(@alignCast(framebuffer.address + pixel_offset))).* = 0xFFFFFFFF;
         }
     }
+
+    gdt.init();
+    idt.init();
 
     // We're done, just hang...
     done();
