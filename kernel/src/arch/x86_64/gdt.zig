@@ -39,32 +39,16 @@ const GDTR = packed struct {
 
 const TSS = packed struct {
     reserved_1: u32,
-    rsp0l: u32,
-    rsp0h: u32,
-    rsp1l: u32,
-    rsp1h: u32,
-    rsp2l: u32,
-    rsp2h: u32,
+    rsp0: u64,
+    rsp1: u64,
+    rsp2: u64,
     reserved_2: u32,
     reserved_3: u32,
-    ist1l: u32,
-    ist1h: u32,
-    ist2l: u32,
-    ist2h: u32,
-    ist3l: u32,
-    ist3h: u32,
-    ist4l: u32,
-    ist4h: u32,
-    ist5l: u32,
-    ist5h: u32,
-    ist6l: u32,
-    ist6h: u32,
-    ist7l: u32,
-    ist7h: u32,
+    ist: [7]u64,
     reserved_4: u32,
     reserved_5: u32,
     reserved_6: u16,
-    io_map_base_addr: u16
+    io_base: u16
 };
 
 const TSSEntry = packed struct {
@@ -120,12 +104,7 @@ export const gdtr = GDTR {
 };
 
 var tss = TSS {
-    .reserved_1 = 0,
-    .reserved_2 = 0,
-    .reserved_3 = 0,
-    .reserved_4 = 0,
-    .reserved_5 = 0,
-    .reserved_6 = 0
+    .io_base = @sizeOf(tss)
 };
 
 // See gdt.s
@@ -136,6 +115,6 @@ pub fn init() void {
     load_gdt();
 
     // Replace TSS placeholder in GDT
-    gdt[5] = make_tss_entry(@ptrToInt(&tss), @sizeOf(TSS), tss_access, tss_flags);
+    gdt[5] = make_tss_entry(@ptrToInt(&tss), @as(u32, @sizeOf(TSS) - 1), tss_access, tss_flags);
     load_tss();
 }
