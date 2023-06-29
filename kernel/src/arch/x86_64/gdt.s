@@ -1,7 +1,7 @@
 .global load_gdt
 .type load_gdt, @function
 load_gdt:
-    lgdt (gdtr)
+    lgdt (%rdi)
 .reload_segments:
     pushq kernel_code_seg
     leaq .reload_cs, %rax
