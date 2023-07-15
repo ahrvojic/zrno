@@ -71,11 +71,11 @@ const TSSEntry = packed struct {
 
 fn make_gdt_entry(base: u32, limit: u32, access: u8, flags: u4) GDTEntry {
     return GDTEntry {
-        .base_1 = @truncate(u16, base),
-        .base_2 = @truncate(u8, base >> 16),
-        .base_3 = @truncate(u8, base >> 24),
-        .limit_1 = @truncate(u16, limit),
-        .limit_2 = @truncate(u4, limit >> 16),
+        .base_1 = @truncate(base),
+        .base_2 = @truncate(base >> 16),
+        .base_3 = @truncate(base >> 24),
+        .limit_1 = @truncate(limit),
+        .limit_2 = @truncate(limit >> 16),
         .access = access,
         .flags = flags
     };
@@ -83,12 +83,12 @@ fn make_gdt_entry(base: u32, limit: u32, access: u8, flags: u4) GDTEntry {
 
 fn make_tss_entry(base: u64, limit: u32, access: u8, flags: u4) TSSEntry {
     return TSSEntry {
-        .base_1 = @truncate(u16, base),
-        .base_2 = @truncate(u8, base >> 16),
-        .base_3 = @truncate(u8, base >> 24),
-        .base_4 = @truncate(u32, base >> 32),
-        .limit_1 = @truncate(u16, limit),
-        .limit_2 = @truncate(u4, limit >> 16),
+        .base_1 = @truncate(base),
+        .base_2 = @truncate(base >> 16),
+        .base_3 = @truncate(base >> 24),
+        .base_4 = @truncate(base >> 32),
+        .limit_1 = @truncate(limit),
+        .limit_2 = @truncate(limit >> 16),
         .access = access,
         .flags = flags,
         .reserved = 0
@@ -97,16 +97,16 @@ fn make_tss_entry(base: u64, limit: u32, access: u8, flags: u4) TSSEntry {
 
 var gdt: [7]u64 align(8) = .{
     0, // null descriptor
-    @bitCast(u64, make_gdt_entry(0, 0xFFFF, kernel_code_access, seg_flags)),
-    @bitCast(u64, make_gdt_entry(0, 0xFFFF, kernel_data_access, seg_flags)),
-    @bitCast(u64, make_gdt_entry(0, 0xFFFF, user_code_access, seg_flags)),
-    @bitCast(u64, make_gdt_entry(0, 0xFFFF, user_data_access, seg_flags)),
+    @as(u64, @bitCast(make_gdt_entry(0, 0xFFFF, kernel_code_access, seg_flags))),
+    @as(u64, @bitCast(make_gdt_entry(0, 0xFFFF, kernel_data_access, seg_flags))),
+    @as(u64, @bitCast(make_gdt_entry(0, 0xFFFF, user_code_access, seg_flags))),
+    @as(u64, @bitCast(make_gdt_entry(0, 0xFFFF, user_data_access, seg_flags))),
     0, // TSS low
     0, // TSS high
 };
 
 const gdtr = GDTR {
-    .limit = @as(u16, @sizeOf(@TypeOf(gdt)) - 1),
+    .limit = @sizeOf(@TypeOf(gdt)) - 1,
     .base = 0 // TODO
 };
 
@@ -136,14 +136,15 @@ extern fn load_tss() void;
 
 pub fn init() void {
     const tss_entry = make_tss_entry(
-        @ptrToInt(&tss),
-        @as(u32, @sizeOf(TSS) - 1),
+        @intFromPtr(&tss),
+        @sizeOf(TSS) - 1,
         tss_access,
-        tss_flags);
+        tss_flags
+    );
 
-    const tss_entry_bits = @bitCast([2]u64, tss_entry);
-    @ptrCast(*u64, &gdt[5]).* = tss_entry_bits[0];
-    @ptrCast(*u64, &gdt[6]).* = tss_entry_bits[1];
+    const tss_entry_bits: [2]u64 = @bitCast(tss_entry);
+    gdt[5] = tss_entry_bits[0];
+    gdt[6] = tss_entry_bits[1];
 
     load_gdt(&gdtr);
     load_tss();
