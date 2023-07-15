@@ -34,7 +34,7 @@ const GDTEntry = packed struct {
 
 const GDTR = packed struct {
     limit: u16,
-    base: *const GDTEntry
+    base: u64
 };
 
 const TSS = packed struct {
@@ -95,18 +95,19 @@ fn make_tss_entry(base: u64, limit: u32, access: u8, flags: u4) TSSEntry {
     };
 }
 
-var gdt align(8) = [_]GDTEntry {
-    make_gdt_entry(0, 0, 0, 0), // null descriptor
-    make_gdt_entry(0, 0xFFFF, kernel_code_access, seg_flags),
-    make_gdt_entry(0, 0xFFFF, kernel_data_access, seg_flags),
-    make_gdt_entry(0, 0xFFFF, user_code_access, seg_flags),
-    make_gdt_entry(0, 0xFFFF, user_data_access, seg_flags),
-    make_gdt_entry(0, 0, 0, 0) // TSS placeholder
+var gdt: [7]u64 align(8) = .{
+    0, // null descriptor
+    @bitCast(u64, make_gdt_entry(0, 0xFFFF, kernel_code_access, seg_flags)),
+    @bitCast(u64, make_gdt_entry(0, 0xFFFF, kernel_data_access, seg_flags)),
+    @bitCast(u64, make_gdt_entry(0, 0xFFFF, user_code_access, seg_flags)),
+    @bitCast(u64, make_gdt_entry(0, 0xFFFF, user_data_access, seg_flags)),
+    0, // TSS low
+    0, // TSS high
 };
 
 const gdtr = GDTR {
     .limit = @as(u16, @sizeOf(@TypeOf(gdt)) - 1),
-    .base = &gdt[0]
+    .base = 0 // TODO
 };
 
 var tss = TSS {
@@ -134,9 +135,16 @@ extern fn load_gdt(gdtr: *const GDTR) void;
 extern fn load_tss() void;
 
 pub fn init() void {
-    load_gdt(&gdtr);
+    const tss_entry = make_tss_entry(
+        @ptrToInt(&tss),
+        @as(u32, @sizeOf(TSS) - 1),
+        tss_access,
+        tss_flags);
 
-    // Replace TSS placeholder in GDT
-    gdt[5] = make_tss_entry(@ptrToInt(&tss), @as(u32, @sizeOf(TSS) - 1), tss_access, tss_flags);
+    const tss_entry_bits = @bitCast([2]u64, tss_entry);
+    @ptrCast(*u64, &gdt[5]).* = tss_entry_bits[0];
+    @ptrCast(*u64, &gdt[6]).* = tss_entry_bits[1];
+
+    load_gdt(&gdtr);
     load_tss();
 }
