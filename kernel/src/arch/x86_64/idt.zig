@@ -18,9 +18,9 @@ const IDTR = packed struct {
 var idt: [256]IDTEntry = undefined;
 
 pub fn set_gate(n: u8, type_attr: u8, offset: u64) void {
-    idt[n].offset_1 = @truncate(u16, offset);
-    idt[n].offset_2 = @truncate(u16, offset >> 16);
-    idt[n].offset_3 = @truncate(u32, offset >> 32);
+    idt[n].offset_1 = @truncate(offset);
+    idt[n].offset_2 = @truncate(offset >> 16);
+    idt[n].offset_3 = @truncate(offset >> 32);
     idt[n].selector = gdt.kernel_code_seg;
     idt[n].ist = 0;
     idt[n].type_attr = type_attr;
@@ -28,7 +28,7 @@ pub fn set_gate(n: u8, type_attr: u8, offset: u64) void {
 }
 
 const idtr = IDTR {
-    .limit = @as(u16, @sizeOf(@TypeOf(idt)) - 1),
+    .limit = @sizeOf(@TypeOf(idt)) - 1,
     .base = 0 // TODO
 };
 
