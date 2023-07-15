@@ -45,9 +45,6 @@ export fn _start() callconv(.C) noreturn {
         }
     }
 
-    gdt.init();
-    idt.init();
-
     // We're done, just hang...
     done();
 }
