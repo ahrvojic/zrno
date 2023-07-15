@@ -12,7 +12,7 @@ const IDTEntry = packed struct {
 
 const IDTR = packed struct {
     limit: u16,
-    base: *[256]IDTEntry
+    base: u64
 };
 
 var idt: [256]IDTEntry = undefined;
@@ -29,7 +29,7 @@ pub fn set_gate(n: u8, type_attr: u8, offset: u64) void {
 
 const idtr = IDTR {
     .limit = @as(u16, @sizeOf(@TypeOf(idt)) - 1),
-    .base  = &idt
+    .base = 0 // TODO
 };
 
 // See idt.s
