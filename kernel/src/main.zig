@@ -3,8 +3,8 @@ const limine = @import("limine");
 
 const cpu = @import("arch/x86_64/cpu.zig");
 
-pub var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-pub var allocator = gpa.allocator();
+const gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
 
 // The Limine requests can be placed anywhere, but it is important that
 // the compiler does not optimise them away, so, usually, they should
@@ -48,7 +48,7 @@ export fn _start() callconv(.C) noreturn {
         }
     }
 
-    try cpu.init();
+    try cpu.init(allocator);
 
     // We're done, just hang...
     done();
