@@ -1,4 +1,3 @@
-const root = @import("root");
 const std = @import("std");
 
 const gdt = @import("gdt.zig");
@@ -11,8 +10,8 @@ pub const CPU = struct {
     idt: idt.IDT = .{},
 };
 
-pub fn init() !void {
-    var instance = try root.allocator.create(@TypeOf(CPU));
+pub fn init(allocator: std.mem.Allocator) !void {
+    var instance = try allocator.create(@TypeOf(CPU));
 
     instance.* = .{
         .self = instance,
