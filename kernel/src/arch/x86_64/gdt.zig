@@ -141,5 +141,11 @@ pub const GDT = struct {
               [kernel_data_seg] "r" (kernel_data_seg),
               [gdtr] "r" (&gdtr)
         );
+
+        asm volatile (
+            \\ltr %[tss_seg]
+            :
+            : [tss_seg] "r" (tss_seg)
+        );
     }
 };

@@ -3,6 +3,8 @@ const limine = @import("limine");
 
 const cpu = @import("arch/x86_64/cpu.zig");
 
+// TODO: Hook up os.heap.page_allocator to kernel allocator once implemented
+
 const gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
