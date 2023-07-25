@@ -1,3 +1,5 @@
+//! Global Descriptor Table
+
 // GDT long mode segments
 pub const kernel_code_seg = 0x08;
 pub const kernel_data_seg = 0x10;
@@ -37,7 +39,7 @@ const GDTEntry = packed struct {
     base_3: u8,
 
     pub fn make(base: u32, limit: u32, access: u8, flags: u4) GDTEntry {
-        return GDTEntry {
+        return .{
             .base_1 = @truncate(base),
             .base_2 = @truncate(base >> 16),
             .base_3 = @truncate(base >> 24),
@@ -61,7 +63,7 @@ const TSSEntry = packed struct {
     reserved: u32,
 
     pub fn make(base: u64, limit: u32, access: u8, flags: u4) TSSEntry {
-        return TSSEntry {
+        return .{
             .base_1 = @truncate(base),
             .base_2 = @truncate(base >> 16),
             .base_3 = @truncate(base >> 24),
@@ -125,27 +127,32 @@ pub const GDT = struct {
 
         asm volatile (
             \\lgdt (%[gdtr])
-            \\pushq %[kernel_code_seg]
-            \\leaq .reload_cs, %rax
-            \\pushq %rax
-            \\lretq
-            \\.reload_cs:
+            \\ltr %[tss_seg]
+            :
+            : [gdtr] "r" (&gdtr),
+              [tss_seg] "r" (@as(u16, tss_seg))
+        );
+
+        flush();
+    }
+
+    /// Replaces the segements set by the bootloader
+    fn flush() void {
+        asm volatile (
             \\movw %[kernel_data_seg], %ax
             \\movw %ax, %ds
             \\movw %ax, %es
             \\movw %ax, %fs
             \\movw %ax, %gs
             \\movw %ax, %ss
+            \\
+            \\popq %rdi
+            \\push %[kernel_code_seg]
+            \\push %rdi
+            \\lretq
             :
-            : [kernel_code_seg] "r" (kernel_code_seg),
-              [kernel_data_seg] "r" (kernel_data_seg),
-              [gdtr] "r" (&gdtr)
-        );
-
-        asm volatile (
-            \\ltr %[tss_seg]
-            :
-            : [tss_seg] "r" (tss_seg)
+            : [kernel_data_seg] "i" (kernel_data_seg),
+              [kernel_code_seg] "i" (kernel_code_seg)
         );
     }
 };

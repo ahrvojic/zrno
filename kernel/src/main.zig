@@ -8,15 +8,7 @@ const cpu = @import("arch/x86_64/cpu.zig");
 const gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
-// The Limine requests can be placed anywhere, but it is important that
-// the compiler does not optimise them away, so, usually, they should
-// be made volatile or equivalent. In Zig, `export var` is what we use.
 pub export var framebuffer_request: limine.FramebufferRequest = .{};
-
-// Set the base revision to 2, this is recommended as this is the latest
-// base revision described by the Limine boot protocol specification.
-// See specification for further info.
-pub export var base_revision: limine.BaseRevision = .{ .revision = 2 };
 
 inline fn done() noreturn {
     while (true) {
@@ -26,10 +18,7 @@ inline fn done() noreturn {
 
 // The following will be our kernel's entry point.
 export fn _start() callconv(.C) noreturn {
-    // Ensure the bootloader actually understands our base revision (see spec).
-    if (!base_revision.is_supported()) {
-        done();
-    }
+    try cpu.init();
 
     // Ensure we got a framebuffer.
     if (framebuffer_request.response) |framebuffer_response| {
@@ -49,8 +38,6 @@ export fn _start() callconv(.C) noreturn {
             @as(*u32, @ptrCast(@alignCast(framebuffer.address + pixel_offset))).* = 0xFFFFFFFF;
         }
     }
-
-    try cpu.init(allocator);
 
     // We're done, just hang...
     done();
