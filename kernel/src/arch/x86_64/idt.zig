@@ -1,3 +1,5 @@
+//! Interrupt Descriptor Table
+
 const IDTR = packed struct {
     limit: u16,
     base: u64
@@ -10,7 +12,7 @@ const IDTEntry = packed struct {
     type_attr: u8,
     offset_2: u16,
     offset_3: u32,
-    zero: u32,
+    reserved: u32,
 
     pub fn make(offset: u64, selector: u16, ist: u8, type_attr: u8) IDTEntry {
         return .{
@@ -20,7 +22,7 @@ const IDTEntry = packed struct {
             .selector = selector,
             .ist = ist,
             .type_attr = type_attr,
-            .zero = 0
+            .reserved = 0
         };
     }
 };
