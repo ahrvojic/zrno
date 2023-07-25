@@ -45,7 +45,7 @@ const TSSEntry = packed struct {
             .limit_2 = @truncate(limit >> 16),
             .access = access,
             .flags = flags,
-            .reserved = 0
+            .reserved = 0,
         };
     }
 };
@@ -67,12 +67,12 @@ pub const TSS = packed struct {
     reserved_4: u32 = 0,
     reserved_5: u32 = 0,
     reserved_6: u16 = 0,
-    io_base: u16 = 0
+    io_base: u16 = 0,
 };
 
 const GDTR = packed struct {
     limit: u16,
-    base: u64
+    base: u64,
 };
 
 const GDTEntry = packed struct {
@@ -92,7 +92,7 @@ const GDTEntry = packed struct {
             .limit_1 = @truncate(limit),
             .limit_2 = @truncate(limit >> 16),
             .access = access,
-            .flags = flags
+            .flags = flags,
         };
     }
 };
@@ -113,7 +113,7 @@ pub const GDT = struct {
             @intFromPtr(tss),
             @sizeOf(TSS) - 1,
             tss_access,
-            tss_flags
+            tss_flags,
         );
 
         const tss_entry_bits: [2]u64 = @bitCast(tss_entry);
@@ -122,7 +122,7 @@ pub const GDT = struct {
 
         const gdtr = GDTR {
             .limit = @sizeOf(GDT) - 1,
-            .base = @intFromPtr(self)
+            .base = @intFromPtr(self),
         };
 
         asm volatile (

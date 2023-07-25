@@ -2,7 +2,7 @@
 
 const IDTR = packed struct {
     limit: u16,
-    base: u64
+    base: u64,
 };
 
 const IDTEntry = packed struct {
@@ -22,7 +22,7 @@ const IDTEntry = packed struct {
             .selector = selector,
             .ist = ist,
             .type_attr = type_attr,
-            .reserved = 0
+            .reserved = 0,
         };
     }
 };
@@ -33,7 +33,7 @@ pub const IDT = struct {
     pub fn load(self: *IDT) void {
         const idtr = IDTR {
             .limit = @sizeOf(IDT) - 1,
-            .base = @intFromPtr(self)
+            .base = @intFromPtr(self),
         };
 
         // TODO: Interrupt handlers
