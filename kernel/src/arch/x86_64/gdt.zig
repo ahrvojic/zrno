@@ -24,33 +24,6 @@ const tss_access = 0b10001001;
 const seg_flags = 0b1010;
 const tss_flags = 0b0010;
 
-const GDTR = packed struct {
-    limit: u16,
-    base: u64
-};
-
-const GDTEntry = packed struct {
-    limit_1: u16,
-    base_1: u16,
-    base_2: u8,
-    access: u8,
-    flags: u4,
-    limit_2: u4,
-    base_3: u8,
-
-    pub fn make(base: u32, limit: u32, access: u8, flags: u4) GDTEntry {
-        return .{
-            .base_1 = @truncate(base),
-            .base_2 = @truncate(base >> 16),
-            .base_3 = @truncate(base >> 24),
-            .limit_1 = @truncate(limit),
-            .limit_2 = @truncate(limit >> 16),
-            .access = access,
-            .flags = flags
-        };
-    }
-};
-
 const TSSEntry = packed struct {
     limit_1: u16,
     base_1: u16,
@@ -95,6 +68,33 @@ pub const TSS = packed struct {
     reserved_5: u32 = 0,
     reserved_6: u16 = 0,
     io_base: u16 = 0
+};
+
+const GDTR = packed struct {
+    limit: u16,
+    base: u64
+};
+
+const GDTEntry = packed struct {
+    limit_1: u16,
+    base_1: u16,
+    base_2: u8,
+    access: u8,
+    flags: u4,
+    limit_2: u4,
+    base_3: u8,
+
+    pub fn make(base: u32, limit: u32, access: u8, flags: u4) GDTEntry {
+        return .{
+            .base_1 = @truncate(base),
+            .base_2 = @truncate(base >> 16),
+            .base_3 = @truncate(base >> 24),
+            .limit_1 = @truncate(limit),
+            .limit_2 = @truncate(limit >> 16),
+            .access = access,
+            .flags = flags
+        };
+    }
 };
 
 pub const GDT = struct {
