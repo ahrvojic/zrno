@@ -1,5 +1,7 @@
 //! Global Descriptor Table
 
+const debug = @import("debug.zig");
+
 // GDT long mode segments
 pub const kernel_code_seg = 0x08;
 pub const kernel_data_seg = 0x10;
@@ -125,6 +127,7 @@ pub const GDT = struct {
             .base = @intFromPtr(self),
         };
 
+        debug.print("[GDT] Load register and TSS\n");
         asm volatile (
             \\lgdt (%[gdtr])
             \\ltr %[tss_seg]
@@ -133,6 +136,7 @@ pub const GDT = struct {
               [tss_seg] "r" (@as(u16, tss_seg))
         );
 
+        debug.print("[GDT] Reload segments\n");
         flush();
     }
 
