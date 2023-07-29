@@ -86,7 +86,7 @@ const GDTEntry = packed struct {
     limit_2: u4,
     base_3: u8,
 
-    pub fn make(base: u32, limit: u32, access: u8, flags: u4) GDTEntry {
+    pub fn make(base: u32, limit: u20, access: u8, flags: u4) GDTEntry {
         return .{
             .base_1 = @truncate(base),
             .base_2 = @truncate(base >> 16),
@@ -102,10 +102,10 @@ const GDTEntry = packed struct {
 pub const GDT = struct {
     entries: [7]u64 align(8) = .{
         0, // null
-        @as(u64, @bitCast(GDTEntry.make(0, 0xFFFF, kernel_code_access, seg_flags))),
-        @as(u64, @bitCast(GDTEntry.make(0, 0xFFFF, kernel_data_access, seg_flags))),
-        @as(u64, @bitCast(GDTEntry.make(0, 0xFFFF, user_code_access, seg_flags))),
-        @as(u64, @bitCast(GDTEntry.make(0, 0xFFFF, user_data_access, seg_flags))),
+        @as(u64, @bitCast(GDTEntry.make(0, 0xffff, kernel_code_access, seg_flags))),
+        @as(u64, @bitCast(GDTEntry.make(0, 0xffff, kernel_data_access, seg_flags))),
+        @as(u64, @bitCast(GDTEntry.make(0, 0xffff, user_code_access, seg_flags))),
+        @as(u64, @bitCast(GDTEntry.make(0, 0xffff, user_data_access, seg_flags))),
         0, // TSS low
         0, // TSS high
     },
