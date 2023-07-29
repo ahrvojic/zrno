@@ -1,6 +1,7 @@
 const std = @import("std");
 const limine = @import("limine");
 
+const arch = @import("arch/x86_64/arch.zig");
 const cpu = @import("arch/x86_64/cpu.zig");
 const debug = @import("arch/x86_64/debug.zig");
 
@@ -11,21 +12,17 @@ const allocator = gpa.allocator();
 
 pub export var framebuffer_request: limine.FramebufferRequest = .{};
 
-inline fn done() noreturn {
-    while (true) {
-        asm volatile ("hlt");
-    }
-}
-
-// The following will be our kernel's entry point.
 export fn _start() callconv(.C) noreturn {
+    debug.print("Disable interrupts\n");
+    arch.cli();
+
     debug.print("Init CPU\n");
     try cpu.init();
 
     debug.print("Init framebuffer\n");
     if (framebuffer_request.response) |framebuffer_response| {
         if (framebuffer_response.framebuffer_count < 1) {
-            done();
+            arch.hlt();
         }
 
         // Get the first framebuffer's information.
@@ -41,6 +38,9 @@ export fn _start() callconv(.C) noreturn {
         }
     }
 
+    debug.print("Re-enable interrupts.\n");
+    arch.sti();
+
     debug.print("Done.\n");
-    done();
+    arch.hlt();
 }
