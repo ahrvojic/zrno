@@ -2,6 +2,7 @@ const std = @import("std");
 const limine = @import("limine");
 
 const cpu = @import("arch/x86_64/cpu.zig");
+const debug = @import("arch/x86_64/debug.zig");
 
 // TODO: Hook up os.heap.page_allocator to kernel allocator once implemented
 
@@ -18,9 +19,10 @@ inline fn done() noreturn {
 
 // The following will be our kernel's entry point.
 export fn _start() callconv(.C) noreturn {
+    debug.print("Init CPU\n");
     try cpu.init();
 
-    // Ensure we got a framebuffer.
+    debug.print("Init framebuffer\n");
     if (framebuffer_request.response) |framebuffer_response| {
         if (framebuffer_response.framebuffer_count < 1) {
             done();
@@ -39,6 +41,6 @@ export fn _start() callconv(.C) noreturn {
         }
     }
 
-    // We're done, just hang...
+    debug.print("Done.\n");
     done();
 }
