@@ -2,12 +2,12 @@
 
 const debug = @import("debug.zig");
 
-// GDT long mode segments
-pub const kernel_code_seg = 0x08;
-pub const kernel_data_seg = 0x10;
-pub const user_code_seg   = 0x18;
-pub const user_data_seg   = 0x20;
-pub const tss_seg         = 0x28;
+// GDT long mode selectors
+pub const kernel_code_sel = 0x08;
+pub const kernel_data_sel = 0x10;
+pub const user_code_sel   = 0x18;
+pub const user_data_sel   = 0x20;
+pub const tss_sel         = 0x28;
 
 // Access byte:
 // | P | DPL(2) | S | 1 | C | R | A |
@@ -130,33 +130,33 @@ pub const GDT = struct {
         debug.print("[GDT] Load register and TSS\n");
         asm volatile (
             \\lgdt (%[gdtr])
-            \\ltr %[tss_seg]
+            \\ltr %[tss_sel]
             :
             : [gdtr] "r" (&gdtr),
-              [tss_seg] "r" (@as(u16, tss_seg))
+              [tss_sel] "r" (@as(u16, tss_sel))
         );
 
         debug.print("[GDT] Reload segments\n");
         flush();
     }
 
-    /// Replaces the segements set by the bootloader
+    /// Replaces the selectors set by the bootloader
     fn flush() void {
         asm volatile (
-            \\push %[kernel_code_seg]
+            \\push %[kernel_code_sel]
             \\lea .reload_cs(%rip), %rax
             \\push %rax
             \\lretq
             \\.reload_cs:
-            \\mov %[kernel_data_seg], %ax
+            \\mov %[kernel_data_sel], %ax
             \\mov %ax, %ds
             \\mov %ax, %es
             \\mov %ax, %fs
             \\mov %ax, %gs
             \\mov %ax, %ss
             :
-            : [kernel_code_seg] "i" (kernel_code_seg),
-              [kernel_data_seg] "i" (kernel_data_seg),
+            : [kernel_code_sel] "r" (@as(u16, kernel_code_sel)),
+              [kernel_data_sel] "r" (@as(u16, kernel_data_sel)),
         );
     }
 };
