@@ -23,8 +23,8 @@ const tss_access = 0b10001001;
 
 // Flags nibble:
 // | G | DB | L | AVL |
-const seg_flags = 0b1010;
-const tss_flags = 0b0010;
+const code_flags = 0b1010;
+const data_flags = 0b1100;
 
 const TSSEntry = packed struct {
     limit_1: u16,
@@ -102,10 +102,10 @@ const GDTEntry = packed struct {
 pub const GDT = struct {
     entries: [7]u64 align(8) = .{
         0, // null
-        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, kernel_code_access, seg_flags))),
-        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, kernel_data_access, seg_flags))),
-        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, user_code_access, seg_flags))),
-        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, user_data_access, seg_flags))),
+        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, kernel_code_access, code_flags))),
+        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, kernel_data_access, data_flags))),
+        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, user_code_access, code_flags))),
+        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, user_data_access, data_flags))),
         0, // TSS low
         0, // TSS high
     },
@@ -115,7 +115,7 @@ pub const GDT = struct {
             @intFromPtr(tss),
             @sizeOf(TSS) - 1,
             tss_access,
-            tss_flags,
+            0,
         );
 
         const tss_entry_bits: [2]u64 = @bitCast(tss_entry);
