@@ -143,20 +143,20 @@ pub const GDT = struct {
     /// Replaces the segements set by the bootloader
     fn flush() void {
         asm volatile (
-            \\movw %[kernel_data_seg], %ax
-            \\movw %ax, %ds
-            \\movw %ax, %es
-            \\movw %ax, %fs
-            \\movw %ax, %gs
-            \\movw %ax, %ss
-            \\
-            \\popq %rdi
             \\push %[kernel_code_seg]
-            \\push %rdi
+            \\lea .reload_cs(%rip), %rax
+            \\push %rax
             \\lretq
+            \\.reload_cs:
+            \\mov %[kernel_data_seg], %ax
+            \\mov %ax, %ds
+            \\mov %ax, %es
+            \\mov %ax, %fs
+            \\mov %ax, %gs
+            \\mov %ax, %ss
             :
-            : [kernel_data_seg] "i" (kernel_data_seg),
-              [kernel_code_seg] "i" (kernel_code_seg)
+            : [kernel_code_seg] "i" (kernel_code_seg),
+              [kernel_data_seg] "i" (kernel_data_seg),
         );
     }
 };
