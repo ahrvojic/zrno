@@ -13,13 +13,13 @@ const allocator = gpa.allocator();
 pub export var framebuffer_request: limine.FramebufferRequest = .{};
 
 export fn _start() callconv(.C) noreturn {
-    debug.print("Disable interrupts\n");
+    debug.print("[Main] Interrupts off\r\n");
     arch.cli();
 
-    debug.print("Init CPU\n");
+    debug.print("[Main] Init CPU\r\n");
     try cpu.init();
 
-    debug.print("Init framebuffer\n");
+    debug.print("[Main] Init framebuffer\r\n");
     if (framebuffer_request.response) |framebuffer_response| {
         if (framebuffer_response.framebuffer_count < 1) {
             arch.hlt();
@@ -38,9 +38,9 @@ export fn _start() callconv(.C) noreturn {
         }
     }
 
-    debug.print("Re-enable interrupts.\n");
+    debug.print("[Main] Interrupts on\r\n");
     arch.sti();
 
-    debug.print("Done.\n");
+    debug.print("[Main] Done.\r\n");
     arch.hlt();
 }
