@@ -102,10 +102,10 @@ const GDTEntry = packed struct {
 pub const GDT = struct {
     entries: [7]u64 align(8) = .{
         0, // null
-        @as(u64, @bitCast(GDTEntry.make(0, 0xffff, kernel_code_access, seg_flags))),
-        @as(u64, @bitCast(GDTEntry.make(0, 0xffff, kernel_data_access, seg_flags))),
-        @as(u64, @bitCast(GDTEntry.make(0, 0xffff, user_code_access, seg_flags))),
-        @as(u64, @bitCast(GDTEntry.make(0, 0xffff, user_data_access, seg_flags))),
+        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, kernel_code_access, seg_flags))),
+        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, kernel_data_access, seg_flags))),
+        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, user_code_access, seg_flags))),
+        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, user_data_access, seg_flags))),
         0, // TSS low
         0, // TSS high
     },
