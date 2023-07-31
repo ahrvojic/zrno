@@ -127,7 +127,7 @@ pub const GDT = struct {
             .base = @intFromPtr(self),
         };
 
-        debug.print("[GDT] Load register and TSS\n");
+        debug.print("[GDT] Load register and TSS\r\n");
         asm volatile (
             \\lgdt (%[gdtr])
             \\ltr %[tss_sel]
@@ -136,7 +136,7 @@ pub const GDT = struct {
               [tss_sel] "r" (@as(u16, tss_sel))
         );
 
-        debug.print("[GDT] Reload segments\n");
+        debug.print("[GDT] Reload selectors\r\n");
         flush();
     }
 
