@@ -155,8 +155,8 @@ pub const GDT = struct {
             \\mov %ax, %gs
             \\mov %ax, %ss
             :
-            : [kernel_code_sel] "r" (@as(u16, kernel_code_sel)),
-              [kernel_data_sel] "r" (@as(u16, kernel_data_sel)),
+            : [kernel_code_sel] "i" (@as(u16, kernel_code_sel)),
+              [kernel_data_sel] "i" (@as(u16, kernel_data_sel)),
         );
     }
 };
