@@ -1,6 +1,7 @@
 //! Interrupt Descriptor Table
 
 const gdt = @import("gdt.zig");
+const interrupts = @import("interrupts.zig");
 
 const type_intr = 0x0e;
 const type_trap = 0x0f;
