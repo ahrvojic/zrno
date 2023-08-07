@@ -4,8 +4,9 @@ const debug = @import("debug.zig");
 const gdt = @import("gdt.zig");
 const interrupts = @import("interrupts.zig");
 
-const interrupt_gate = 0x0e;
-const trap_gate = 0x0f;
+// Flags byte:
+// | P | DPL(2) | R | Type(4) |
+const interrupt_gate = 0b10001110;
 
 const IDTR = packed struct {
     limit: u16,
@@ -16,17 +17,17 @@ const IDTEntry = packed struct {
     offset_1: u16,
     selector: u16,
     ist: u8,
-    type_attr: u8,
+    flags: u8,
     offset_2: u16,
     offset_3: u32,
     reserved: u32,
 
-    pub fn make(offset: u64, type_attr: u8) IDTEntry {
+    pub fn make(offset: u64, flags: u8) IDTEntry {
         return .{
             .offset_1 = @truncate(offset),
             .offset_2 = @truncate(offset >> 16),
             .offset_3 = @truncate(offset >> 32),
-            .type_attr = type_attr,
+            .flags = flags,
             .selector = gdt.kernel_code_sel,
             .ist = 0,
             .reserved = 0,
