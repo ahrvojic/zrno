@@ -133,7 +133,7 @@ pub const GDT = struct {
             \\ltr %[tss_sel]
             :
             : [gdtr] "r" (&gdtr),
-              [tss_sel] "r" (@as(u16, tss_sel))
+              [tss_sel] "r" (@as(u16, tss_sel)),
         );
 
         debug.print("[GDT] Reload selectors\r\n");
