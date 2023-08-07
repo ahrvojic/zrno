@@ -4,8 +4,8 @@ const debug = @import("debug.zig");
 const gdt = @import("gdt.zig");
 const interrupts = @import("interrupts.zig");
 
-const type_intr = 0x0e;
-const type_trap = 0x0f;
+const interrupt_gate = 0x0e;
+const trap_gate = 0x0f;
 
 const IDTR = packed struct {
     limit: u16,
@@ -42,7 +42,7 @@ pub const IDT = struct {
         comptime var i: usize = 0;
         inline while (i < 256) : (i += 1) {
             const handler = comptime interrupts.makeHandler(i);
-            self.entries[i] = IDTEntry.make(@intFromPtr(handler), type_intr);
+            self.entries[i] = IDTEntry.make(@intFromPtr(handler), interrupt_gate);
         }
 
         const idtr = IDTR {
