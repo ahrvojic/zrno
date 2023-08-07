@@ -1,5 +1,7 @@
 //! Interrupt handlers
 
+const debug = @import("debug.zig");
+
 const InterruptFrame = extern struct {
     r15: u64,
     r14: u64,
@@ -28,7 +30,11 @@ const InterruptFrame = extern struct {
 };
 
 export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
-    // TODO
+    switch (frame.vector_number) {
+        13 => debug.print("General protection fault"),
+        14 => debug.print("Page fault"),
+        else => debug.print("Unexpected interrupt"),
+    }
 }
 
 export fn interruptStub() callconv(.Naked) void {
@@ -72,4 +78,39 @@ export fn interruptStub() callconv(.Naked) void {
         \\add $16, %rsp
         \\iretq
     );
+}
+
+pub const InterruptHandler = *const fn () callconv(.Naked) void;
+
+pub fn makeHandler(comptime vector_number: usize) InterruptHandler {
+    return struct {
+        fn handler() callconv(.Naked) void {
+            const has_error_code = switch (vector_number) {
+                8 => true,
+                10...14 => true,
+                17 => true,
+                21 => true,
+                29 => true,
+                30 => true,
+                else => false,
+            };
+
+            if (comptime has_error_code) {
+                asm volatile (
+                    \\push %[vector_number]
+                    \\jmp interruptStub
+                    :
+                    : [vector_number] "i" (vector_number),
+                );
+            } else {
+                asm volatile (
+                    \\push $0
+                    \\push %[vector_number]
+                    \\jmp interruptStub
+                    :
+                    : [vector_number] "i" (vector_number),
+                );
+            }
+        }
+    }.handler;
 }

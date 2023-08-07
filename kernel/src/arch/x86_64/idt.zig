@@ -1,5 +1,6 @@
 //! Interrupt Descriptor Table
 
+const debug = @import("debug.zig");
 const gdt = @import("gdt.zig");
 const interrupts = @import("interrupts.zig");
 
@@ -37,13 +38,19 @@ pub const IDT = struct {
     entries: [256]IDTEntry align(16) = undefined,
 
     pub fn load(self: *IDT) void {
+        debug.print("[IDT] Set interrupt handlers\r\n");
+        comptime var i: usize = 0;
+        inline while (i < 256) : (i += 1) {
+            const handler = comptime interrupts.makeHandler(i);
+            self.entries[i] = IDTEntry.make(@intFromPtr(handler), type_intr);
+        }
+
         const idtr = IDTR {
             .limit = @sizeOf(IDT) - 1,
             .base = @intFromPtr(self),
         };
 
-        // TODO: Interrupt handlers
-
+        debug.print("[IDT] Load register\r\n");
         asm volatile (
             \\lidt (%[idtr])
             :
