@@ -100,7 +100,7 @@ pub fn makeHandler(comptime vector_number: usize) InterruptHandler {
                     \\push %[vector_number]
                     \\jmp interruptStub
                     :
-                    : [vector_number] "i" (vector_number),
+                    : [vector_number] "i" (vector_number)
                 );
             } else {
                 asm volatile (
@@ -108,7 +108,7 @@ pub fn makeHandler(comptime vector_number: usize) InterruptHandler {
                     \\push %[vector_number]
                     \\jmp interruptStub
                     :
-                    : [vector_number] "i" (vector_number),
+                    : [vector_number] "i" (vector_number)
                 );
             }
         }
