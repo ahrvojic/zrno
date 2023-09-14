@@ -1,6 +1,6 @@
 //! ACPI tables
 
-pub const RSDP = packed struct {
+const RSDP = extern struct {
     signature: [8]u8,
     checksum: u8,
     oem_id: [6]u8,
@@ -12,7 +12,7 @@ pub const RSDP = packed struct {
     reserved: [3]u8,
 };
 
-pub const RSDT = packed struct {
+const SDT = extern struct {
     signature: [4]u8,
     length: u32,
     revision: u8,
