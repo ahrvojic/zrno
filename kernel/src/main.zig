@@ -1,6 +1,7 @@
 const std = @import("std");
 const limine = @import("limine");
 
+const acpi = @import("arch/x86_64/acpi.zig");
 const arch = @import("arch/x86_64/arch.zig");
 const cpu = @import("arch/x86_64/cpu.zig");
 const debug = @import("arch/x86_64/debug.zig");
@@ -11,13 +12,28 @@ const gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
 pub export var framebuffer_request: limine.FramebufferRequest = .{};
+pub export var rsdp_req: limine.RsdpRequest = .{};
 
 export fn _start() callconv(.C) noreturn {
-    debug.print("[Main] Interrupts off\r\n");
+    main() catch |err| {
+        _ = err;
+        debug.print("Error\r\n");
+    };
+
+    debug.print("[Main] Done.\r\n");
+    arch.hlt();
+}
+
+pub fn main() !void {
     arch.cli();
+    defer arch.sti();
 
     debug.print("[Main] Init CPU\r\n");
     try cpu.init();
+
+    debug.print("[Main] Init ACPI\r\n");
+    const rsdp_res = rsdp_req.response.?;
+    try acpi.init(rsdp_res);
 
     debug.print("[Main] Init framebuffer\r\n");
     if (framebuffer_request.response) |framebuffer_response| {
@@ -37,10 +53,4 @@ export fn _start() callconv(.C) noreturn {
             @as(*u32, @ptrCast(@alignCast(framebuffer.address + pixel_offset))).* = 0xFFFFFFFF;
         }
     }
-
-    debug.print("[Main] Interrupts on\r\n");
-    arch.sti();
-
-    debug.print("[Main] Done.\r\n");
-    arch.hlt();
 }
