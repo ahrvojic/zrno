@@ -47,14 +47,25 @@ const XSDT = extern struct {
 };
 
 pub fn is_sdp_valid(comptime T: type, sdp: T) bool {
-  const bytes: [@sizeOf(T)]u8 = @bitCast(sdp);
-  var sum: usize = 0;
+    const bytes: [@sizeOf(T)]u8 = @bitCast(sdp);
+    var sum: usize = 0;
 
-  for (bytes) |byte| {
-    sum += byte;
-  }
+    for (bytes) |byte| {
+        sum += byte;
+    }
 
-  return sum & 0xff == 0;
+    return sum & 0xff == 0;
+}
+
+pub fn is_sdt_valid(header: SDTHeader) bool {
+    const bytes: [@sizeOf(SDTHeader)]u8 = @bitCast(header);
+    var sum: usize = 0;
+
+    for (bytes) |byte| {
+        sum += byte;
+    }
+
+    return sum == 0;
 }
 
 pub fn init(rsdp_res: *limine.RsdpResponse) !void {
