@@ -48,21 +48,21 @@ const XSDT = extern struct {
 
 pub fn is_sdp_valid(comptime T: type, sdp: T) bool {
     const bytes: [@sizeOf(T)]u8 = @bitCast(sdp);
-    var sum: usize = 0;
+    var sum: u8 = 0;
 
     for (bytes) |byte| {
-        sum += byte;
+        sum +%= byte;
     }
 
-    return sum & 0xff == 0;
+    return sum == 0;
 }
 
 pub fn is_sdt_valid(header: SDTHeader) bool {
     const bytes: [@sizeOf(SDTHeader)]u8 = @bitCast(header);
-    var sum: usize = 0;
+    var sum: u8 = 0;
 
     for (bytes) |byte| {
-        sum += byte;
+        sum +%= byte;
     }
 
     return sum == 0;
@@ -71,4 +71,21 @@ pub fn is_sdt_valid(header: SDTHeader) bool {
 pub fn init(rsdp_res: *limine.RsdpResponse) !void {
     _ = rsdp_res;
     // TODO
+}
+
+test "expect valid SDT" {
+    const header: SDTHeader = .{
+        .signature = "APIC".*,
+        .length = 0xbc,
+        .revision = 0x02,
+        .checksum = 0x41,
+        .oem_id = "APPLE ".*,
+        .oem_table_id = "Apple00 ".*,
+        .oem_revision = 0x01,
+        .creator_id = @truncate(@as(u40, @bitCast("Loki".*))),
+        .creator_revision = 0x5f,
+    };
+
+    std.debug.print("{any}\n", .{header});
+    try std.testing.expect(is_sdt_valid(header));
 }
