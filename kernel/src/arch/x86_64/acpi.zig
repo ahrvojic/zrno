@@ -46,7 +46,7 @@ const XSDT = extern struct {
     addresses: []u64 = undefined,
 };
 
-pub fn is_valid(comptime T: type, item: T) bool {
+pub fn sum_bytes(comptime T: type, item: T) u8 {
     const bytes: [@sizeOf(T)]u8 = @bitCast(item);
     var sum: u8 = 0;
 
@@ -54,7 +54,7 @@ pub fn is_valid(comptime T: type, item: T) bool {
         sum +%= byte;
     }
 
-    return sum == 0;
+    return sum;
 }
 
 pub fn init(rsdp_res: *limine.RsdpResponse) !void {
@@ -74,7 +74,10 @@ test "expect valid SDT header" {
         .creator_id = @truncate(@as(u40, @bitCast("Loki".*))),
         .creator_revision = 0x5f,
     };
-
     std.debug.print("{any}\n", .{header});
-    try std.testing.expect(is_valid(SDTHeader, header));
+
+    const sum = sum_bytes(SDTHeader, header);
+    std.debug.print("Sum: {d}\n", .{sum});
+
+    try std.testing.expect(sum == 0);
 }
