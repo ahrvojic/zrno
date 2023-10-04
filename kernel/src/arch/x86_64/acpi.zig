@@ -46,19 +46,8 @@ const XSDT = extern struct {
     addresses: []u64 = undefined,
 };
 
-pub fn is_sdp_valid(comptime T: type, sdp: T) bool {
-    const bytes: [@sizeOf(T)]u8 = @bitCast(sdp);
-    var sum: u8 = 0;
-
-    for (bytes) |byte| {
-        sum +%= byte;
-    }
-
-    return sum == 0;
-}
-
-pub fn is_sdt_valid(header: SDTHeader) bool {
-    const bytes: [@sizeOf(SDTHeader)]u8 = @bitCast(header);
+pub fn is_valid(comptime T: type, item: T) bool {
+    const bytes: [@sizeOf(T)]u8 = @bitCast(item);
     var sum: u8 = 0;
 
     for (bytes) |byte| {
@@ -73,7 +62,7 @@ pub fn init(rsdp_res: *limine.RsdpResponse) !void {
     // TODO
 }
 
-test "expect valid SDT" {
+test "expect valid SDT header" {
     const header: SDTHeader = .{
         .signature = "APIC".*,
         .length = 0xbc,
@@ -87,5 +76,5 @@ test "expect valid SDT" {
     };
 
     std.debug.print("{any}\n", .{header});
-    try std.testing.expect(is_sdt_valid(header));
+    try std.testing.expect(is_valid(SDTHeader, header));
 }
