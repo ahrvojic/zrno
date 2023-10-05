@@ -46,6 +46,11 @@ const XSDT = extern struct {
     addresses: []u64 = undefined,
 };
 
+pub fn init(rsdp_res: *limine.RsdpResponse) !void {
+    _ = rsdp_res;
+    // TODO
+}
+
 pub fn sum_bytes(comptime T: type, item: T) u8 {
     const bytes: [@sizeOf(T)]u8 = @bitCast(item);
     var sum: u8 = 0;
@@ -57,12 +62,13 @@ pub fn sum_bytes(comptime T: type, item: T) u8 {
     return sum;
 }
 
-pub fn init(rsdp_res: *limine.RsdpResponse) !void {
-    _ = rsdp_res;
-    // TODO
-}
+test "byte sums" {
+    const arr1: [4]u8 = .{1, 1, 1, 1};
+    try std.testing.expect(sum_bytes([4]u8, arr1) == 4);
 
-test "expect valid SDT header" {
+    const arr2: [2]u8 = .{255, 1};
+    try std.testing.expect(sum_bytes([2]u8, arr2) == 0);
+
     const header: SDTHeader = .{
         .signature = "APIC".*,
         .length = 0xbc,
@@ -75,9 +81,5 @@ test "expect valid SDT header" {
         .creator_revision = 0x5f,
     };
     std.debug.print("{any}\n", .{header});
-
-    const sum = sum_bytes(SDTHeader, header);
-    std.debug.print("Sum: {d}\n", .{sum});
-
-    try std.testing.expect(sum == 0);
+    try std.testing.expect(sum_bytes(SDTHeader, header) == 0x0f);
 }
