@@ -1,5 +1,3 @@
-//! Global Descriptor Table
-
 const std = @import("std");
 
 const debug = @import("debug.zig");

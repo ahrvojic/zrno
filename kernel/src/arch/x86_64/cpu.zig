@@ -1,5 +1,3 @@
-//! CPU
-
 const std = @import("std");
 
 const debug = @import("debug.zig");
