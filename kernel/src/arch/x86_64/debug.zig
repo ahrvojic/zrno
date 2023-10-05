@@ -1,5 +1,3 @@
-//! Debug operations
-
 const port = @import("port.zig");
 
 const debugcon = 0xe9;

@@ -1,5 +1,3 @@
-//! Port operations
-
 pub inline fn inb(port: u16) u8 {
     return asm volatile (
         \\inb %[port], %[res]

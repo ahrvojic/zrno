@@ -1,5 +1,3 @@
-//! Interrupt handlers
-
 const debug = @import("debug.zig");
 
 const InterruptFrame = extern struct {

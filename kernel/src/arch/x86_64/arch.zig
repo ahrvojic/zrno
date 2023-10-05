@@ -1,5 +1,3 @@
-//! General operations
-
 pub inline fn cli() void {
     asm volatile ("cli");
 }
