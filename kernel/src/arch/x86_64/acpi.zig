@@ -1,7 +1,4 @@
-//! ACPI tables
-
 const std = @import("std");
-
 const limine = @import("limine");
 
 const RSDP = extern struct {
