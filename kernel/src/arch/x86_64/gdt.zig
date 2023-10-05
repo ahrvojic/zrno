@@ -164,7 +164,7 @@ pub const GDT = struct {
 };
 
 test "TSS entry construction" {
-    const value = TSSEntry.make(0x800080808000, 0x00088000, 0x80, 0);
+    const value = TSSEntry.make(0x800080808000, 0x00088000, 0, 0);
     const expected = TSSEntry {
         .base_1 = 0x8000,
         .base_2 = 0x80,
@@ -176,12 +176,7 @@ test "TSS entry construction" {
         .flags = 0,
         .reserved = 0,
     };
-    try std.testing.expect(value.base_1 == expected.base_1);
-    try std.testing.expect(value.base_2 == expected.base_2);
-    try std.testing.expect(value.base_3 == expected.base_3);
-    try std.testing.expect(value.base_4 == expected.base_4);
-    try std.testing.expect(value.limit_1 == expected.limit_1);
-    try std.testing.expect(value.limit_2 == expected.limit_2);
+    try std.testing.expect(std.meta.eql(value, expected));
 }
 
 test "GDT entry construction" {
@@ -195,9 +190,5 @@ test "GDT entry construction" {
         .access = 0,
         .flags = 0,
     };
-    try std.testing.expect(value.base_1 == expected.base_1);
-    try std.testing.expect(value.base_2 == expected.base_2);
-    try std.testing.expect(value.base_3 == expected.base_3);
-    try std.testing.expect(value.limit_1 == expected.limit_1);
-    try std.testing.expect(value.limit_2 == expected.limit_2);
+    try std.testing.expect(std.meta.eql(value, expected));
 }
