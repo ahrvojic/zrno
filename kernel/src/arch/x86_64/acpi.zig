@@ -77,7 +77,7 @@ test "byte sums" {
         .oem_id = "APPLE ".*,
         .oem_table_id = "Apple00 ".*,
         .oem_revision = 0x01,
-        .creator_id = std.mem.bytesAsSlice(u32, "Loki"[0..])[0],
+        .creator_id = std.mem.bytesAsSlice(u32, "Loki")[0],
         .creator_revision = 0x5f,
     };
     std.debug.print("{any}\n", .{header});
