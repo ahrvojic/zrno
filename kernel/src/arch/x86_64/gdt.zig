@@ -166,14 +166,14 @@ pub const GDT = struct {
 test "TSS entry construction" {
     const value = TSSEntry.make(0x800080808000, 0x00088000, 0x80, 0);
     const expected = TSSEntry {
-        .limit_1 = 0x8000,
         .base_1 = 0x8000,
         .base_2 = 0x80,
-        .access = 0,
-        .limit_2 = 0x8,
-        .flags = 0,
         .base_3 = 0x80,
         .base_4 = 0x8000,
+        .limit_1 = 0x8000,
+        .limit_2 = 0x8,
+        .access = 0,
+        .flags = 0,
         .reserved = 0,
     };
     try std.testing.expect(value.base_1 == expected.base_1);
@@ -187,13 +187,13 @@ test "TSS entry construction" {
 test "GDT entry construction" {
     const value = GDTEntry.make(0x80808000, 0x88000, 0, 0);
     const expected = GDTEntry {
-        .limit_1 = 0x8000,
         .base_1 = 0x8000,
         .base_2 = 0x80,
+        .base_3 = 0x80,
+        .limit_1 = 0x8000,
+        .limit_2 = 0x8,
         .access = 0,
         .flags = 0,
-        .limit_2 = 0x8,
-        .base_3 = 0x80,
     };
     try std.testing.expect(value.base_1 == expected.base_1);
     try std.testing.expect(value.base_2 == expected.base_2);

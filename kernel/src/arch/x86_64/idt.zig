@@ -1,5 +1,7 @@
 //! Interrupt Descriptor Table
 
+const std = @import("std");
+
 const debug = @import("debug.zig");
 const gdt = @import("gdt.zig");
 const interrupts = @import("interrupts.zig");
@@ -59,3 +61,19 @@ pub const IDT = struct {
         );
     }
 };
+
+test "IDT entry construction" {
+    const value = IDTEntry.make(0x8000000080008000, 0);
+    const expected = IDTEntry {
+        .offset_1 = 0x8000,
+        .offset_2 = 0x8000,
+        .offset_3 = 0x80000000,
+        .flags = 0,
+        .selector = 0,
+        .ist = 0,
+        .reserved = 0,
+    };
+    try std.testing.expect(value.offset_1 == expected.offset_1);
+    try std.testing.expect(value.offset_2 == expected.offset_2);
+    try std.testing.expect(value.offset_3 == expected.offset_3);
+}
