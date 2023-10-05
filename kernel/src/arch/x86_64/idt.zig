@@ -69,11 +69,9 @@ test "IDT entry construction" {
         .offset_2 = 0x8000,
         .offset_3 = 0x80000000,
         .flags = 0,
-        .selector = 0,
+        .selector = gdt.kernel_code_sel,
         .ist = 0,
         .reserved = 0,
     };
-    try std.testing.expect(value.offset_1 == expected.offset_1);
-    try std.testing.expect(value.offset_2 == expected.offset_2);
-    try std.testing.expect(value.offset_3 == expected.offset_3);
+    try std.testing.expect(std.meta.eql(value, expected));
 }
