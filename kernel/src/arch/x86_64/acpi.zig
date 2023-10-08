@@ -1,6 +1,8 @@
 const std = @import("std");
 const limine = @import("limine");
 
+const debug = @import("debug.zig");
+
 const RSDP = extern struct {
     signature: [8]u8,
     checksum: u8,
@@ -63,7 +65,7 @@ pub fn init(rsdp_res: *limine.RsdpResponse) !void {
             _ = xsdt;
             // TODO: Parse tables
         },
-        else => std.debug.panic("Unknown ACPI revision: {}", .{rsdp_res.revision}),
+        else => debug.panic("Unknown ACPI revision!"),
     }
 }
 
