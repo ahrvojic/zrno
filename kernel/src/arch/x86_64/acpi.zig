@@ -35,12 +35,12 @@ const SDTHeader = extern struct {
 
 const RSDT = extern struct {
     header: SDTHeader,
-    addresses: *u32,
+    addresses: [*]u32,
 };
 
 const XSDT = extern struct {
     header: SDTHeader,
-    addresses: *u64,
+    addresses: [*]u64,
 };
 
 const RSDPPtr = *align(1) const RSDP;
