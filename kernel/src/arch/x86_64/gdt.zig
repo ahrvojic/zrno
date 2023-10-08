@@ -136,7 +136,7 @@ pub const GDT = struct {
               [tss_sel] "r" (@as(u16, tss_sel)),
         );
 
-        debug.print("[GDT] Reload selectors\r\n");
+        debug.println("[GDT] Reload selectors");
         flush();
     }
 

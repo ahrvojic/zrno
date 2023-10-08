@@ -11,3 +11,8 @@ pub inline fn hlt() noreturn {
         asm volatile ("hlt");
     }
 }
+
+pub inline fn hang() noreturn {
+    cli();
+    hlt();
+}

@@ -13,9 +13,9 @@ pub const CPU = struct {
 pub fn init() !void {
     var instance: CPU = .{};
 
-    debug.print("[CPU] Load GDT\r\n");
+    debug.println("[CPU] Load GDT");
     instance.gdt.load(&instance.tss);
 
-    debug.print("[CPU] Load IDT\r\n");
+    debug.println("[CPU] Load IDT");
     instance.idt.load();
 }
