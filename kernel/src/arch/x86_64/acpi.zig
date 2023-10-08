@@ -35,17 +35,36 @@ const SDTHeader = extern struct {
 
 const RSDT = extern struct {
     header: SDTHeader,
-    addresses: []u32 = undefined,
+    addresses: *u32,
 };
 
 const XSDT = extern struct {
     header: SDTHeader,
-    addresses: []u64 = undefined,
+    addresses: *u64,
 };
 
+const RSDPPtr = *align(1) const RSDP;
+const XSDPPtr = *align(1) const XSDP;
+
+const RSDTPtr = *align(1) const RSDT;
+const XSDTPtr = *align(1) const XSDT;
+
 pub fn init(rsdp_res: *limine.RsdpResponse) !void {
-    _ = rsdp_res;
-    // TODO
+    switch (rsdp_res.revision) {
+        0 => {
+            const rsdp: RSDPPtr = @ptrCast(rsdp_res.address);
+            const rsdt: RSDTPtr = @ptrFromInt(rsdp.rsdt_addr);
+            _ = rsdt;
+            // TODO: Parse tables
+        },
+        2 => {
+            const xsdp: XSDPPtr = @ptrCast(rsdp_res.address);
+            const xsdt: XSDTPtr = @ptrFromInt(xsdp.xsdt_addr);
+            _ = xsdt;
+            // TODO: Parse tables
+        },
+        else => std.debug.panic("Unknown ACPI revision: {}", .{rsdp_res.revision}),
+    }
 }
 
 pub fn sum_bytes(comptime T: type, item: T) u8 {
