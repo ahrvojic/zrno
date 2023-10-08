@@ -29,9 +29,9 @@ const InterruptFrame = extern struct {
 
 export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
     switch (frame.vector_number) {
-        13 => debug.print("General protection fault\r\n"),
-        14 => debug.print("Page fault\r\n"),
-        else => debug.print("Unexpected interrupt\r\n"),
+        13 => debug.println("General protection fault"),
+        14 => debug.println("Page fault"),
+        else => debug.println("Unexpected interrupt"),
     }
 }
 

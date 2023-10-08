@@ -17,10 +17,10 @@ pub export var rsdp_req: limine.RsdpRequest = .{};
 export fn _start() callconv(.C) noreturn {
     main() catch |err| {
         _ = err;
-        debug.print("Error\r\n");
+        debug.println("Error");
     };
 
-    debug.print("[Main] Done.\r\n");
+    debug.println("[Main] Done.");
     arch.hlt();
 }
 
@@ -28,14 +28,14 @@ pub fn main() !void {
     arch.cli();
     defer arch.sti();
 
-    debug.print("[Main] Init CPU\r\n");
+    debug.println("[Main] Init CPU");
     try cpu.init();
 
-    debug.print("[Main] Init ACPI\r\n");
+    debug.println("[Main] Init ACPI");
     const rsdp_res = rsdp_req.response.?;
     try acpi.init(rsdp_res);
 
-    debug.print("[Main] Init framebuffer\r\n");
+    debug.println("[Main] Init framebuffer");
     if (framebuffer_request.response) |framebuffer_response| {
         if (framebuffer_response.framebuffer_count < 1) {
             arch.hlt();
