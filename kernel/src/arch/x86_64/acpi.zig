@@ -35,38 +35,44 @@ const SDTHeader = extern struct {
     creator_revision: u32,
 };
 
-const RSDT = extern struct {
+const SDT = extern struct {
     header: SDTHeader,
-    addresses: [*]u32,
-};
-
-const XSDT = extern struct {
-    header: SDTHeader,
-    addresses: [*]u64,
+    data: [*]u8,
 };
 
 const RSDPPtr = *align(1) const RSDP;
 const XSDPPtr = *align(1) const XSDP;
 
-const RSDTPtr = *align(1) const RSDT;
-const XSDTPtr = *align(1) const XSDT;
+const SDTPtr = *align(1) const SDT;
+
+pub const ACPI = struct {
+    rsdt: SDTPtr = undefined,
+
+    pub fn load(self: *ACPI, rsdp_res: *limine.RsdpResponse) void {
+        switch (rsdp_res.revision) {
+            0 => {
+                const rsdp: RSDPPtr = @ptrCast(rsdp_res.address);
+                self.rsdt = @ptrFromInt(rsdp.rsdt_addr);
+            },
+            2 => {
+                const xsdp: XSDPPtr = @ptrCast(rsdp_res.address);
+                self.rsdt = @ptrFromInt(xsdp.xsdt_addr);
+            },
+            else => debug.panic("Unknown ACPI revision!"),
+        }
+    }
+
+    pub fn acpi_find_sdt(self: *ACPI, signature: [4]u8) !SDT {
+        _ = self;
+        _ = signature;
+        // TODO
+    }
+};
 
 pub fn init(rsdp_res: *limine.RsdpResponse) !void {
-    switch (rsdp_res.revision) {
-        0 => {
-            const rsdp: RSDPPtr = @ptrCast(rsdp_res.address);
-            const rsdt: RSDTPtr = @ptrFromInt(rsdp.rsdt_addr);
-            _ = rsdt;
-            // TODO: Parse tables
-        },
-        2 => {
-            const xsdp: XSDPPtr = @ptrCast(rsdp_res.address);
-            const xsdt: XSDTPtr = @ptrFromInt(xsdp.xsdt_addr);
-            _ = xsdt;
-            // TODO: Parse tables
-        },
-        else => debug.panic("Unknown ACPI revision!"),
-    }
+    var instance: ACPI = .{};
+    instance.load(rsdp_res);
+    // TODO: Process desired tables
 }
 
 pub fn sum_bytes(comptime T: type, item: T) u8 {
