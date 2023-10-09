@@ -11,7 +11,8 @@ const debug = @import("arch/x86_64/debug.zig");
 const gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
-pub export var framebuffer_request: limine.FramebufferRequest = .{};
+pub export var framebuffer_req: limine.FramebufferRequest = .{};
+pub export var hhdm_req: limine.HhdmRequest = .{};
 pub export var rsdp_req: limine.RsdpRequest = .{};
 
 export fn _start() callconv(.C) noreturn {
@@ -28,11 +29,12 @@ pub fn main() !void {
     try cpu.init();
 
     debug.println("[Main] Init ACPI");
+    const hhdm_res = hhdm_req.response.?;
     const rsdp_res = rsdp_req.response.?;
-    try acpi.init(rsdp_res);
+    try acpi.init(hhdm_res, rsdp_res);
 
     debug.println("[Main] Init framebuffer");
-    if (framebuffer_request.response) |framebuffer_response| {
+    if (framebuffer_req.response) |framebuffer_response| {
         if (framebuffer_response.framebuffer_count < 1) {
             arch.hlt();
         }

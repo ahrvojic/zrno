@@ -43,23 +43,26 @@ const SDTPtr = *align(1) const SDT;
 
 pub const ACPI = struct {
     rsdt: SDTPtr = undefined,
+
+    hhdm_offset: u64 = undefined,
     use_xsdt: bool = undefined,
 
-    pub fn load(self: *ACPI, rsdp_res: *limine.RsdpResponse) void {
+    pub fn load(self: *ACPI, hhdm_res: *limine.HhdmResponse, rsdp_res: *limine.RsdpResponse) void {
+        self.hhdm_offset = hhdm_res.offset;
+        self.use_xsdt = rsdp_res.revision >= 2;
+
         debug.println("[ACPI] Fetching RSDT");
         switch (rsdp_res.revision) {
             0 => {
                 const rsdp: RSDPPtr = @ptrCast(rsdp_res.address);
-                self.rsdt = @ptrFromInt(rsdp.rsdt_addr);
+                self.rsdt = @ptrFromInt(rsdp.rsdt_addr + self.hhdm_offset);
             },
             2 => {
                 const xsdp: XSDPPtr = @ptrCast(rsdp_res.address);
-                self.rsdt = @ptrFromInt(xsdp.xsdt_addr);
+                self.rsdt = @ptrFromInt(xsdp.xsdt_addr + self.hhdm_offset);
             },
             else => debug.panic("Unknown ACPI revision!"),
         }
-
-        self.use_xsdt = rsdp_res.revision >= 2;
     }
 
     pub fn findSDT(self: *ACPI, signature: []const u8, index: usize) !SDTPtr {
@@ -71,8 +74,8 @@ pub const ACPI = struct {
         var index_curr = index;
 
         for (entries) |entry| {
-            const sdt: SDTPtr = @ptrFromInt(entry);
-
+            const sdt: SDTPtr = @ptrFromInt(entry + self.hhdm_offset);
+            debug.println(&sdt.signature);
             if (!std.mem.eql(u8, &sdt.signature, std.mem.sliceTo(signature, 3))) {
                 continue;
             }
@@ -91,9 +94,9 @@ pub const ACPI = struct {
     }
 };
 
-pub fn init(rsdp_res: *limine.RsdpResponse) !void {
+pub fn init(hhdm_res: *limine.HhdmResponse, rsdp_res: *limine.RsdpResponse) !void {
     var instance: ACPI = .{};
-    instance.load(rsdp_res);
+    instance.load(hhdm_res, rsdp_res);
 
     // Find and process desired SDTs
     debug.println("[ACPI] Finding FACP");
