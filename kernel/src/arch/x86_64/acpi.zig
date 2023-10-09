@@ -46,6 +46,7 @@ pub const ACPI = struct {
     use_xsdt: bool = undefined,
 
     pub fn load(self: *ACPI, rsdp_res: *limine.RsdpResponse) void {
+        debug.println("[ACPI] Fetching RSDT");
         switch (rsdp_res.revision) {
             0 => {
                 const rsdp: RSDPPtr = @ptrCast(rsdp_res.address);
@@ -95,6 +96,7 @@ pub fn init(rsdp_res: *limine.RsdpResponse) !void {
     instance.load(rsdp_res);
 
     // Find and process desired SDTs
+    debug.println("[ACPI] Finding FACP");
     _ = try instance.findSDT("FACP", 0);
 }
 
