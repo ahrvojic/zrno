@@ -54,10 +54,12 @@ pub const ACPI = struct {
         debug.println("[ACPI] Fetching RSDT");
         switch (rsdp_res.revision) {
             0 => {
+                debug.println("[ACPI] Revision 0");
                 const rsdp: RSDPPtr = @ptrCast(rsdp_res.address);
                 self.rsdt = @ptrFromInt(rsdp.rsdt_addr + self.hhdm_offset);
             },
             2 => {
+                debug.println("[ACPI] Revision 2");
                 const xsdp: XSDPPtr = @ptrCast(rsdp_res.address);
                 self.rsdt = @ptrFromInt(xsdp.xsdt_addr + self.hhdm_offset);
             },
