@@ -11,17 +11,20 @@ const debug = @import("arch/x86_64/debug.zig");
 const gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
-pub export var framebuffer_req: limine.FramebufferRequest = .{};
 pub export var hhdm_req: limine.HhdmRequest = .{};
 pub export var rsdp_req: limine.RsdpRequest = .{};
 
 export fn _start() callconv(.C) noreturn {
     main() catch {};
-    debug.println("[Main] Done.");
     arch.hlt();
 }
 
 pub fn main() !void {
+    // Get needed info from bootloader
+    const hhdm_res = hhdm_req.response.?;
+    const rsdp_res = rsdp_req.response.?;
+
+    // Disable interrupts and defer reenable
     arch.cli();
     defer arch.sti();
 
@@ -29,26 +32,7 @@ pub fn main() !void {
     try cpu.init();
 
     debug.println("[Main] Init ACPI");
-    const hhdm_res = hhdm_req.response.?;
-    const rsdp_res = rsdp_req.response.?;
     try acpi.init(hhdm_res, rsdp_res);
 
-    debug.println("[Main] Init framebuffer");
-    if (framebuffer_req.response) |framebuffer_response| {
-        if (framebuffer_response.framebuffer_count < 1) {
-            arch.hlt();
-        }
-
-        // Get the first framebuffer's information.
-        const framebuffer = framebuffer_response.framebuffers()[0];
-
-        for (0..100) |i| {
-            // Calculate the pixel offset using the framebuffer information we obtained above.
-            // We skip `i` scanlines (pitch is provided in bytes) and add `i * 4` to skip `i` pixels forward.
-            const pixel_offset = i * framebuffer.pitch + i * 4;
-
-            // Write 0xFFFFFFFF to the provided pixel offset to fill it white.
-            @as(*u32, @ptrCast(@alignCast(framebuffer.address + pixel_offset))).* = 0xFFFFFFFF;
-        }
-    }
+    debug.println("[Main] Done.");
 }
