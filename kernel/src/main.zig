@@ -15,11 +15,7 @@ pub export var framebuffer_request: limine.FramebufferRequest = .{};
 pub export var rsdp_req: limine.RsdpRequest = .{};
 
 export fn _start() callconv(.C) noreturn {
-    main() catch |err| {
-        _ = err;
-        debug.println("Error");
-    };
-
+    main() catch {};
     debug.println("[Main] Done.");
     arch.hlt();
 }
