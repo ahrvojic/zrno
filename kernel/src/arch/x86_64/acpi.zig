@@ -76,8 +76,8 @@ pub const ACPI = struct {
     }
 
     fn findSDTTyped(self: *ACPI, comptime T: type, signature: []const u8, index: usize) !SDTPtr {
-        const data_length = self.rsdt.header.length - @sizeOf(SDTHeader);
-        const entries = std.mem.bytesAsSlice(T, self.rsdt.data[0..data_length]);
+        const data_bytes = self.rsdt.header.length - @sizeOf(SDTHeader);
+        const entries = std.mem.bytesAsSlice(T, self.rsdt.data[0..data_bytes]);
         var index_curr = index;
 
         for (entries) |entry| {
