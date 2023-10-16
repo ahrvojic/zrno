@@ -127,7 +127,7 @@ pub const GDT = struct {
             .base = @intFromPtr(self),
         };
 
-        debug.print("[GDT] Load register and TSS\r\n");
+        debug.println("[GDT] Load register and TSS");
         asm volatile (
             \\lgdt (%[gdtr])
             \\ltr %[tss_sel]
