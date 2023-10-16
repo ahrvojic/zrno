@@ -39,7 +39,7 @@ pub const IDT = struct {
     entries: [256]IDTEntry align(16) = undefined,
 
     pub fn load(self: *IDT) void {
-        debug.print("[IDT] Set interrupt handlers\r\n");
+        debug.println("[IDT] Set interrupt handlers");
         comptime var i: usize = 0;
         inline while (i < 256) : (i += 1) {
             const handler = comptime interrupts.makeHandler(i);
@@ -51,7 +51,7 @@ pub const IDT = struct {
             .base = @intFromPtr(self),
         };
 
-        debug.print("[IDT] Load register\r\n");
+        debug.println("[IDT] Load register");
         asm volatile (
             \\lidt (%[idtr])
             :
