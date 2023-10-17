@@ -4,8 +4,8 @@ const port = @import("port.zig");
 const debugcon = 0xe9;
 
 pub fn printInt(num: u64) void {
-    if (num == 0) return;
-    printInt(num / 10);
+    const q = num / 10;
+    if (q > 0) printInt(q);
     port.outb(debugcon, @truncate(num % 10 + '0'));
 }
 
