@@ -103,7 +103,7 @@ pub fn init(hhdm_res: *limine.HhdmResponse, rsdp_res: *limine.RsdpResponse) !voi
     instance.load(hhdm_res, rsdp_res);
 
     // Find and process desired SDTs
-    debug.println("[ACPI] Finding FACP");
+    debug.println("[ACPI] Finding FADT");
     _ = try instance.findSDT("FACP", 0);
 }
 
