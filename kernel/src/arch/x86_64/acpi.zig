@@ -70,10 +70,10 @@ pub const ACPI = struct {
     }
 
     pub fn findSDT(self: *ACPI, signature: []const u8, index: usize) !SDTPtr {
-        return if (self.use_xsdt) self.findSDTTyped(u64, signature, index) else self.findSDTTyped(u32, signature, index);
+        return if (self.use_xsdt) self.findSDTAt(u64, signature, index) else self.findSDTAt(u32, signature, index);
     }
 
-    fn findSDTTyped(self: *ACPI, comptime T: type, signature: []const u8, index: usize) !SDTPtr {
+    fn findSDTAt(self: *ACPI, comptime T: type, signature: []const u8, index: usize) !SDTPtr {
         const entries = std.mem.bytesAsSlice(T, self.rsdt.getData());
         var index_curr = index;
 
