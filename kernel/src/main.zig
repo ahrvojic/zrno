@@ -1,10 +1,10 @@
 const std = @import("std");
 const limine = @import("limine");
 
-const acpi = @import("arch/x86_64/acpi.zig");
-const arch = @import("arch/x86_64/arch.zig");
-const cpu = @import("arch/x86_64/cpu.zig");
-const debug = @import("arch/x86_64/debug.zig");
+const acpi = @import("acpi/acpi.zig");
+const arch = @import("sys/arch.zig");
+const cpu = @import("sys/cpu.zig");
+const debug = @import("sys/debug.zig");
 
 // TODO: Hook up os.heap.page_allocator to kernel allocator once implemented
 
