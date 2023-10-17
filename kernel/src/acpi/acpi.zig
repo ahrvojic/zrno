@@ -1,7 +1,7 @@
 const std = @import("std");
 const limine = @import("limine");
 
-const debug = @import("debug.zig");
+const debug = @import("../sys/debug.zig");
 
 const RSDP = extern struct {
     signature: [8]u8,
