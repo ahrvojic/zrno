@@ -23,7 +23,7 @@ const XSDP = extern struct {
     reserved: [3]u8,
 };
 
-const SDTHeader = extern struct {
+const SDT = extern struct {
     signature: [4]u8,
     length: u32,
     revision: u8,
@@ -33,16 +33,14 @@ const SDTHeader = extern struct {
     oem_revision: u32,
     creator_id: u32,
     creator_revision: u32,
-};
 
-const SDT = extern struct {
-    header: SDTHeader,
-    data: [*]const u8,
+    fn getData(self: SDTPtr) []const u8 {
+        return @as([*]const u8, @ptrCast(self))[0..self.length][@sizeOf(SDT)..];
+    }
 };
 
 const RSDPPtr = *align(1) const RSDP;
 const XSDPPtr = *align(1) const XSDP;
-
 const SDTPtr = *align(1) const SDT;
 
 pub const ACPI = struct {
@@ -76,14 +74,13 @@ pub const ACPI = struct {
     }
 
     fn findSDTTyped(self: *ACPI, comptime T: type, signature: []const u8, index: usize) !SDTPtr {
-        const data_bytes = self.rsdt.header.length - @sizeOf(SDTHeader);
-        const entries = std.mem.bytesAsSlice(T, self.rsdt.data[0..data_bytes]);
+        const entries = std.mem.bytesAsSlice(T, self.rsdt.getData());
         var index_curr = index;
 
         for (entries) |entry| {
             const sdt: SDTPtr = @ptrFromInt(entry + self.hhdm_offset);
-            debug.println(&sdt.header.signature);
-            if (!std.mem.eql(u8, &sdt.header.signature, std.mem.sliceTo(signature, 3))) {
+
+            if (!std.mem.eql(u8, &sdt.signature, std.mem.sliceTo(signature, 3))) {
                 continue;
             }
 
