@@ -1,4 +1,4 @@
-pub inline fn inb(port: u16) u8 {
+pub fn inb(port: u16) callconv(.Inline) u8 {
     return asm volatile (
         \\inb %[port], %[res]
         : [res] "={al}" (-> u8)
@@ -6,7 +6,7 @@ pub inline fn inb(port: u16) u8 {
     );
 }
 
-pub inline fn outb(port: u16, value: u8) void {
+pub fn outb(port: u16, value: u8) callconv(.Inline) void {
     asm volatile (
         \\outb %[value], %[port]
         :
