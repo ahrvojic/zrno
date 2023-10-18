@@ -15,13 +15,12 @@ pub fn print(string: []const u8) void {
     }
 }
 
-pub fn println(string: []const u8) void {
+pub fn println(string: []const u8) callconv(.Inline) void {
     print(string);
     print("\r\n");
 }
 
-pub fn panic(message: []const u8) noreturn {
-    print("KERNEL PANIC: ");
-    println(message);
+pub fn panic(comptime message: []const u8) noreturn {
+    println("KERNEL PANIC: " ++ message);
     arch.hang();
 }

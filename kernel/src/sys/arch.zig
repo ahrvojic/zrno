@@ -1,18 +1,18 @@
-pub inline fn cli() void {
+pub fn cli() callconv(.Inline) void {
     asm volatile ("cli");
 }
 
-pub inline fn sti() void {
+pub fn sti() callconv(.Inline) void {
     asm volatile ("sti");
 }
 
-pub inline fn hlt() noreturn {
+pub fn hlt() callconv(.Inline) noreturn {
     while (true) {
         asm volatile ("hlt");
     }
 }
 
-pub inline fn hang() noreturn {
+pub fn hang() callconv(.Inline) noreturn {
     cli();
     hlt();
 }
