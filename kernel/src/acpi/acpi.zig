@@ -2,6 +2,7 @@ const std = @import("std");
 const limine = @import("limine");
 
 const debug = @import("../sys/debug.zig");
+const fadt = @import("fadt.zig");
 
 const RSDP = extern struct {
     signature: [8]u8,
@@ -34,17 +35,13 @@ const SDT = extern struct {
     creator_id: u32,
     creator_revision: u32,
 
-    fn getData(self: SDTPtr) []const u8 {
+    fn getData(self: *const SDT) []const u8 {
         return @as([*]const u8, @ptrCast(self))[0..self.length][@sizeOf(SDT)..];
     }
 };
 
-const RSDPPtr = *align(1) const RSDP;
-const XSDPPtr = *align(1) const XSDP;
-const SDTPtr = *align(1) const SDT;
-
 pub const ACPI = struct {
-    rsdt: SDTPtr = undefined,
+    rsdt: *const SDT = undefined,
 
     hhdm_offset: u64 = undefined,
     use_xsdt: bool = undefined,
@@ -57,28 +54,28 @@ pub const ACPI = struct {
         switch (rsdp_res.revision) {
             0 => {
                 debug.println("[ACPI] Revision 0");
-                const rsdp: RSDPPtr = @ptrCast(rsdp_res.address);
+                const rsdp: *align(1) const RSDP = @ptrCast(rsdp_res.address);
                 self.rsdt = @ptrFromInt(rsdp.rsdt_addr + self.hhdm_offset);
             },
             2 => {
                 debug.println("[ACPI] Revision 2");
-                const xsdp: XSDPPtr = @ptrCast(rsdp_res.address);
+                const xsdp: *align(1) const XSDP = @ptrCast(rsdp_res.address);
                 self.rsdt = @ptrFromInt(xsdp.xsdt_addr + self.hhdm_offset);
             },
             else => debug.panic("Unknown ACPI revision!"),
         }
     }
 
-    pub fn findSDT(self: *ACPI, signature: []const u8, index: usize) !SDTPtr {
+    pub fn findSDT(self: *ACPI, signature: []const u8, index: usize) !*const SDT {
         return if (self.use_xsdt) self.findSDTAt(u64, signature, index) else self.findSDTAt(u32, signature, index);
     }
 
-    fn findSDTAt(self: *ACPI, comptime T: type, signature: []const u8, index: usize) !SDTPtr {
+    fn findSDTAt(self: *ACPI, comptime T: type, signature: []const u8, index: usize) !*const SDT {
         const entries = std.mem.bytesAsSlice(T, self.rsdt.getData());
         var index_curr = index;
 
         for (entries) |entry| {
-            const sdt: SDTPtr = @ptrFromInt(entry + self.hhdm_offset);
+            const sdt: *const SDT = @ptrFromInt(entry + self.hhdm_offset);
 
             if (!std.mem.eql(u8, &sdt.signature, std.mem.sliceTo(signature, 3))) {
                 continue;
@@ -104,7 +101,8 @@ pub fn init(hhdm_res: *limine.HhdmResponse, rsdp_res: *limine.RsdpResponse) !voi
 
     // Find and process desired SDTs
     debug.println("[ACPI] Finding FADT");
-    _ = try instance.findSDT("FACP", 0);
+    const sdt = try instance.findSDT("FACP", 0);
+    _ = std.mem.bytesAsValue(fadt.FADT, sdt.getData()[0..@sizeOf(fadt.FADT)]);
 }
 
 pub fn sum_bytes(comptime T: type, item: T) u8 {
