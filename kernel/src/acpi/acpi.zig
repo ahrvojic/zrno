@@ -3,6 +3,7 @@ const limine = @import("limine");
 
 const debug = @import("../sys/debug.zig");
 const fadt = @import("fadt.zig");
+const madt = @import("madt.zig");
 
 const RSDP = extern struct {
     signature: [8]u8,
@@ -100,40 +101,14 @@ pub fn init(hhdm_res: *limine.HhdmResponse, rsdp_res: *limine.RsdpResponse) !voi
     instance.load(hhdm_res, rsdp_res);
 
     // Find and process desired SDTs
-    debug.println("[ACPI] Finding FADT");
-    const sdt = try instance.findSDT("FACP", 0);
-    _ = std.mem.bytesAsValue(fadt.FADT, sdt.getData()[0..@sizeOf(fadt.FADT)]);
-}
-
-pub fn sum_bytes(comptime T: type, item: T) u8 {
-    const bytes: [@sizeOf(T)]u8 = @bitCast(item);
-    var sum: u8 = 0;
-
-    for (bytes) |byte| {
-        sum +%= byte;
+    debug.println("[ACPI] Load FADT");
+    const fadt_sdt = try instance.findSDT("FACP", 0);
+    const fadt_tbl = std.mem.bytesAsValue(fadt.FADT, fadt_sdt.getData()[0..@sizeOf(fadt.FADT)]);
+    if (fadt_tbl.flags & 0x80000 != 0) {
+        debug.panic("Hardware-reduced ACPI not supported!");
     }
 
-    return sum;
-}
-
-test "byte sums" {
-    const arr1: [4]u8 = .{ 1, 1, 1, 1 };
-    try std.testing.expect(sum_bytes([4]u8, arr1) == 4);
-
-    const arr2: [2]u8 = .{ 255, 1 };
-    try std.testing.expect(sum_bytes([2]u8, arr2) == 0);
-
-    const sdt: SDT = .{
-        .signature = "APIC".*,
-        .length = 0xbc,
-        .revision = 0x02,
-        .checksum = 0x41,
-        .oem_id = "APPLE ".*,
-        .oem_table_id = "Apple00 ".*,
-        .oem_revision = 0x01,
-        .creator_id = std.mem.bytesAsSlice(u32, "Loki")[0],
-        .creator_revision = 0x5f,
-    };
-    std.debug.print("{any}\n", .{sdt});
-    try std.testing.expect(sum_bytes(SDT, sdt) == 0x0f);
+    debug.println("[ACPI] Load MADT");
+    const madt_sdt = try instance.findSDT("APIC", 0);
+    _ = madt_sdt; // TODO
 }
