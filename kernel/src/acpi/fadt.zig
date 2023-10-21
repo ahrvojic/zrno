@@ -1,4 +1,9 @@
-pub const GenericAddress = extern struct {
+const std = @import("std");
+
+const acpi = @import("acpi.zig");
+const debug = @import("../sys/debug.zig");
+
+const GenericAddress = extern struct {
     address_space: u8 align(1),
     bit_width: u8 align(1),
     bit_offset: u8 align(1),
@@ -6,7 +11,7 @@ pub const GenericAddress = extern struct {
     address: u64 align(1),
 };
 
-pub const FADT = extern struct {
+const FADT = extern struct {
     firmware_ctrl: u32 align(1),
     dsdt_addr: u32 align(1),
     reserved_1: u8 align(1),
@@ -59,3 +64,10 @@ pub const FADT = extern struct {
     x_gpe0_block: GenericAddress align(1),
     x_gpe1_block: GenericAddress align(1),
 };
+
+pub fn init(sdt: *const acpi.SDT) !void {
+    const fadt = std.mem.bytesAsValue(FADT, sdt.getData()[0..@sizeOf(FADT)]);
+    if (fadt.flags & 0x80000 != 0) {
+        debug.panic("Hardware-reduced ACPI not supported!");
+    }
+}

@@ -25,7 +25,7 @@ const XSDP = extern struct {
     reserved: [3]u8,
 };
 
-const SDT = extern struct {
+pub const SDT = extern struct {
     signature: [4]u8,
     length: u32,
     revision: u8,
@@ -36,7 +36,7 @@ const SDT = extern struct {
     creator_id: u32,
     creator_revision: u32,
 
-    fn getData(self: *const SDT) []const u8 {
+    pub fn getData(self: *const SDT) []const u8 {
         return @as([*]const u8, @ptrCast(self))[0..self.length][@sizeOf(SDT)..];
     }
 };
@@ -103,12 +103,9 @@ pub fn init(hhdm_res: *limine.HhdmResponse, rsdp_res: *limine.RsdpResponse) !voi
     // Find and process desired SDTs
     debug.println("[ACPI] Load FADT");
     const fadt_sdt = try instance.findSDT("FACP", 0);
-    const fadt_tbl = std.mem.bytesAsValue(fadt.FADT, fadt_sdt.getData()[0..@sizeOf(fadt.FADT)]);
-    if (fadt_tbl.flags & 0x80000 != 0) {
-        debug.panic("Hardware-reduced ACPI not supported!");
-    }
+    try fadt.init(fadt_sdt);
 
     debug.println("[ACPI] Load MADT");
     const madt_sdt = try instance.findSDT("APIC", 0);
-    _ = madt_sdt; // TODO
+    try madt.init(madt_sdt);
 }
