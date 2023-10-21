@@ -67,7 +67,7 @@ const FADT = extern struct {
 
 pub fn init(sdt: *const acpi.SDT) !void {
     const fadt = std.mem.bytesAsValue(FADT, sdt.getData()[0..@sizeOf(FADT)]);
-    if (fadt.flags & 0x80000 != 0) {
+    if (fadt.flags & 0x80000 == 1) {
         debug.panic("Hardware-reduced ACPI not supported!");
     }
 }
