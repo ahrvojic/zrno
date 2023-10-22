@@ -8,7 +8,7 @@ const MADT = extern struct {
     flags: u32 align(1),
 };
 
-const MADTEntry = extern struct {
+const MADTHeader = extern struct {
     id: u8 align(1),
     length: u8 align(1),
 };
@@ -28,16 +28,17 @@ pub fn init(sdt: *const acpi.SDT) !void {
     }
 
     const madt_entries = madt_data[8..];
+    const header_size = @sizeOf(MADTHeader);
     var offset: usize = 0;
-    while (madt_entries.len - offset >= 2) {
-        const entry: *const MADTEntry = @ptrCast(madt_entries[offset..offset + 2].ptr);
+    while (madt_entries.len - offset >= header_size) {
+        const entry: *const MADTHeader = @ptrCast(madt_entries[offset..(offset + header_size)].ptr);
         switch (entry.id) {
             0 => {
                 debug.println("[MADT] Found local APIC");
             },
             1 => {
                 debug.println("[MADT] Found I/O APIC");
-                const io_apic: *const IOApic = @ptrCast(madt_entries[offset + 2..entry.length]);
+                const io_apic: *const IOApic = @ptrCast(madt_entries[(offset + header_size)..entry.length]);
                 _ = io_apic; // TODO
             },
             2 => {
@@ -60,6 +61,6 @@ pub fn init(sdt: *const acpi.SDT) !void {
             }
         }
 
-        offset += @max(entry.length, 2);
+        offset += @max(entry.length, header_size);
     }
 }
