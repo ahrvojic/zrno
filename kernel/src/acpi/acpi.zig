@@ -100,7 +100,6 @@ pub fn init(hhdm_res: *limine.HhdmResponse, rsdp_res: *limine.RsdpResponse) !voi
     var instance: ACPI = .{};
     instance.load(hhdm_res, rsdp_res);
 
-    // Find and process desired SDTs
     debug.println("[ACPI] Load FADT");
     const fadt_sdt = try instance.findSDT("FACP", 0);
     try fadt.init(fadt_sdt);
