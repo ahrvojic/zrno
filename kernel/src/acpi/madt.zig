@@ -8,7 +8,7 @@ const MADTFields = extern struct {
     flags: u32 align(1),
 };
 
-const MADTHeader = extern struct {
+const MADTEntry = extern struct {
     id: u8 align(1),
     length: u8 align(1),
 };
@@ -21,5 +21,40 @@ pub fn init(sdt: *const acpi.SDT) !void {
     }
 
     const madt_entries = madt_data[8..];
-    _ = madt_entries; // TODO
+    var offset: usize = 0;
+    while (true) {
+        if (sdt.length - @sizeOf(acpi.SDT) - @sizeOf(MADTFields) - offset < 2) {
+            break;
+        }
+
+        const entry: *const MADTEntry = @ptrCast(madt_entries[offset..offset + 2].ptr);
+        switch (entry.id) {
+            0 => {
+                debug.println("[MADT] Found local APIC");
+            },
+            1 => {
+                debug.println("[MADT] Found I/O APIC");
+            },
+            2 => {
+                debug.println("[MADT] Found I/O APIC interrupt source override");
+            },
+            3 => {
+                debug.println("[MADT] Found I/O APIC NMI source");
+            },
+            4 => {
+                debug.println("[MADT] Found local APIC NMIs");
+            },
+            5 => {
+                debug.println("[MADT] Found local APIC address override");
+            },
+            9 => {
+                debug.println("[MADT] Found local x2APIC");
+            },
+            else => {
+                debug.println("[MADT] Found unrecognized entry");
+            }
+        }
+
+        offset += @max(entry.length, 2);
+    }
 }

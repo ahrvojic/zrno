@@ -51,7 +51,7 @@ pub const ACPI = struct {
         self.hhdm_offset = hhdm_res.offset;
         self.use_xsdt = rsdp_res.revision >= 2;
 
-        debug.println("[ACPI] Fetching RSDT");
+        debug.println("[ACPI] Load RSDT");
         switch (rsdp_res.revision) {
             0 => {
                 debug.println("[ACPI] Revision 0");

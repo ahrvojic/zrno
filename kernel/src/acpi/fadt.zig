@@ -1,5 +1,3 @@
-const std = @import("std");
-
 const acpi = @import("acpi.zig");
 const debug = @import("../sys/debug.zig");
 
@@ -66,7 +64,7 @@ const FADT = extern struct {
 };
 
 pub fn init(sdt: *const acpi.SDT) !void {
-    const fadt = std.mem.bytesAsValue(FADT, sdt.getData()[0..@sizeOf(FADT)]);
+    const fadt: *const FADT = @ptrCast(sdt.getData().ptr);
     if (fadt.flags & 0x80000 == 1) {
         debug.panic("Hardware-reduced ACPI not supported!");
     }
