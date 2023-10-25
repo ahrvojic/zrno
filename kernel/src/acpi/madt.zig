@@ -54,16 +54,17 @@ pub fn init(sdt: *const acpi.SDT) !void {
     const madt_entries = madt_data[8..];
     const header_size = @sizeOf(Header);
 
-    var offset: usize = 0;
-
     var lapic_next: usize = 0;
     var lapic_nmi_next: usize = 0;
     var io_apic_next: usize = 0;
     var io_apic_iso_next: usize = 0;
 
+    var offset: usize = 0;
+
     while (madt_entries.len - offset >= header_size) {
-        const entry: *const Header = @ptrCast(madt_entries[offset..(offset + header_size)]);
-        const data = madt_entries[(offset + header_size)..(offset + entry.length)];
+        const header_end = offset + header_size;
+        const entry: *const Header = @ptrCast(madt_entries[offset..header_end]);
+        const data = madt_entries[header_end..(offset + entry.length)];
 
         switch (entry.id) {
             0 => {
