@@ -6,11 +6,6 @@ const arch = @import("sys/arch.zig");
 const cpu = @import("sys/cpu.zig");
 const debug = @import("sys/debug.zig");
 
-// TODO: Hook up os.heap.page_allocator to kernel allocator once implemented
-
-const gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const allocator = gpa.allocator();
-
 pub export var hhdm_req: limine.HhdmRequest = .{};
 pub export var rsdp_req: limine.RsdpRequest = .{};
 

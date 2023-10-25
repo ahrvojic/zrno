@@ -110,7 +110,7 @@ pub const GDT = struct {
         0, // TSS high
     },
 
-    pub fn load(self: *GDT, tss: *TSS) void {
+    pub fn load(self: *GDT, tss: *const TSS) void {
         const tss_entry = TSSEntry.make(
             @intFromPtr(tss),
             @sizeOf(TSS) - 1,
