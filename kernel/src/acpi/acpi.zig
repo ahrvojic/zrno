@@ -67,11 +67,11 @@ pub const ACPI = struct {
         }
     }
 
-    pub fn findSDT(self: *ACPI, signature: []const u8, index: usize) !*const SDT {
+    pub fn findSDT(self: *const ACPI, signature: []const u8, index: usize) !*const SDT {
         return if (self.use_xsdt) self.findSDTAt(u64, signature, index) else self.findSDTAt(u32, signature, index);
     }
 
-    fn findSDTAt(self: *ACPI, comptime T: type, signature: []const u8, index: usize) !*const SDT {
+    fn findSDTAt(self: *const ACPI, comptime T: type, signature: []const u8, index: usize) !*const SDT {
         const entries = std.mem.bytesAsSlice(T, self.rsdt.getData());
         var index_curr = index;
 
