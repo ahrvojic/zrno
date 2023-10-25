@@ -13,10 +13,16 @@ const Header = extern struct {
     length: u8 align(1),
 };
 
-const LocalApic = extern struct {
+const Lapic = extern struct {
     processor_id: u8 align(1),
     apic_id: u8 align(1),
     flags: u32 align(1),
+};
+
+const LapicNMI = extern struct {
+    processor_id: u8 align(1),
+    flags: u16 align(1),
+    lint: u8 align(1),
 };
 
 const IOApic = extern struct {
@@ -33,11 +39,10 @@ const IOApicISO = extern struct {
     flags: u16 align(1),
 };
 
-const LocalApicNMI = extern struct {
-    processor_id: u8 align(1),
-    flags: u16 align(1),
-    lint: u8 align(1),
-};
+pub var lapics = [_]?Lapic{null} ** 8;
+pub var lapic_nmis = [_]?LapicNMI{null} ** 8;
+pub var io_apics = [_]?IOApic{null} ** 8;
+pub var io_apic_isos = [_]?IOApicISO{null} ** 8;
 
 pub fn init(sdt: *const acpi.SDT) !void {
     const madt_data = sdt.getData();
@@ -48,32 +53,41 @@ pub fn init(sdt: *const acpi.SDT) !void {
 
     const madt_entries = madt_data[8..];
     const header_size = @sizeOf(Header);
+
     var offset: usize = 0;
+
+    var lapic_next: usize = 0;
+    var lapic_nmi_next: usize = 0;
+    var io_apic_next: usize = 0;
+    var io_apic_iso_next: usize = 0;
+
     while (madt_entries.len - offset >= header_size) {
         const entry: *const Header = @ptrCast(madt_entries[offset..(offset + header_size)]);
+        const data = madt_entries[(offset + header_size)..(offset + entry.length)];
+
         switch (entry.id) {
             0 => {
                 debug.println("[MADT] Found local APIC");
-                const lapic: *const LocalApic = @ptrCast(madt_entries[(offset + header_size)..entry.length]);
-                _ = lapic; // TODO
+                lapics[lapic_next] = std.mem.bytesToValue(Lapic, data[0..@sizeOf(Lapic)]);
+                lapic_next += 1;
             },
             1 => {
                 debug.println("[MADT] Found I/O APIC");
-                const io_apic: *const IOApic = @ptrCast(madt_entries[(offset + header_size)..entry.length]);
-                _ = io_apic; // TODO
+                io_apics[io_apic_next] = std.mem.bytesToValue(IOApic, data[0..@sizeOf(IOApic)]);
+                io_apic_next += 1;
             },
             2 => {
                 debug.println("[MADT] Found I/O APIC interrupt source override");
-                //const io_apic_iso: *const IOApicISO = @ptrCast(madt_entries[(offset + header_size)..entry.length]);
-                //_ = io_apic_iso; // TODO
+                io_apic_isos[io_apic_iso_next] = std.mem.bytesToValue(IOApicISO, data[0..@sizeOf(IOApicISO)]);
+                io_apic_iso_next += 1;
             },
             3 => {
                 debug.println("[MADT] Found I/O APIC NMI source");
             },
             4 => {
                 debug.println("[MADT] Found local APIC NMIs");
-                //const lapic_nmi: *const LocalApicNMI = @ptrCast(madt_entries[(offset + header_size)..entry.length]);
-                //_ = lapic_nmi; // TODO
+                lapic_nmis[lapic_nmi_next] = std.mem.bytesToValue(LapicNMI, data[0..@sizeOf(LapicNMI)]);
+                lapic_nmi_next += 1;
             },
             5 => {
                 debug.println("[MADT] Found local APIC address override");
