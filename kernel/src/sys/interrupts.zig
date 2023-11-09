@@ -17,7 +17,7 @@ const InterruptFrame = extern struct {
     rbx: u64,
     rax: u64,
 
-    vector_number: u64,
+    vector: u64,
     error_code: u64,
 
     iret_rip: u64,
@@ -28,7 +28,8 @@ const InterruptFrame = extern struct {
 };
 
 export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
-    switch (frame.vector_number) {
+    switch (frame.vector) {
+        8 => debug.println("Double fault"),
         13 => debug.println("General protection fault"),
         14 => debug.println("Page fault"),
         else => debug.println("Unexpected interrupt"),
@@ -80,10 +81,10 @@ export fn interruptStub() callconv(.Naked) void {
 
 pub const InterruptHandler = *const fn () callconv(.Naked) void;
 
-pub fn makeHandler(comptime vector_number: usize) InterruptHandler {
+pub fn makeHandler(comptime vector: u8) InterruptHandler {
     return struct {
         fn handler() callconv(.Naked) void {
-            const has_error_code = switch (vector_number) {
+            const has_error_code = switch (vector) {
                 8 => true,
                 10...14 => true,
                 17 => true,
@@ -95,18 +96,18 @@ pub fn makeHandler(comptime vector_number: usize) InterruptHandler {
 
             if (comptime has_error_code) {
                 asm volatile (
-                    \\push %[vector_number]
+                    \\push %[vector]
                     \\jmp interruptStub
                     :
-                    : [vector_number] "i" (vector_number)
+                    : [vector] "i" (vector)
                 );
             } else {
                 asm volatile (
                     \\push $0
-                    \\push %[vector_number]
+                    \\push %[vector]
                     \\jmp interruptStub
                     :
-                    : [vector_number] "i" (vector_number)
+                    : [vector] "i" (vector)
                 );
             }
         }
