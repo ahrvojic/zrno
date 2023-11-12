@@ -2,7 +2,6 @@ const std = @import("std");
 const limine = @import("limine");
 
 const acpi = @import("acpi/acpi.zig");
-const arch = @import("sys/arch.zig");
 const cpu = @import("sys/cpu.zig");
 const debug = @import("sys/debug.zig");
 
@@ -11,7 +10,7 @@ pub export var rsdp_req: limine.RsdpRequest = .{};
 
 export fn _start() callconv(.C) noreturn {
     main() catch {};
-    arch.hlt();
+    cpu.halt();
 }
 
 pub fn main() !void {
@@ -19,9 +18,8 @@ pub fn main() !void {
     const hhdm_res = hhdm_req.response.?;
     const rsdp_res = rsdp_req.response.?;
 
-    // Disable interrupts and defer reenable
-    arch.cli();
-    defer arch.sti();
+    cpu.interrupts_disable();
+    defer cpu.interrupts_enable();
 
     debug.println("[Main] Init CPU");
     try cpu.init();
