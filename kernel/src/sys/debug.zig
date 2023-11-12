@@ -1,4 +1,4 @@
-const arch = @import("arch.zig");
+const cpu = @import("cpu.zig");
 const port = @import("port.zig");
 
 const debugcon = 0xe9;
@@ -22,5 +22,6 @@ pub fn println(string: []const u8) callconv(.Inline) void {
 
 pub fn panic(comptime message: []const u8) noreturn {
     println("KERNEL PANIC: " ++ message);
-    arch.hang();
+    cpu.interrupts_disable();
+    cpu.halt();
 }
