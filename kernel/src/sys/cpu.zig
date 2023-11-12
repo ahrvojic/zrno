@@ -1,4 +1,5 @@
 const std = @import("std");
+const limine = @import("limine");
 
 const debug = @import("debug.zig");
 const gdt = @import("gdt.zig");
@@ -13,7 +14,10 @@ const CPU = struct {
     lapic_base: u64,
 };
 
-pub fn init() !void {
+pub fn init(hhdm_res: *limine.HhdmResponse, smp_res: *limine.SmpResponse) !void {
+    _ = hhdm_res; // TODO
+    _ = smp_res; // TODO
+
     var instance: CPU = .{
         .lapic_base = readMSR(lapic_msr),
     };
