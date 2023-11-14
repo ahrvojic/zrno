@@ -1,5 +1,7 @@
 const debug = @import("debug.zig");
 
+pub const spurious_vector: u8 = 0xff;
+
 const InterruptFrame = extern struct {
     r15: u64,
     r14: u64,
