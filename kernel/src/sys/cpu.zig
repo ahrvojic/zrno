@@ -15,11 +15,10 @@ const CPU = struct {
 };
 
 pub fn init(hhdm_res: *limine.HhdmResponse, smp_res: *limine.SmpResponse) !void {
-    _ = hhdm_res; // TODO
     _ = smp_res; // TODO
 
     var instance: CPU = .{
-        .lapic_base = readMSR(lapic_msr),
+        .lapic_base = readMSR(lapic_msr) + hhdm_res.offset,
     };
 
     debug.println("[CPU] Load GDT");
