@@ -4,28 +4,60 @@ const limine = @import("limine");
 const debug = @import("debug.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
+const interrupts = @import("interrupts.zig");
 
-const lapic_msr = 0x1b;
+const msr_lapic = 0x1b;
+
+const lapic_reg_spurious = 0x0f0;
 
 const CPU = struct {
     gdt: gdt.GDT = .{},
     tss: gdt.TSS = .{},
     idt: idt.IDT = .{},
     lapic_base: u64,
+
+    pub fn init(self: *CPU) void {
+        debug.println("[CPU] Load GDT");
+        self.gdt.load(&self.tss);
+
+        debug.println("[CPU] Load IDT");
+        self.idt.load();
+
+        debug.println("[CPU] Init local APIC");
+        self.initLapic();
+    }
+
+    fn initLapic(self: *CPU) void {
+        // Spurious interrupt vector register:
+        // - Set lowest byte to interrupt vector
+        // - Set bit 8 to enable local APIC
+        self.lapicWrite(
+            lapic_reg_spurious,
+            self.lapicRead(lapic_reg_spurious) | interrupts.spurious_vector | 0x100
+        );
+    }
+
+    fn lapicRead(self: *CPU, reg: u32) u32 {
+        const addr = self.lapic_base + reg;
+        const ptr: *align(4) volatile u32 = @ptrFromInt(addr);
+        return ptr.*;
+    }
+
+    fn lapicWrite(self: *CPU, reg: u32, value: u32) void {
+        const addr = self.lapic_base + reg;
+        const ptr: *align(4) volatile u32 = @ptrFromInt(addr);
+        ptr.* = value;
+    }
 };
 
 pub fn init(hhdm_res: *limine.HhdmResponse, smp_res: *limine.SmpResponse) !void {
     _ = smp_res; // TODO
 
     var instance: CPU = .{
-        .lapic_base = readMSR(lapic_msr) + hhdm_res.offset,
+        .lapic_base = readMSR(msr_lapic) + hhdm_res.offset,
     };
 
-    debug.println("[CPU] Load GDT");
-    instance.gdt.load(&instance.tss);
-
-    debug.println("[CPU] Load IDT");
-    instance.idt.load();
+    instance.init();
 }
 
 pub fn interrupts_enable() callconv(.Inline) void {
