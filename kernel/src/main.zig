@@ -2,6 +2,7 @@ const std = @import("std");
 const limine = @import("limine");
 
 const acpi = @import("acpi/acpi.zig");
+const apic = @import("dev/apic.zig");
 const cpu = @import("sys/cpu.zig");
 const debug = @import("sys/debug.zig");
 
@@ -28,6 +29,9 @@ pub fn main() !void {
 
     debug.println("[Main] Init ACPI");
     try acpi.init(hhdm_res, rsdp_res);
+
+    debug.println("[Main] Init APIC");
+    try apic.init(hhdm_res);
 
     debug.println("[Main] Done.");
 }
