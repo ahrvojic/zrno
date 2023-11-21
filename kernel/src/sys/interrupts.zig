@@ -39,15 +39,18 @@ export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
             debug.println("General protection fault");
             cpu.halt();
         },
-        vec_page_fault =>
-            debug.println("Page fault"),
+        vec_page_fault => {
+            debug.println("Page fault");
+            // TODO
+        },
         vec_keyboard => {
             debug.println("Keyboard interrupt");
             cpu.bsp.eoi();
         },
-        vec_apic_spurious =>
+        vec_apic_spurious => {
+            debug.println("APIC spurious interrupt");
             // No EOI
-            debug.println("APIC spurious interrupt"),
+        },
         else => {
             debug.println("Unexpected interrupt");
             cpu.halt();
