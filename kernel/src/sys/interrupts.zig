@@ -1,6 +1,10 @@
+const cpu = @import("cpu.zig");
 const debug = @import("debug.zig");
 
-pub const spurious_vector: u8 = 0xff;
+pub const vec_gpf: u8 = 13;
+pub const vec_page_fault: u8 = 14;
+pub const vec_keyboard: u8 = 33;
+pub const vec_apic_spurious: u8 = 255;
 
 const InterruptFrame = extern struct {
     r15: u64,
@@ -31,10 +35,23 @@ const InterruptFrame = extern struct {
 
 export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
     switch (frame.vector) {
-        8 => debug.println("Double fault"),
-        13 => debug.println("General protection fault"),
-        14 => debug.println("Page fault"),
-        else => debug.println("Unexpected interrupt"),
+        vec_gpf => {
+            debug.println("General protection fault");
+            cpu.halt();
+        },
+        vec_page_fault =>
+            debug.println("Page fault"),
+        vec_keyboard => {
+            debug.println("Keyboard interrupt");
+            cpu.bsp.eoi();
+        },
+        vec_apic_spurious =>
+            // No EOI
+            debug.println("APIC spurious interrupt"),
+        else => {
+            debug.println("Unexpected interrupt");
+            cpu.halt();
+        },
     }
 }
 

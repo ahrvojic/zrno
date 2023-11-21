@@ -8,15 +8,18 @@ const interrupts = @import("interrupts.zig");
 
 const msr_lapic = 0x1b;
 
+const lapic_reg_eoi = 0x0b0;
 const lapic_reg_spurious = 0x0f0;
+
+pub var bsp: CPU = .{};
 
 const CPU = struct {
     gdt: gdt.GDT = .{},
     tss: gdt.TSS = .{},
     idt: idt.IDT = .{},
-    lapic_base: u64,
+    lapic_base: u64 = undefined,
 
-    pub fn init(self: *CPU) void {
+    pub fn init(self: *CPU, hhdm_offset: u64) void {
         debug.println("[CPU] Load GDT");
         self.gdt.load(&self.tss);
 
@@ -24,6 +27,7 @@ const CPU = struct {
         self.idt.load();
 
         debug.println("[CPU] Init local APIC");
+        self.lapic_base = readMSR(msr_lapic) + hhdm_offset;
         self.initLapic();
     }
 
@@ -33,7 +37,7 @@ const CPU = struct {
         // - Set bit 8 to enable local APIC
         self.lapicWrite(
             lapic_reg_spurious,
-            self.lapicRead(lapic_reg_spurious) | interrupts.spurious_vector | 0x100
+            self.lapicRead(lapic_reg_spurious) | interrupts.vec_apic_spurious | 0x100
         );
     }
 
@@ -48,16 +52,14 @@ const CPU = struct {
         const ptr: *align(4) volatile u32 = @ptrFromInt(addr);
         ptr.* = value;
     }
+
+    pub fn eoi(self: *const CPU) void {
+        lapicWrite(self, lapic_reg_eoi, 0);
+    }
 };
 
-pub fn init(hhdm_res: *limine.HhdmResponse, smp_res: *limine.SmpResponse) !void {
-    _ = smp_res; // TODO
-
-    var instance: CPU = .{
-        .lapic_base = readMSR(msr_lapic) + hhdm_res.offset,
-    };
-
-    instance.init();
+pub fn init(hhdm_res: *limine.HhdmResponse) !void {
+    bsp.init(hhdm_res.offset);
 }
 
 pub fn interrupts_enable() callconv(.Inline) void {
