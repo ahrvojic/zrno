@@ -8,7 +8,6 @@ const debug = @import("sys/debug.zig");
 
 pub export var hhdm_req: limine.HhdmRequest = .{};
 pub export var rsdp_req: limine.RsdpRequest = .{};
-pub export var smp_req: limine.SmpRequest = .{};
 
 export fn _start() callconv(.C) noreturn {
     main() catch {};
