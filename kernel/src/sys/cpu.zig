@@ -11,7 +11,7 @@ const msr_lapic = 0x1b;
 const lapic_reg_eoi = 0x0b0;
 const lapic_reg_spurious = 0x0f0;
 
-pub var bsp: CPU = .{};
+var bsp: CPU = .{};
 
 const CPU = struct {
     gdt: gdt.GDT = .{},
@@ -31,7 +31,7 @@ const CPU = struct {
         self.initLapic();
     }
 
-    fn initLapic(self: *const CPU) void {
+    pub fn initLapic(self: *const CPU) void {
         // Spurious interrupt vector register:
         // - Set lowest byte to interrupt vector
         // - Set bit 8 to enable local APIC
@@ -60,6 +60,10 @@ const CPU = struct {
 
 pub fn init(hhdm_res: *limine.HhdmResponse) !void {
     bsp.init(hhdm_res.offset);
+}
+
+pub fn get() *const CPU {
+    return &bsp;
 }
 
 pub fn interrupts_enable() callconv(.Inline) void {

@@ -3,7 +3,7 @@ const limine = @import("limine");
 const debug = @import("../sys/debug.zig");
 const madt = @import("../acpi/madt.zig");
 
-pub var io_apic: IOApic = .{};
+var io_apic: IOApic = .{};
 
 const IOApic = struct {
     io_apic_base: u64 = undefined,

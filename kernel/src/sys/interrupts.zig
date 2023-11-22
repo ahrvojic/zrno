@@ -36,8 +36,7 @@ const InterruptFrame = extern struct {
 export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
     switch (frame.vector) {
         vec_gpf => {
-            debug.println("General protection fault");
-            cpu.halt();
+            debug.panic("General protection fault");
         },
         vec_page_fault => {
             debug.println("Page fault");
@@ -45,15 +44,14 @@ export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
         },
         vec_keyboard => {
             debug.println("Keyboard interrupt");
-            cpu.bsp.eoi();
+            cpu.get().eoi();
         },
         vec_apic_spurious => {
             debug.println("APIC spurious interrupt");
             // No EOI
         },
         else => {
-            debug.println("Unexpected interrupt");
-            cpu.halt();
+            debug.panic("Unexpected interrupt");
         },
     }
 }
