@@ -22,8 +22,8 @@ pub fn main() !void {
     const hhdm_res = hhdm_req.response.?;
     const rsdp_res = rsdp_req.response.?;
 
-    cpu.interrupts_disable();
-    defer cpu.interrupts_enable();
+    cpu.interruptsDisable();
+    defer cpu.interruptsEnable();
 
     debug.println("[Main] Init CPU");
     try cpu.init(hhdm_res);

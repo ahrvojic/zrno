@@ -22,6 +22,6 @@ pub fn println(string: []const u8) callconv(.Inline) void {
 
 pub fn panic(comptime message: []const u8) noreturn {
     println("KERNEL PANIC: " ++ message);
-    cpu.interrupts_disable();
+    cpu.interruptsDisable();
     cpu.halt();
 }
