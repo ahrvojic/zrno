@@ -13,12 +13,12 @@ const IOApic = struct {
         self.io_apic_base = madt.io_apics[0].?.address + hhdm_offset;
     }
 
-    pub fn read(self: *const IOApic, offset: u32) u32 {
+    fn read(self: *const IOApic, offset: u32) u32 {
         @as(*volatile u32, @ptrFromInt(self.address)).* = offset;
         return @as(*volatile u32, @ptrFromInt(self.address + 0x10)).*;
     }
 
-    pub fn write(self: *const IOApic, offset: u32, value: u32) void {
+    fn write(self: *const IOApic, offset: u32, value: u32) void {
         @as(*volatile u32, @ptrFromInt(self.address)).* = offset;
         @as(*volatile u32, @ptrFromInt(self.address + 0x10)).* = value;
     }
