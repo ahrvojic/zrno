@@ -41,7 +41,7 @@ pub const SDT = extern struct {
     }
 };
 
-pub const ACPI = struct {
+const ACPI = struct {
     rsdt: *const SDT = undefined,
 
     hhdm_offset: u64 = undefined,
@@ -97,14 +97,14 @@ pub const ACPI = struct {
 };
 
 pub fn init(hhdm_res: *limine.HhdmResponse, rsdp_res: *limine.RsdpResponse) !void {
-    var instance: ACPI = .{};
-    instance.load(hhdm_res, rsdp_res);
+    var acpi: ACPI = .{};
+    acpi.load(hhdm_res, rsdp_res);
 
     debug.println("[ACPI] Load FADT");
-    const fadt_sdt = try instance.findSDT("FACP", 0);
+    const fadt_sdt = try acpi.findSDT("FACP", 0);
     try fadt.init(fadt_sdt);
 
     debug.println("[ACPI] Load MADT");
-    const madt_sdt = try instance.findSDT("APIC", 0);
+    const madt_sdt = try acpi.findSDT("APIC", 0);
     try madt.init(madt_sdt);
 }
