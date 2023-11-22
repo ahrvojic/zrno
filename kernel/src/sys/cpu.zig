@@ -71,11 +71,11 @@ pub fn get() *const CPU {
     return &bsp;
 }
 
-pub fn interrupts_enable() callconv(.Inline) void {
+pub fn interruptsEnable() callconv(.Inline) void {
     asm volatile ("sti");
 }
 
-pub fn interrupts_disable() callconv(.Inline) void {
+pub fn interruptsDisable() callconv(.Inline) void {
     asm volatile ("cli");
 }
 
