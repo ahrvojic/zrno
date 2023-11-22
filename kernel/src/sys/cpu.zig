@@ -31,6 +31,10 @@ const CPU = struct {
         self.initLapic();
     }
 
+    pub fn eoi(self: *const CPU) void {
+        self.lapicWrite(lapic_reg_eoi, 0);
+    }
+
     fn initLapic(self: *const CPU) void {
         // Spurious interrupt vector register:
         // - Set lowest byte to interrupt vector
@@ -51,10 +55,6 @@ const CPU = struct {
         const addr = self.lapic_base + reg;
         const ptr: *align(4) volatile u32 = @ptrFromInt(addr);
         ptr.* = value;
-    }
-
-    pub fn eoi(self: *const CPU) void {
-        lapicWrite(self, lapic_reg_eoi, 0);
     }
 };
 
