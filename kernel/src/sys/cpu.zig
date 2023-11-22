@@ -8,6 +8,7 @@ const interrupts = @import("interrupts.zig");
 
 const msr_lapic = 0x1b;
 
+const lapic_reg_id = 0x000;
 const lapic_reg_eoi = 0x0b0;
 const lapic_reg_spurious = 0x0f0;
 
@@ -33,6 +34,10 @@ const CPU = struct {
 
     pub fn eoi(self: *const CPU) void {
         self.lapicWrite(lapic_reg_eoi, 0);
+    }
+
+    pub fn lapicId(self: *const CPU) u32 {
+        return self.lapicRead(lapic_reg_id);
     }
 
     fn initLapic(self: *const CPU) void {

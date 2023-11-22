@@ -7,7 +7,7 @@ var io_apic: IOApic = .{};
 
 const IOApic = struct {
     address: u64 = undefined,
-    gsib: u64 = undefined,
+    gsib: u32 = undefined,
 
     pub fn init(self: *IOApic, hhdm_offset: u64) void {
         // QEMU Q35 machine only has one I/O APIC
@@ -40,7 +40,7 @@ const IOApic = struct {
 
         // Construct redirection entry value
         // Flags: level-triggered (bit 15), active-low (bit 13)
-        const value: u64 = @as(u64, @intCast(vector))
+        const value = @as(u64, @intCast(vector))
             | @as(u64, @intCast(flags & 0b1010)) << 12
             | @as(u64, @intCast(lapic_id)) << 56;
 
