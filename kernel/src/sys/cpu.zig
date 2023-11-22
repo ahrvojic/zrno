@@ -31,7 +31,7 @@ const CPU = struct {
         self.initLapic();
     }
 
-    pub fn initLapic(self: *const CPU) void {
+    fn initLapic(self: *const CPU) void {
         // Spurious interrupt vector register:
         // - Set lowest byte to interrupt vector
         // - Set bit 8 to enable local APIC
