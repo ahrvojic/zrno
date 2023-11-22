@@ -8,3 +8,7 @@ pub fn init() !void {
     // TODO
     apic.get().routeIrq(cpu.get().lapicId(), interrupts.vec_keyboard, 1);
 }
+
+pub fn handleKeyboardInterrupt() void {
+    // TODO
+}
