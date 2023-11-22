@@ -2,7 +2,10 @@ const std = @import("std");
 const limine = @import("limine");
 
 const acpi = @import("acpi/acpi.zig");
+
 const apic = @import("dev/apic.zig");
+const ps2 = @import("dev/ps2.zig");
+
 const cpu = @import("sys/cpu.zig");
 const debug = @import("sys/debug.zig");
 
@@ -30,6 +33,9 @@ pub fn main() !void {
 
     debug.println("[Main] Init APIC");
     try apic.init(hhdm_res);
+
+    debug.println("[Main] Init PS/2 keyboard");
+    try ps2.init();
 
     debug.println("[Main] Done.");
 }
