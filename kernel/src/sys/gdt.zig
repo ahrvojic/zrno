@@ -136,16 +136,29 @@ fn reload() callconv(.Inline) void {
         \\lretq
         \\
         \\.reload_cs:
-        \\mov %[kernel_data_sel], %ax
-        \\mov %ax, %ds
-        \\mov %ax, %es
-        \\mov %ax, %fs
-        \\mov %ax, %gs
-        \\mov %ax, %ss
+        \\movw %[kernel_data_sel], %ax
+        \\movw %ax, %ds
+        \\movw %ax, %es
+        \\movw %ax, %fs
+        \\movw %ax, %gs
+        \\movw %ax, %ss
         :
         : [kernel_code_sel] "i" (@as(u16, kernel_code_sel)),
           [kernel_data_sel] "i" (@as(u16, kernel_data_sel)),
     );
+}
+
+test "GDT entry construction" {
+    const value = GDTEntry.make(0x80808000, 0x8000, 0, 0);
+    const expected = GDTEntry {
+        .base_1 = 0x8000,
+        .base_2 = 0x80,
+        .base_3 = 0x80,
+        .limit = 0x8000,
+        .access = 0,
+        .flags = 0,
+    };
+    try std.testing.expect(std.meta.eql(value, expected));
 }
 
 test "TSS entry construction" {
@@ -159,19 +172,6 @@ test "TSS entry construction" {
         .access = 0,
         .flags = 0,
         .reserved = 0,
-    };
-    try std.testing.expect(std.meta.eql(value, expected));
-}
-
-test "GDT entry construction" {
-    const value = GDTEntry.make(0x80808000, 0x8000, 0, 0);
-    const expected = GDTEntry {
-        .base_1 = 0x8000,
-        .base_2 = 0x80,
-        .base_3 = 0x80,
-        .limit = 0x8000,
-        .access = 0,
-        .flags = 0,
     };
     try std.testing.expect(std.meta.eql(value, expected));
 }
