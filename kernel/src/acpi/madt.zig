@@ -39,10 +39,10 @@ const IOApicISO = extern struct {
     flags: u16 align(1),
 };
 
-pub var lapics = [_]?Lapic{null} ** 8;
-pub var lapic_nmis = [_]?LapicNMI{null} ** 8;
-pub var io_apics = [_]?IOApic{null} ** 8;
-pub var io_apic_isos = [_]?IOApicISO{null} ** 8;
+var lapics = [_]?Lapic{null} ** 8;
+var lapic_nmis = [_]?LapicNMI{null} ** 8;
+var io_apics = [_]?IOApic{null} ** 8;
+var io_apic_isos = [_]?IOApicISO{null} ** 8;
 
 pub fn init(sdt: *const acpi.SDT) !void {
     const madt_data = sdt.getData();
@@ -103,4 +103,20 @@ pub fn init(sdt: *const acpi.SDT) !void {
 
         offset += @max(entry.length, header_size);
     }
+}
+
+pub fn getLapicEntries() []const ?Lapic {
+    return lapics[0..lapics.len];
+}
+
+pub fn getLapicNMIEntries() []const ?LapicNMI {
+    return lapic_nmis[0..lapic_nmis.len];
+}
+
+pub fn getIOApicEntries() []const ?IOApic {
+    return io_apics[0..io_apics.len];
+}
+
+pub fn getIOApicISOEntries() []const ?IOApicISO {
+    return io_apic_isos[0..io_apic_isos.len];
 }
