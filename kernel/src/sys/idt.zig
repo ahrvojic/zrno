@@ -8,12 +8,12 @@ const interrupts = @import("interrupts.zig");
 // | P | DPL(2) | R | Type(4) |
 const interrupt_gate = 0b10001110;
 
-const IDTR = packed struct {
-    limit: u16,
-    base: u64,
+const IDTR = extern struct {
+    limit: u16 align(1),
+    base: u64 align(1),
 };
 
-const IDTEntry = packed struct {
+const IDTEntry = extern struct {
     offset_1: u16,
     selector: u16,
     ist: u8,
@@ -22,14 +22,14 @@ const IDTEntry = packed struct {
     offset_3: u32,
     reserved: u32,
 
-    pub fn make(offset: u64, flags: u8) IDTEntry {
+    pub fn make(offset: u64, ist: u8, flags: u8) IDTEntry {
         return .{
             .offset_1 = @truncate(offset),
             .offset_2 = @truncate(offset >> 16),
             .offset_3 = @truncate(offset >> 32),
+            .ist = ist,
             .flags = flags,
             .selector = gdt.kernel_code_sel,
-            .ist = 0,
             .reserved = 0,
         };
     }
@@ -43,7 +43,7 @@ pub const IDT = struct {
         comptime var i: usize = 0;
         inline while (i < 256) : (i += 1) {
             const handler = comptime interrupts.makeHandler(i);
-            self.entries[i] = IDTEntry.make(@intFromPtr(handler), interrupt_gate);
+            self.entries[i] = IDTEntry.make(@intFromPtr(handler), 0, interrupt_gate);
         }
 
         const idtr = IDTR {

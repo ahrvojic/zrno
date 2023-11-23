@@ -10,5 +10,9 @@ pub fn init() !void {
 }
 
 pub fn handleKeyboardInterrupt() void {
+    const scancode = port.inb(0x60);
+    debug.print("Scancode: ");
+    debug.printInt(scancode);
+    debug.println("");
     // TODO
 }
