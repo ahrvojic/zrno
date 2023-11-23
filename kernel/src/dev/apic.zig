@@ -11,14 +11,14 @@ const IOApic = struct {
 
     pub fn init(self: *IOApic, hhdm_offset: u64) void {
         // QEMU Q35 machine only has one I/O APIC
-        const io_apic_entry = madt.io_apics[0].?;
+        const io_apic_entry = madt.getIOApicEntries()[0].?;
         self.address = io_apic_entry.address + hhdm_offset;
         self.gsib = io_apic_entry.gsib;
     }
 
     pub fn routeIrq(self: *const IOApic, lapic_id: u32, vector: u8, irq: u8) void {
         // Use interrupt source override if exists
-        for (madt.io_apic_isos) |iso_opt| {
+        for (madt.getIOApicISOEntries()) |iso_opt| {
             if (iso_opt) |iso| {
                 if (iso.irq_source == irq) {
                     self.route(lapic_id, vector, iso.gsi, iso.flags);
