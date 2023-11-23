@@ -14,13 +14,13 @@ const IDTR = extern struct {
 };
 
 const IDTEntry = extern struct {
-    offset_1: u16,
-    selector: u16,
-    ist: u8,
-    flags: u8,
-    offset_2: u16,
-    offset_3: u32,
-    reserved: u32,
+    offset_1: u16 align(1),
+    selector: u16 align(1),
+    ist: u8 align(1),
+    flags: u8 align(1),
+    offset_2: u16 align(1),
+    offset_3: u32 align(1),
+    reserved: u32 align(1),
 
     pub fn make(offset: u64, ist: u8, flags: u8) IDTEntry {
         return .{
@@ -61,7 +61,7 @@ pub const IDT = struct {
 };
 
 test "IDT entry construction" {
-    const value = IDTEntry.make(0x8000000080008000, 0);
+    const value = IDTEntry.make(0x8000000080008000, 0, 0);
     const expected = IDTEntry {
         .offset_1 = 0x8000,
         .offset_2 = 0x8000,
