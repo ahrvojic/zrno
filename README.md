@@ -4,6 +4,11 @@ A simple kernel written in [Zig](https://ziglang.org/) relying on the [Limine](h
 
 Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 
+## Requirements
+
+- Zig 0.11+
+- QEMU
+
 ## Acknowledgments
 
 - [OSDev.org](https://wiki.osdev.org/)
