@@ -8,9 +8,9 @@ const interrupts = @import("interrupts.zig");
 
 const msr_lapic = 0x1b;
 
-const lapic_reg_id = 0x000;
-const lapic_reg_eoi = 0x0b0;
-const lapic_reg_spurious = 0x0f0;
+const lapic_reg_id = 0x20;
+const lapic_reg_eoi = 0xb0;
+const lapic_reg_spurious = 0xf0;
 
 var bsp: CPU = .{};
 
