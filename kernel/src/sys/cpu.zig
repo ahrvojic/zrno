@@ -28,7 +28,7 @@ const CPU = struct {
         self.idt.load();
 
         debug.println("[CPU] Init local APIC");
-        self.lapic_base = readMSR(msr_lapic) + hhdm_offset;
+        self.lapic_base = (readMSR(msr_lapic) & 0xfffff000) + hhdm_offset;
         self.initLapic();
     }
 
