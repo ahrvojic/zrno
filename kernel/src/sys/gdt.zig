@@ -130,7 +130,7 @@ pub const GDT = struct {
 
 fn reload() callconv(.Inline) void {
     asm volatile (
-        \\push %[kernel_code_sel]
+        \\pushq %[kernel_code_sel]
         \\lea .reload_cs(%rip), %rax
         \\push %rax
         \\lretq
@@ -143,8 +143,8 @@ fn reload() callconv(.Inline) void {
         \\movw %ax, %gs
         \\movw %ax, %ss
         :
-        : [kernel_code_sel] "i" (@as(u16, kernel_code_sel)),
-          [kernel_data_sel] "i" (@as(u16, kernel_data_sel)),
+        : [kernel_code_sel] "i" (kernel_code_sel),
+          [kernel_data_sel] "i" (kernel_data_sel),
     );
 }
 
