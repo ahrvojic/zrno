@@ -2,10 +2,10 @@ const cpu = @import("cpu.zig");
 const debug = @import("debug.zig");
 const ps2 = @import("../dev/ps2.zig");
 
-pub const vec_gpf: u8 = 13;
-pub const vec_page_fault: u8 = 14;
-pub const vec_keyboard: u8 = 33;
-pub const vec_apic_spurious: u8 = 255;
+pub const vec_gpf = 13;
+pub const vec_page_fault = 14;
+pub const vec_keyboard = 33;
+pub const vec_apic_spurious = 255;
 
 const InterruptFrame = extern struct {
     r15: u64,
