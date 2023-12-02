@@ -96,15 +96,15 @@ fn readMSR(msr: u32) callconv(.Inline) u64 {
         : [_] "{ecx}" (msr),
     );
 
-    return (@as(u64, high) << 32) | @as(u64, low);
+    return (@as(u64, high) << 32) | low;
 }
 
 fn writeMSR(msr: u32, value: u64) callconv(.Inline) void {
     asm volatile (
         \\wrmsr
         :
-        : [_] "{eax}" (value & 0xffffffff),
-          [_] "{edx}" (value >> 32),
+        : [_] "{eax}" (@as(u32, @truncate(value))),
+          [_] "{edx}" (@as(u32, @truncate(value >> 32))),
           [_] "{ecx}" (msr),
     );
 }
