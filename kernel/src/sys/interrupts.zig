@@ -95,7 +95,7 @@ export fn interruptStub() callconv(.Naked) void {
         \\pop %rbx
         \\pop %rax
         \\
-        \\add $16, %rsp
+        \\addq $16, %rsp
         \\iretq
     );
 }
@@ -117,15 +117,15 @@ pub fn makeHandler(comptime vector: u8) InterruptHandler {
 
             if (comptime has_error_code) {
                 asm volatile (
-                    \\push %[vector]
+                    \\pushq %[vector]
                     \\jmp interruptStub
                     :
                     : [vector] "i" (vector)
                 );
             } else {
                 asm volatile (
-                    \\push $0
-                    \\push %[vector]
+                    \\pushq $0
+                    \\pushq %[vector]
                     \\jmp interruptStub
                     :
                     : [vector] "i" (vector)
