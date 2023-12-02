@@ -78,7 +78,6 @@ export fn interruptStub() callconv(.Naked) void {
         \\
         \\mov %rsp, %rdi
         \\call interruptDispatch
-        \\mov %rax, %rsp
         \\
         \\pop %r15
         \\pop %r14
