@@ -19,11 +19,14 @@ const Key = enum {
 
 const KeyEvent = struct {
     key: Key,
-    modifiers: u8,
     pressed: bool,
 };
 
 var code_buffer = std.BoundedArray(u8, 8).init(0) catch unreachable;
+
+var kb_buffer = [_]?KeyEvent{null} ** 256;
+var kb_buffer_read_pos: u8 = 0;
+var kb_buffer_write_pos: u8 = 0;
 
 pub fn init() !void {
     const lapic_id = cpu.get().lapicId();
@@ -41,12 +44,21 @@ pub fn handleKeyboardInterrupt() void {
 
     const buffer = code_buffer.slice();
     switch (buffer[0]) {
-        0xe0 => if (buffer.len >= 2) pushKeyEvent(buffer[1], true),
-        else => |byte| pushKeyEvent(byte, false),
+        0xe0 => if (buffer.len >= 2) putKey(buffer[1], true),
+        else => |c| putKey(c, false),
     }
 }
 
-fn pushKeyEvent(code: u8, extended: bool) void {
+fn getKey() ?KeyEvent {
+    const key = kb_buffer[kb_buffer_read_pos];
+    kb_buffer_read_pos +%= 1;
+
+    // TODO: Update keyboard modifier state
+
+    return key;
+}
+
+fn putKey(code: u8, extended: bool) void {
     defer code_buffer.resize(0) catch unreachable;
 
     // Remove MSB make/break from scan code before translation
@@ -59,11 +71,11 @@ fn pushKeyEvent(code: u8, extended: bool) void {
 
     const event: KeyEvent = .{
         .key = key,
-        .modifiers = 0, // TODO
         .pressed = code & 0x80 == 0,
     };
 
-    _ = event; // TODO
+    kb_buffer[kb_buffer_write_pos] = event;
+    kb_buffer_write_pos +%= 1;
 }
 
 fn toKey(code: u8, extended: bool) ?Key {
