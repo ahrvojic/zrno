@@ -8,7 +8,7 @@ const port = @import("../sys/port.zig");
 
 const ps2_data_port = 0x60;
 
-const Key = enum {
+pub const Key = enum {
     esc, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12,
     backtick, n1, n2, n3, n4, n5, n6, n7, n8, n9, n0, minus, equals, backspace,
     tab, q, w, e, r, t, y, u, i, o, p, lbracket, rbracket, backslash,
@@ -17,9 +17,38 @@ const Key = enum {
     lctrl, lsuper, lalt, spacebar, ralt, rsuper, rctrl,
 };
 
-const KeyEvent = struct {
+pub const KeyEvent = struct {
     key: Key,
     pressed: bool,
+};
+
+pub const KeyModifier = enum(u2) {
+    alt, ctrl, shift, super,
+};
+
+const KeyboardState = struct {
+    modifiers: std.StaticBitSet(4),
+
+    pub fn notify(self: *KeyboardState, event: KeyEvent) void {
+        switch (event.key) {
+            .lalt, .ralt => {
+                const idx = @intFromEnum(KeyModifier.alt);
+                self.modifiers.setValue(idx, event.pressed);
+            },
+            .lctrl, .rctrl => {
+                const idx = @intFromEnum(KeyModifier.ctrl);
+                self.modifiers.setValue(idx, event.pressed);
+            },
+            .lshift, .rshift => {
+                const idx = @intFromEnum(KeyModifier.shift);
+                self.modifiers.setValue(idx, event.pressed);
+            },
+            .lsuper, .rsuper => {
+                const idx = @intFromEnum(KeyModifier.super);
+                self.modifiers.setValue(idx, event.pressed);
+            },
+        }
+    }
 };
 
 var code_buffer = std.BoundedArray(u8, 8).init(0) catch unreachable;
@@ -27,6 +56,8 @@ var code_buffer = std.BoundedArray(u8, 8).init(0) catch unreachable;
 var kb_buffer = [_]?KeyEvent{null} ** 256;
 var kb_buffer_read_pos: u8 = 0;
 var kb_buffer_write_pos: u8 = 0;
+
+var keyboard_state: KeyboardState = .{ .modifiers = std.StaticBitSet(4) };
 
 pub fn init() !void {
     const lapic_id = cpu.get().lapicId();
@@ -49,11 +80,15 @@ pub fn handleKeyboardInterrupt() void {
     }
 }
 
-fn getKey() ?KeyEvent {
+pub fn isPressed(modifier: KeyModifier) bool {
+    return keyboard_state.modifiers.isSet(@intFromEnum(modifier));
+}
+
+pub fn getKey() ?KeyEvent {
     const key = kb_buffer[kb_buffer_read_pos];
     kb_buffer_read_pos +%= 1;
 
-    // TODO: Update keyboard modifier state
+    keyboard_state.notify(key);
 
     return key;
 }
