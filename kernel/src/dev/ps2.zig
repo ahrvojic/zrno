@@ -85,12 +85,14 @@ pub fn isPressed(modifier: KeyModifier) bool {
 }
 
 pub fn getKey() ?KeyEvent {
-    const key = kb_buffer[kb_buffer_read_pos];
-    kb_buffer_read_pos +%= 1;
+    const keyOpt = kb_buffer[kb_buffer_read_pos];
 
-    keyboard_state.notify(key);
+    if (keyOpt) |key| {
+        keyboard_state.notify(key);
+        kb_buffer_read_pos +%= 1;
+    }
 
-    return key;
+    return keyOpt;
 }
 
 fn putKey(code: u8, extended: bool) void {
