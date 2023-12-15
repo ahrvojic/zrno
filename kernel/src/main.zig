@@ -2,12 +2,12 @@ const std = @import("std");
 const limine = @import("limine");
 
 const acpi = @import("acpi/acpi.zig");
-
 const apic = @import("dev/apic.zig");
 const ps2 = @import("dev/ps2.zig");
-
 const cpu = @import("sys/cpu.zig");
 const debug = @import("sys/debug.zig");
+
+pub export var base_revision: limine.BaseRevision = .{ .revision = 1 };
 
 pub export var hhdm_req: limine.HhdmRequest = .{};
 pub export var rsdp_req: limine.RsdpRequest = .{};
@@ -18,6 +18,10 @@ export fn _start() callconv(.C) noreturn {
 }
 
 pub fn main() !void {
+    if (!base_revision.is_supported()) {
+        debug.panic("Limine base revision not supported!");
+    }
+
     // Get needed info from bootloader
     const hhdm_res = hhdm_req.response.?;
     const rsdp_res = rsdp_req.response.?;
