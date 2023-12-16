@@ -9,6 +9,8 @@ const debug = @import("sys/debug.zig");
 
 pub export var base_revision: limine.BaseRevision = .{ .revision = 1 };
 
+pub export var boot_info_req: limine.BootloaderInfoRequest = .{};
+pub export var fb_req: limine.FramebufferRequest = .{};
 pub export var hhdm_req: limine.HhdmRequest = .{};
 pub export var rsdp_req: limine.RsdpRequest = .{};
 
@@ -18,16 +20,21 @@ export fn _start() callconv(.C) noreturn {
 }
 
 pub fn main() !void {
+    cpu.interruptsDisable();
+    defer cpu.interruptsEnable();
+
     if (!base_revision.is_supported()) {
         debug.panic("Limine base revision not supported!");
     }
 
     // Get needed info from bootloader
+    const boot_info_res = boot_info_req.response.?;
     const hhdm_res = hhdm_req.response.?;
     const rsdp_res = rsdp_req.response.?;
 
-    cpu.interruptsDisable();
-    defer cpu.interruptsEnable();
+    debug.print(std.mem.span(boot_info_res.name));
+    debug.print(" ");
+    debug.println(std.mem.span(boot_info_res.version));
 
     debug.println("[Main] Init CPU");
     try cpu.init(hhdm_res);
