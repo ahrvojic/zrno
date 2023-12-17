@@ -3,13 +3,14 @@ const limine = @import("limine");
 
 const acpi = @import("acpi/acpi.zig");
 const apic = @import("dev/apic.zig");
+const fb = @import("dev/fb.zig");
 const ps2 = @import("dev/ps2.zig");
 const cpu = @import("sys/cpu.zig");
 const debug = @import("sys/debug.zig");
 
 pub export var base_revision: limine.BaseRevision = .{ .revision = 1 };
 
-pub export var boot_info_req: limine.BootloaderInfoRequest = .{};
+pub export var bootloader_req: limine.BootloaderInfoRequest = .{};
 pub export var fb_req: limine.FramebufferRequest = .{};
 pub export var hhdm_req: limine.HhdmRequest = .{};
 pub export var rsdp_req: limine.RsdpRequest = .{};
@@ -28,13 +29,17 @@ pub fn main() !void {
     }
 
     // Get needed info from bootloader
-    const boot_info_res = boot_info_req.response.?;
+    const bootloader_res = bootloader_req.response.?;
+    const fb_res = fb_req.response.?;
     const hhdm_res = hhdm_req.response.?;
     const rsdp_res = rsdp_req.response.?;
 
-    debug.print(std.mem.span(boot_info_res.name));
+    const bootloader_name = std.mem.span(bootloader_res.name);
+    const bootloader_version = std.mem.span(bootloader_res.version);
+
+    debug.print(bootloader_name);
     debug.print(" ");
-    debug.println(std.mem.span(boot_info_res.version));
+    debug.println(bootloader_version);
 
     debug.println("[Main] Init CPU");
     try cpu.init(hhdm_res);
@@ -47,6 +52,9 @@ pub fn main() !void {
 
     debug.println("[Main] Init PS/2 keyboard");
     try ps2.init();
+
+    debug.println("[Main] Init framebuffer");
+    try fb.init(fb_res);
 
     debug.println("[Main] Done.");
 }
