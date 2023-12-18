@@ -14,7 +14,7 @@ const lapic_reg_spurious = 0xf0;
 
 var bsp: CPU = .{};
 
-const CPU = struct {
+pub const CPU = struct {
     gdt: gdt.GDT = .{},
     tss: gdt.TSS = .{},
     idt: idt.IDT = .{},
