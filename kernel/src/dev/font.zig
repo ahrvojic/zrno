@@ -18,7 +18,7 @@ pub const builtin: Font = .{
     .bytes = os2_bytes[0..],
 };
 
-// Built-in font dumped from:
+// Dumped from:
 // https://github.com/viler-int10h/vga-text-mode-fonts/blob/master/FONTS/SYSTEM/OS2/437_US.F16
 const os2_bytes = [_]u8 {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -280,12 +280,7 @@ const os2_bytes = [_]u8 {
 };
 
 test "glyph retrieval" {
-    const value1 = builtin.glyph(1);
-    const value2 = builtin.glyph(2);
-    const expected = [_]u8 {
-        0x00, 0x00, 0x1c, 0x22, 0x41, 0x55, 0x41, 0x41, 0x63, 0x5d, 0x41, 0x22, 0x1c, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x1c, 0x3e, 0x7f, 0x6b, 0x7f, 0x7f, 0x5d, 0x63, 0x7f, 0x3e, 0x1c, 0x00, 0x00, 0x00,
-    };
-    try std.testing.expect(std.mem.eql(u8, value1, expected[0..16]));
-    try std.testing.expect(std.mem.eql(u8, value2, expected[16..32]));
+    try std.testing.expect(std.mem.eql(u8, builtin.glyph(0), os2_bytes[0..16]));
+    try std.testing.expect(std.mem.eql(u8, builtin.glyph(1), os2_bytes[16..32]));
+    try std.testing.expect(std.mem.eql(u8, builtin.glyph(2), os2_bytes[32..48]));
 }
