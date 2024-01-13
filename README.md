@@ -18,3 +18,4 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 - [czapek1337/zigux](https://github.com/czapek1337/zigux)
 - [Lyre-OS/Lyre](https://github.com/Lyre-OS/Lyre)
 - [dreamos82/Dreamos64](https://github.com/dreamos82/Dreamos64)
+- [ZystemOS/pluto](https://github.com/ZystemOS/pluto/)
