@@ -10,6 +10,11 @@ pub fn print(string: []const u8) void {
     }
 }
 
+pub fn println(string: []const u8) void {
+    print(string);
+    putChar('\n');
+}
+
 fn putChar(ch: u8) void {
     switch (ch) {
         '\n' => {

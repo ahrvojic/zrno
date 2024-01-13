@@ -59,5 +59,6 @@ pub fn main() !void {
 
     debug.println("[Main] Done.");
 
-    tty.print("Zrno kernel");
+    tty.println("ZRNO kernel 1.0");
+    tty.println("READY.");
 }
