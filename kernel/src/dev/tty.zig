@@ -10,12 +10,12 @@ pub fn print(string: []const u8) void {
     }
 }
 
-pub fn println(string: []const u8) void {
+pub fn println(string: []const u8) callconv(.Inline) void {
     print(string);
     putChar('\n');
 }
 
-fn putChar(ch: u8) void {
+pub fn putChar(ch: u8) void {
     switch (ch) {
         '\n' => {
             row += 1;
