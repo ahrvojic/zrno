@@ -5,6 +5,7 @@ const acpi = @import("acpi/acpi.zig");
 const apic = @import("dev/apic.zig");
 const fb = @import("dev/fb.zig");
 const ps2 = @import("dev/ps2.zig");
+const tty = @import("dev/tty.zig");
 const cpu = @import("sys/cpu.zig");
 const debug = @import("sys/debug.zig");
 
@@ -57,4 +58,6 @@ pub fn main() !void {
     try fb.init(fb_res);
 
     debug.println("[Main] Done.");
+
+    tty.print("Zrno kernel");
 }
