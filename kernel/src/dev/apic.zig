@@ -9,14 +9,14 @@ const IOApic = struct {
     address: u64 = undefined,
     gsib: u32 = undefined,
 
-    pub fn init(self: *IOApic, hhdm_offset: u64) void {
+    pub fn init(self: *@This(), hhdm_offset: u64) void {
         // QEMU Q35 machine only has one I/O APIC
         const io_apic_entry = madt.io_apics.get(0);
         self.address = io_apic_entry.address + hhdm_offset;
         self.gsib = io_apic_entry.gsib;
     }
 
-    pub fn routeIrq(self: *const IOApic, lapic_id: u32, vector: u8, irq: u8) void {
+    pub fn routeIrq(self: *const @This(), lapic_id: u32, vector: u8, irq: u8) void {
         // Use interrupt source override if exists
         for (madt.io_apic_isos.slice()) |iso| {
             if (iso.irq_source == irq) {
@@ -29,7 +29,7 @@ const IOApic = struct {
         self.route(lapic_id, vector, irq, 0);
     }
 
-    fn route(self: *const IOApic, lapic_id: u32, vector: u8, gsi: u32, flags: u16) void {
+    fn route(self: *const @This(), lapic_id: u32, vector: u8, gsi: u32, flags: u16) void {
         // Calculate offset to I/O redirection table entry:
         // - Table starts at 0x10
         // - Add entry distance from global system interrupt base
@@ -47,12 +47,12 @@ const IOApic = struct {
         self.write(offset + 1, @truncate(value >> 32));
     }
 
-    fn read(self: *const IOApic, offset: u32) u32 {
+    fn read(self: *const @This(), offset: u32) u32 {
         @as(*volatile u32, @ptrFromInt(self.address)).* = offset;
         return @as(*volatile u32, @ptrFromInt(self.address + 0x10)).*;
     }
 
-    fn write(self: *const IOApic, offset: u32, value: u32) void {
+    fn write(self: *const @This(), offset: u32, value: u32) void {
         @as(*volatile u32, @ptrFromInt(self.address)).* = offset;
         @as(*volatile u32, @ptrFromInt(self.address + 0x10)).* = value;
     }

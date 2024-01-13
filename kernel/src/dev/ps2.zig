@@ -29,7 +29,7 @@ pub const KeyModifier = enum(u2) {
 const KeyboardState = struct {
     modifiers: std.StaticBitSet(4),
 
-    pub fn notify(self: *KeyboardState, event: KeyEvent) void {
+    pub fn notify(self: *@This(), event: KeyEvent) void {
         switch (event.key) {
             .lalt, .ralt => {
                 const idx = @intFromEnum(KeyModifier.alt);

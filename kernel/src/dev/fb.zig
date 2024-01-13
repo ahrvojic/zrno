@@ -9,11 +9,11 @@ var fb: Framebuffer = .{};
 const Framebuffer = struct {
     info: *limine.Framebuffer = undefined,
 
-    pub fn init(self: *Framebuffer, info: *limine.Framebuffer) void {
+    pub fn init(self: *@This(), info: *limine.Framebuffer) void {
         self.info = info;
     }
 
-    pub fn plotChar(self: *const Framebuffer, ch: u8, row: u8, col: u8) void {
+    pub fn plotChar(self: *const @This(), ch: u8, row: u8, col: u8) void {
         const glyph = font.builtin.glyph(ch);
 
         const pxRowStart = row * self.info.pitch * font.builtin.height;

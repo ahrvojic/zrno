@@ -36,7 +36,7 @@ pub const SDT = extern struct {
     creator_id: u32,
     creator_revision: u32,
 
-    pub fn getData(self: *const SDT) []const u8 {
+    pub fn getData(self: *const @This()) []const u8 {
         return @as([*]const u8, @ptrCast(self))[0..self.length][@sizeOf(SDT)..];
     }
 };
@@ -47,7 +47,7 @@ const ACPI = struct {
     hhdm_offset: u64 = undefined,
     use_xsdt: bool = undefined,
 
-    pub fn load(self: *ACPI, hhdm_res: *limine.HhdmResponse, rsdp_res: *limine.RsdpResponse) void {
+    pub fn load(self: *@This(), hhdm_res: *limine.HhdmResponse, rsdp_res: *limine.RsdpResponse) void {
         self.hhdm_offset = hhdm_res.offset;
         self.use_xsdt = rsdp_res.revision >= 2;
 
@@ -67,11 +67,11 @@ const ACPI = struct {
         }
     }
 
-    pub fn findSDT(self: *const ACPI, signature: []const u8, index: usize) !*const SDT {
+    pub fn findSDT(self: *const @This(), signature: []const u8, index: usize) !*const SDT {
         return if (self.use_xsdt) self.findSDTAt(u64, signature, index) else self.findSDTAt(u32, signature, index);
     }
 
-    fn findSDTAt(self: *const ACPI, comptime T: type, signature: []const u8, index: usize) !*const SDT {
+    fn findSDTAt(self: *const @This(), comptime T: type, signature: []const u8, index: usize) !*const SDT {
         const entries = std.mem.bytesAsSlice(T, self.rsdt.getData());
         var index_curr = index;
 
