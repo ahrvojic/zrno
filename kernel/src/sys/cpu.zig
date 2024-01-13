@@ -20,7 +20,7 @@ pub const CPU = struct {
     idt: idt.IDT = .{},
     lapic_base: u64 = undefined,
 
-    pub fn init(self: *CPU, hhdm_offset: u64) void {
+    pub fn init(self: *@This(), hhdm_offset: u64) void {
         debug.println("[CPU] Load GDT");
         self.gdt.load(&self.tss);
 
@@ -32,15 +32,15 @@ pub const CPU = struct {
         self.initLapic();
     }
 
-    pub fn eoi(self: *const CPU) void {
+    pub fn eoi(self: *const @This()) void {
         self.lapicWrite(lapic_reg_eoi, 0);
     }
 
-    pub fn lapicId(self: *const CPU) u32 {
+    pub fn lapicId(self: *const @This()) u32 {
         return self.lapicRead(lapic_reg_id);
     }
 
-    fn initLapic(self: *const CPU) void {
+    fn initLapic(self: *const @This()) void {
         // Spurious interrupt vector register:
         // - Set lowest byte to interrupt vector
         // - Set bit 8 to enable local APIC
@@ -50,13 +50,13 @@ pub const CPU = struct {
         );
     }
 
-    fn lapicRead(self: *const CPU, reg: u32) u32 {
+    fn lapicRead(self: *const @This(), reg: u32) u32 {
         const addr = self.lapic_base + reg;
         const ptr: *align(4) volatile u32 = @ptrFromInt(addr);
         return ptr.*;
     }
 
-    fn lapicWrite(self: *const CPU, reg: u32, value: u32) void {
+    fn lapicWrite(self: *const @This(), reg: u32, value: u32) void {
         const addr = self.lapic_base + reg;
         const ptr: *align(4) volatile u32 = @ptrFromInt(addr);
         ptr.* = value;

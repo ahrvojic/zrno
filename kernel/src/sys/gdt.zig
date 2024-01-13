@@ -98,7 +98,7 @@ pub const GDT = struct {
         0, // TSS high
     },
 
-    pub fn load(self: *GDT, tss: *const TSS) void {
+    pub fn load(self: *@This(), tss: *const TSS) void {
         const tss_entry = TSSEntry.make(@intFromPtr(tss), @sizeOf(TSS) - 1, tss_access);
         const tss_entry_bits: [2]u64 = @bitCast(tss_entry);
         self.entries[5] = tss_entry_bits[0];
