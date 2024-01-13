@@ -1,9 +1,6 @@
 const debug = @import("../sys/debug.zig");
 const fb = @import("fb.zig");
 
-const maxRow: u8 = 25;
-const maxCol: u8 = 80;
-
 var row: u8 = 0;
 var col: u8 = 0;
 
@@ -19,20 +16,25 @@ pub fn println(string: []const u8) callconv(.Inline) void {
 }
 
 pub fn putChar(ch: u8) void {
+    const fbuf = fb.get();
+
     switch (ch) {
         '\n' => {
             row += 1;
             col = 0;
-            // TODO: scroll
         },
         else => {
-            fb.get().plotChar(ch, row, col);
+            fbuf.plotChar(ch, row, col);
             col += 1;
-            if (col == maxCol) {
+            if (col == fbuf.maxCol) {
                 col = 0;
                 row += 1;
-                // TODO: scroll
             }
         },
+    }
+
+    if (row == fbuf.maxRow) {
+        fbuf.scroll();
+        row -= 1;
     }
 }
