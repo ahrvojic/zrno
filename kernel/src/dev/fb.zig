@@ -13,8 +13,8 @@ const Framebuffer = struct {
         self.info = info;
     }
 
-    pub fn putChar(self: *Framebuffer, char: u8, row: u16, col: u16) void {
-        const glyph = font.builtin.glyph(char);
+    pub fn plotChar(self: *const Framebuffer, ch: u8, row: u8, col: u8) void {
+        const glyph = font.builtin.glyph(ch);
 
         const pxRowStart = row * self.info.pitch * font.builtin.height;
         const pxColStart = col * self.info.bpp / 8 * font.builtin.width;
@@ -44,8 +44,8 @@ pub fn init(fb_res: *limine.FramebufferResponse) !void {
     }
 
     fb.init(fb_res.framebuffers()[0]);
-    fb.putChar(90, 2, 1);
-    fb.putChar(82, 2, 2);
-    fb.putChar(78, 2, 3);
-    fb.putChar(79, 2, 4);
+}
+
+pub fn get() *const Framebuffer {
+    return &fb;
 }
