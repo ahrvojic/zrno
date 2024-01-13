@@ -11,11 +11,12 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 
 ## Acknowledgments
 
-- [OSDev.org](https://wiki.osdev.org/)
-- [Osdev Notes](https://dreamos82.github.io/Osdev-Notes/)
+- [OSDev.org](https://wiki.osdev.org)
+- [Osdev Notes](https://dreamos82.github.io/Osdev-Notes)
 - [limine-bootloader/limine-zig-template](https://github.com/limine-bootloader/limine-zig-template)
 - [AndreaOrru/zen](https://github.com/AndreaOrru/zen)
 - [czapek1337/zigux](https://github.com/czapek1337/zigux)
 - [Lyre-OS/Lyre](https://github.com/Lyre-OS/Lyre)
+- [mintsuki/flanterm](https://github.com/mintsuki/flanterm)
 - [dreamos82/Dreamos64](https://github.com/dreamos82/Dreamos64)
-- [ZystemOS/pluto](https://github.com/ZystemOS/pluto/)
+- [ZystemOS/pluto](https://github.com/ZystemOS/pluto)

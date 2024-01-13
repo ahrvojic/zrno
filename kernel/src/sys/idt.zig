@@ -38,7 +38,7 @@ const IDTEntry = extern struct {
 pub const IDT = struct {
     entries: [256]IDTEntry align(16) = undefined,
 
-    pub fn load(self: *IDT) void {
+    pub fn load(self: *@This()) void {
         debug.println("[IDT] Set interrupt handlers");
         comptime var i: usize = 0;
         inline while (i < 256) : (i += 1) {
