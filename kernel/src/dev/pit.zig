@@ -10,9 +10,9 @@ const pit_freq_hz = 1193182;
 const timer_freq_ms = 1000;
 
 pub fn init() !void {
+    try setFrequency(timer_freq_ms);
     const lapic_id = cpu.get().lapicId();
     apic.get().routeIrq(lapic_id, interrupts.vec_pit, 0);
-    try setFrequency(timer_freq_ms);
 }
 
 pub fn handleInterrupt() void {
