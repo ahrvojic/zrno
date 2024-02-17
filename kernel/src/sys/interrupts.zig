@@ -1,9 +1,11 @@
 const cpu = @import("cpu.zig");
 const debug = @import("debug.zig");
+const pit = @import("../dev/pit.zig");
 const ps2 = @import("../dev/ps2.zig");
 
 pub const vec_gpf = 13;
 pub const vec_page_fault = 14;
+pub const vec_pit = 32;
 pub const vec_keyboard = 33;
 pub const vec_apic_spurious = 255;
 
@@ -43,9 +45,13 @@ export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
             debug.println("Page fault");
             // TODO
         },
+        vec_pit => {
+            pit.handleInterrupt();
+            cpu.get().eoi();
+        },
         vec_keyboard => {
             debug.println("Keyboard interrupt");
-            ps2.handleKeyboardInterrupt();
+            ps2.handleInterrupt();
             cpu.get().eoi();
         },
         vec_apic_spurious => {
