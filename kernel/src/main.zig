@@ -4,6 +4,7 @@ const limine = @import("limine");
 const acpi = @import("acpi/acpi.zig");
 const apic = @import("dev/apic.zig");
 const fb = @import("dev/fb.zig");
+const pit = @import("dev/pit.zig");
 const ps2 = @import("dev/ps2.zig");
 const tty = @import("dev/tty.zig");
 const cpu = @import("sys/cpu.zig");
@@ -50,6 +51,9 @@ pub fn main() !void {
 
     debug.println("[Main] Init APIC");
     try apic.init(hhdm_res);
+
+    debug.println("[Main] Init PIT");
+    try pit.init();
 
     debug.println("[Main] Init PS/2 keyboard");
     try ps2.init();

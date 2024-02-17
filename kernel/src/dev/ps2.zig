@@ -65,7 +65,7 @@ pub fn init() !void {
     _ = port.inb(ps2_data_port);
 }
 
-pub fn handleKeyboardInterrupt() void {
+pub fn handleInterrupt() void {
     const code = port.inb(ps2_data_port);
     debug.print("[PS2] Scan code: ");
     debug.printInt(code);
