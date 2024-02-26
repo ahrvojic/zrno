@@ -3,9 +3,10 @@ const logger = std.log.scoped(.acpi);
 const std = @import("std");
 const limine = @import("limine");
 
-const debug = @import("../sys/debug.zig");
+const debug = @import("../lib/debug.zig");
 const fadt = @import("fadt.zig");
 const madt = @import("madt.zig");
+const panic = @import("../lib/panic.zig").panic;
 
 const RSDP = extern struct {
     signature: [8]u8,
@@ -63,7 +64,7 @@ const ACPI = struct {
                 const xsdp: *align(1) const XSDP = @ptrCast(rsdp_res.address);
                 self.rsdt = @ptrFromInt(xsdp.xsdt_addr + self.hhdm_offset);
             },
-            else => debug.panic("Unknown ACPI revision!"),
+            else => panic("Unknown ACPI revision!"),
         }
     }
 

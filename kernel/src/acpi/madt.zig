@@ -3,7 +3,8 @@ const logger = std.log.scoped(.madt);
 const std = @import("std");
 
 const acpi = @import("acpi.zig");
-const debug = @import("../sys/debug.zig");
+const debug = @import("../lib/debug.zig");
+const panic = @import("../lib/panic.zig").panic;
 
 const Fields = extern struct {
     local_controller_addr: u32 align(1),
@@ -50,7 +51,7 @@ pub fn init(sdt: *const acpi.SDT) !void {
     const madt_data = sdt.getData();
     const fields = std.mem.bytesAsValue(Fields, madt_data[0..8]);
     if (fields.flags & 0x1 == 0) {
-        debug.panic("System must be PC-AT compatible!");
+        panic("System must be PC-AT compatible!");
     }
 
     const madt_entries = madt_data[8..];

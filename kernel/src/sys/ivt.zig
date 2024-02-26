@@ -3,7 +3,8 @@ const logger = std.log.scoped(.ivt);
 const std = @import("std");
 
 const cpu = @import("cpu.zig");
-const debug = @import("debug.zig");
+const debug = @import("../lib/debug.zig");
+const panic = @import("../lib/panic.zig").panic;
 const pit = @import("../dev/pit.zig");
 const ps2 = @import("../dev/ps2.zig");
 
@@ -43,7 +44,7 @@ const InterruptFrame = extern struct {
 export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
     switch (frame.vector) {
         vec_gpf => {
-            debug.panic("General protection fault");
+            panic("General protection fault");
         },
         vec_page_fault => {
             logger.err("Page fault", .{});
@@ -63,7 +64,7 @@ export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
             // No EOI
         },
         else => {
-            debug.panic("Unexpected interrupt");
+            panic("Unexpected interrupt");
         },
     }
 }

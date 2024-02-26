@@ -1,8 +1,9 @@
 const std = @import("std");
 const limine = @import("limine");
 
-const debug = @import("../sys/debug.zig");
+const debug = @import("../lib/debug.zig");
 const font = @import("font.zig");
+const panic = @import("../lib/panic.zig").panic;
 
 var fb: Framebuffer = .{};
 
@@ -60,7 +61,7 @@ const Framebuffer = struct {
 
 pub fn init(fb_res: *limine.FramebufferResponse) !void {
     if (fb_res.framebuffer_count < 1) {
-        debug.panic("No framebuffer available!");
+        panic("No framebuffer available!");
     }
 
     fb.init(fb_res.framebuffers()[0]);
