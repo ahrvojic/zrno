@@ -1,3 +1,5 @@
+const logger = std.log.scoped(.main);
+
 const std = @import("std");
 const limine = @import("limine");
 
@@ -11,8 +13,11 @@ const pmm = @import("mm/pmm.zig");
 const cpu = @import("sys/cpu.zig");
 const debug = @import("sys/debug.zig");
 
-pub export var base_revision: limine.BaseRevision = .{ .revision = 1 };
+pub const std_options = struct {
+    pub const logFn = log;
+};
 
+pub export var base_revision: limine.BaseRevision = .{ .revision = 1 };
 pub export var bootloader_req: limine.BootloaderInfoRequest = .{};
 pub export var fb_req: limine.FramebufferRequest = .{};
 pub export var hhdm_req: limine.HhdmRequest = .{};
@@ -42,33 +47,48 @@ pub fn main() !void {
     const bootloader_name = std.mem.span(bootloader_res.name);
     const bootloader_version = std.mem.span(bootloader_res.version);
 
-    debug.print(bootloader_name);
-    debug.print(" ");
-    debug.println(bootloader_version);
+    logger.info("{s} {s}", .{bootloader_name, bootloader_version});
 
-    debug.println("[Main] Init CPU");
+    logger.info("Init CPU", .{});
     try cpu.init(hhdm_res);
 
-    debug.println("[Main] Init PMM");
+    logger.info("Init PMM", .{});
     try pmm.init(hhdm_res, mm_res);
 
-    debug.println("[Main] Init ACPI");
+    logger.info("Init ACPI", .{});
     try acpi.init(hhdm_res, rsdp_res);
 
-    debug.println("[Main] Init APIC");
+    logger.info("Init APIC", .{});
     try apic.init(hhdm_res);
 
-    debug.println("[Main] Init PIT");
+    logger.info("Init PIT", .{});
     try pit.init();
 
-    debug.println("[Main] Init PS/2 keyboard");
+    logger.info("Init PS/2 keyboard", .{});
     try ps2.init();
 
-    debug.println("[Main] Init framebuffer");
+    logger.info("Init framebuffer", .{});
     try fb.init(fb_res);
 
-    debug.println("[Main] Done.");
+    logger.info("Done.", .{});
 
     tty.println("ZRNO kernel 1.0");
     tty.println("READY.");
+}
+
+var bytes: [16 * 4096]u8 = undefined;
+
+pub fn log(
+    comptime level: std.log.Level,
+    comptime scope: anytype,
+    comptime fmt: []const u8,
+    args: anytype
+) void {
+    var buffer = std.io.fixedBufferStream(&bytes);
+    var writer = buffer.writer();
+
+    writer.print("[{s}] {s} - ", .{ @tagName(scope), @tagName(level) }) catch unreachable;
+    writer.print(fmt, args) catch unreachable;
+
+    debug.println(buffer.getWritten());
 }

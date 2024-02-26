@@ -1,4 +1,3 @@
-const debug = @import("../sys/debug.zig");
 const fb = @import("fb.zig");
 
 var row: u8 = 0;
