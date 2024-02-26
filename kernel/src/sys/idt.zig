@@ -1,8 +1,9 @@
+const logger = std.log.scoped(.idt);
+
 const std = @import("std");
 
-const debug = @import("debug.zig");
 const gdt = @import("gdt.zig");
-const interrupts = @import("interrupts.zig");
+const ivt = @import("ivt.zig");
 
 // Flags byte:
 // | P | DPL(2) | R | Type(4) |
@@ -39,10 +40,10 @@ pub const IDT = struct {
     entries: [256]IDTEntry align(16) = undefined,
 
     pub fn load(self: *@This()) void {
-        debug.println("[IDT] Set interrupt handlers");
+        logger.info("Set interrupt handlers", .{});
         comptime var i: usize = 0;
         inline while (i < 256) : (i += 1) {
-            const handler = comptime interrupts.makeHandler(i);
+            const handler = comptime ivt.makeHandler(i);
             self.entries[i] = IDTEntry.make(@intFromPtr(handler), 0, interrupt_gate);
         }
 
@@ -51,7 +52,7 @@ pub const IDT = struct {
             .base = @intFromPtr(self),
         };
 
-        debug.println("[IDT] Load register");
+        logger.info("Load register", .{});
         asm volatile (
             \\lidt (%[idtr])
             :

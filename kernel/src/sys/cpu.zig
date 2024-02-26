@@ -1,10 +1,11 @@
+const logger = std.log.scoped(.cpu);
+
 const std = @import("std");
 const limine = @import("limine");
 
-const debug = @import("debug.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
-const interrupts = @import("interrupts.zig");
+const ivt = @import("ivt.zig");
 
 const msr_lapic = 0x1b;
 
@@ -21,13 +22,13 @@ pub const CPU = struct {
     lapic_base: u64 = undefined,
 
     pub fn init(self: *@This(), hhdm_offset: u64) void {
-        debug.println("[CPU] Load GDT");
+        logger.info("Load GDT", .{});
         self.gdt.load(&self.tss);
 
-        debug.println("[CPU] Load IDT");
+        logger.info("Load IDT", .{});
         self.idt.load();
 
-        debug.println("[CPU] Init local APIC");
+        logger.info("Init local APIC", .{});
         self.lapic_base = (readMSR(msr_lapic) & 0xfffff000) + hhdm_offset;
         self.initLapic();
     }
@@ -46,7 +47,7 @@ pub const CPU = struct {
         // - Set bit 8 to enable local APIC
         self.lapicWrite(
             lapic_reg_spurious,
-            self.lapicRead(lapic_reg_spurious) | interrupts.vec_apic_spurious | 0x100
+            self.lapicRead(lapic_reg_spurious) | ivt.vec_apic_spurious | 0x100
         );
     }
 

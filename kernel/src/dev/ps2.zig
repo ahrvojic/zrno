@@ -1,9 +1,10 @@
+const logger = std.log.scoped(.ps2);
+
 const std = @import("std");
 
 const apic = @import("apic.zig");
 const cpu = @import("../sys/cpu.zig");
-const debug = @import("../sys/debug.zig");
-const interrupts = @import("../sys/interrupts.zig");
+const ivt = @import("../sys/ivt.zig");
 const port = @import("../sys/port.zig");
 
 const ps2_data_port = 0x60;
@@ -61,15 +62,13 @@ var keyboard_state: KeyboardState = .{ .modifiers = std.StaticBitSet(4) };
 
 pub fn init() !void {
     const lapic_id = cpu.get().lapicId();
-    apic.get().routeIrq(lapic_id, interrupts.vec_keyboard, 1);
+    apic.get().routeIrq(lapic_id, ivt.vec_keyboard, 1);
     _ = port.inb(ps2_data_port);
 }
 
 pub fn handleInterrupt() void {
     const code = port.inb(ps2_data_port);
-    debug.print("[PS2] Scan code: ");
-    debug.printInt(code);
-    debug.println("");
+    logger.info("Scan code: {d}", .{code});
 
     code_buffer.append(code) catch {};
 
@@ -100,9 +99,7 @@ fn putKey(code: u8, extended: bool) void {
 
     // Remove MSB make/break from scan code before translation
     const key = toKey(code & 0x7f, extended) orelse {
-        debug.print("[PS2] Unknown scan code: ");
-        debug.printInt(code);
-        debug.println("");
+        logger.err("Unknown scan code: {d}", .{code});
         return;
     };
 

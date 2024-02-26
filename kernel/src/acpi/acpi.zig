@@ -1,3 +1,5 @@
+const logger = std.log.scoped(.acpi);
+
 const std = @import("std");
 const limine = @import("limine");
 
@@ -51,15 +53,13 @@ const ACPI = struct {
         self.hhdm_offset = hhdm_res.offset;
         self.use_xsdt = rsdp_res.revision >= 2;
 
-        debug.println("[ACPI] Load RSDT");
+        logger.info("Load RSDT revision {d}", .{rsdp_res.revision});
         switch (rsdp_res.revision) {
             0 => {
-                debug.println("[ACPI] Revision 0");
                 const rsdp: *align(1) const RSDP = @ptrCast(rsdp_res.address);
                 self.rsdt = @ptrFromInt(rsdp.rsdt_addr + self.hhdm_offset);
             },
             2 => {
-                debug.println("[ACPI] Revision 2");
                 const xsdp: *align(1) const XSDP = @ptrCast(rsdp_res.address);
                 self.rsdt = @ptrFromInt(xsdp.xsdt_addr + self.hhdm_offset);
             },
@@ -90,8 +90,7 @@ const ACPI = struct {
             return sdt;
         }
 
-        debug.print("[ACPI] SDT not found: ");
-        debug.println(signature);
+        logger.err("SDT not found: {s}", .{signature});
         return error.AcpiSdtNotFound;
     }
 };
@@ -100,11 +99,11 @@ pub fn init(hhdm_res: *limine.HhdmResponse, rsdp_res: *limine.RsdpResponse) !voi
     var acpi: ACPI = .{};
     acpi.load(hhdm_res, rsdp_res);
 
-    debug.println("[ACPI] Load FADT");
+    logger.info("Load FADT", .{});
     const fadt_sdt = try acpi.findSDT("FACP", 0);
     try fadt.init(fadt_sdt);
 
-    debug.println("[ACPI] Load MADT");
+    logger.info("Load MADT", .{});
     const madt_sdt = try acpi.findSDT("APIC", 0);
     try madt.init(madt_sdt);
 }

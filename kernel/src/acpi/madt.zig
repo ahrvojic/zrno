@@ -1,3 +1,5 @@
+const logger = std.log.scoped(.madt);
+
 const std = @import("std");
 
 const acpi = @import("acpi.zig");
@@ -63,36 +65,36 @@ pub fn init(sdt: *const acpi.SDT) !void {
 
         switch (entry.id) {
             0 => {
-                debug.println("[MADT] Found local APIC");
+                logger.info("Found local APIC", .{});
                 const lapic = std.mem.bytesToValue(Lapic, data[0..@sizeOf(Lapic)]);
                 try lapics.append(lapic);
             },
             1 => {
-                debug.println("[MADT] Found I/O APIC");
+                logger.info("Found I/O APIC", .{});
                 const io_apic = std.mem.bytesToValue(IOApic, data[0..@sizeOf(IOApic)]);
                 try io_apics.append(io_apic);
             },
             2 => {
-                debug.println("[MADT] Found I/O APIC interrupt source override");
+                logger.info("Found I/O APIC interrupt source override", .{});
                 const io_apic_iso = std.mem.bytesToValue(IOApicISO, data[0..@sizeOf(IOApicISO)]);
                 try io_apic_isos.append(io_apic_iso);
             },
             3 => {
-                debug.println("[MADT] Found I/O APIC NMI source");
+                logger.info("Found I/O APIC NMI source", .{});
             },
             4 => {
-                debug.println("[MADT] Found local APIC NMIs");
+                logger.info("Found local APIC NMIs", .{});
                 const lapic_nmi = std.mem.bytesToValue(LapicNMI, data[0..@sizeOf(LapicNMI)]);
                 try lapic_nmis.append(lapic_nmi);
             },
             5 => {
-                debug.println("[MADT] Found local APIC address override");
+                logger.info("Found local APIC address override", .{});
             },
             9 => {
-                debug.println("[MADT] Found local x2APIC");
+                logger.info("Found local x2APIC", .{});
             },
             else => {
-                debug.println("[MADT] Found unrecognized entry");
+                logger.info("Found unrecognized entry", .{});
             }
         }
 

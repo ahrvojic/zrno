@@ -1,3 +1,7 @@
+const logger = std.log.scoped(.ivt);
+
+const std = @import("std");
+
 const cpu = @import("cpu.zig");
 const debug = @import("debug.zig");
 const pit = @import("../dev/pit.zig");
@@ -42,7 +46,7 @@ export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
             debug.panic("General protection fault");
         },
         vec_page_fault => {
-            debug.println("Page fault");
+            logger.err("Page fault", .{});
             // TODO
         },
         vec_pit => {
@@ -50,12 +54,12 @@ export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
             cpu.get().eoi();
         },
         vec_keyboard => {
-            debug.println("Keyboard interrupt");
+            logger.info("Keyboard interrupt", .{});
             ps2.handleInterrupt();
             cpu.get().eoi();
         },
         vec_apic_spurious => {
-            debug.println("APIC spurious interrupt");
+            logger.info("APIC spurious interrupt", .{});
             // No EOI
         },
         else => {
