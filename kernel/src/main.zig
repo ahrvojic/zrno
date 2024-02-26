@@ -87,7 +87,7 @@ pub fn log(
     var buffer = std.io.fixedBufferStream(&bytes);
     var writer = buffer.writer();
 
-    writer.print("[{s}] {s} - ", .{ @tagName(scope), @tagName(level) }) catch unreachable;
+    writer.print("[{s}] ({s}) ", .{ @tagName(scope), @tagName(level) }) catch unreachable;
     writer.print(fmt, args) catch unreachable;
 
     debug.println(buffer.getWritten());
