@@ -15,7 +15,7 @@ pub fn init(hhdm_res: *limine.HhdmResponse, mm_res: *limine.MemoryMapResponse) !
     _ = hhdm_res; // TODO
 
     for (mm_res.entries()) |entry| {
-        logger.info("Entry: base=0x{X:0>16}, length=0x{X:0>16}, kind={}", .{ entry.base, entry.length, entry.kind });
+        logger.info("Entry: base=0x{X:0>16} length=0x{X:0>16} kind={}", .{ entry.base, entry.length, entry.kind });
 
         switch (entry.kind) {
             .usable => {
