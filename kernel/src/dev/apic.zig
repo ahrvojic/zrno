@@ -1,6 +1,5 @@
 const limine = @import("limine");
 
-const debug = @import("../sys/debug.zig");
 const madt = @import("../acpi/madt.zig");
 
 var io_apic: IOApic = .{};

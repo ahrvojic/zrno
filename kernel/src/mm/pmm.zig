@@ -1,7 +1,7 @@
+const logger = std.log.scoped(.pmm);
+
 const std = @import("std");
 const limine = @import("limine");
-
-const debug = @import("../sys/debug.zig");
 
 const page_size = 4096;
 
@@ -15,6 +15,8 @@ pub fn init(hhdm_res: *limine.HhdmResponse, mm_res: *limine.MemoryMapResponse) !
     _ = hhdm_res; // TODO
 
     for (mm_res.entries()) |entry| {
+        logger.info("Entry: base=0x{X:0>16}, length=0x{X:0>16}, kind={}", .{ entry.base, entry.length, entry.kind });
+
         switch (entry.kind) {
             .usable => {
                 usable_pages += try std.math.divCeil(u64, entry.length, page_size);
@@ -33,4 +35,6 @@ pub fn init(hhdm_res: *limine.HhdmResponse, mm_res: *limine.MemoryMapResponse) !
             }
         }
     }
+
+    logger.info("Pages: usable={d} reserved={d} bad={d}", .{usable_pages, reserved_pages, bad_pages});
 }

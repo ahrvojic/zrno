@@ -1,6 +1,6 @@
-const std = @import("std");
+const logger = std.log.scoped(.gdt);
 
-const debug = @import("debug.zig");
+const std = @import("std");
 
 // GDT long mode selectors
 pub const kernel_code_sel = 0x08;
@@ -109,17 +109,17 @@ pub const GDT = struct {
             .base = @intFromPtr(self),
         };
 
-        debug.println("[GDT] Load register");
+        logger.info("Load register", .{});
         asm volatile (
             \\lgdt (%[gdtr])
             :
             : [gdtr] "r" (&gdtr)
         );
 
-        debug.println("[GDT] Reload selectors");
+        logger.info("Reload selectors", .{});
         reload();
 
-        debug.println("[GDT] Load TSS");
+        logger.info("Load TSS", .{});
         asm volatile(
             \\ltr %[tss_sel]
             :

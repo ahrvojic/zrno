@@ -2,8 +2,7 @@ const std = @import("std");
 
 const apic = @import("apic.zig");
 const cpu = @import("../sys/cpu.zig");
-const debug = @import("../sys/debug.zig");
-const interrupts = @import("../sys/interrupts.zig");
+const ivt = @import("../sys/ivt.zig");
 const port = @import("../sys/port.zig");
 
 const pit_freq_hz = 1193182;
@@ -12,7 +11,7 @@ const timer_freq_ms = 1000;
 pub fn init() !void {
     try setFrequency(timer_freq_ms);
     const lapic_id = cpu.get().lapicId();
-    apic.get().routeIrq(lapic_id, interrupts.vec_pit, 0);
+    apic.get().routeIrq(lapic_id, ivt.vec_pit, 0);
 }
 
 pub fn handleInterrupt() void {
