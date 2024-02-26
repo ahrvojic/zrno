@@ -5,17 +5,34 @@ const limine = @import("limine");
 
 const acpi = @import("acpi/acpi.zig");
 const apic = @import("dev/apic.zig");
+const cpu = @import("sys/cpu.zig");
+const debug = @import("lib/debug.zig");
 const fb = @import("dev/fb.zig");
+const panic = @import("lib/panic.zig").panic;
 const pit = @import("dev/pit.zig");
+const pmm = @import("mm/pmm.zig");
 const ps2 = @import("dev/ps2.zig");
 const tty = @import("dev/tty.zig");
-const pmm = @import("mm/pmm.zig");
-const cpu = @import("sys/cpu.zig");
-const debug = @import("sys/debug.zig");
 
 pub const std_options = struct {
     pub const logFn = log;
 };
+
+fn log(
+    comptime level: std.log.Level,
+    comptime scope: anytype,
+    comptime fmt: []const u8,
+    args: anytype
+) void {
+    var log_buffer: [1024]u8 = undefined;
+    var buffer = std.io.fixedBufferStream(&log_buffer);
+    var writer = buffer.writer();
+
+    writer.print("[{s}] ({s}) ", .{ @tagName(scope), @tagName(level) }) catch unreachable;
+    writer.print(fmt ++ "\r\n", args) catch unreachable;
+
+    debug.print(buffer.getWritten());
+}
 
 pub export var base_revision: limine.BaseRevision = .{ .revision = 1 };
 pub export var bootloader_req: limine.BootloaderInfoRequest = .{};
@@ -34,7 +51,7 @@ pub fn main() !void {
     defer cpu.interruptsEnable();
 
     if (!base_revision.is_supported()) {
-        debug.panic("Limine base revision not supported!");
+        panic("Limine base revision not supported!");
     }
 
     // Get needed info from bootloader
@@ -72,23 +89,6 @@ pub fn main() !void {
 
     logger.info("Done.", .{});
 
-    tty.println("ZRNO kernel 1.0");
-    tty.println("READY.");
-}
-
-var bytes: [16 * 4096]u8 = undefined;
-
-pub fn log(
-    comptime level: std.log.Level,
-    comptime scope: anytype,
-    comptime fmt: []const u8,
-    args: anytype
-) void {
-    var buffer = std.io.fixedBufferStream(&bytes);
-    var writer = buffer.writer();
-
-    writer.print("[{s}] ({s}) ", .{ @tagName(scope), @tagName(level) }) catch unreachable;
-    writer.print(fmt, args) catch unreachable;
-
-    debug.println(buffer.getWritten());
+    tty.print("ZRNO kernel 1.0\n", .{});
+    tty.print("READY.\n", .{});
 }

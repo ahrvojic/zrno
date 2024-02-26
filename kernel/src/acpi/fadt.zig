@@ -1,5 +1,6 @@
 const acpi = @import("acpi.zig");
-const debug = @import("../sys/debug.zig");
+const debug = @import("../lib/debug.zig");
+const panic = @import("../lib/panic.zig").panic;
 
 const GenericAddress = extern struct {
     address_space: u8 align(1),
@@ -66,6 +67,6 @@ const FADT = extern struct {
 pub fn init(sdt: *const acpi.SDT) !void {
     const fadt: *const FADT = @ptrCast(sdt.getData().ptr);
     if (fadt.flags & 0x80000 == 1) {
-        debug.panic("Hardware-reduced ACPI not supported!");
+        panic("Hardware-reduced ACPI not supported!");
     }
 }
