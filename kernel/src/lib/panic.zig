@@ -9,8 +9,10 @@ pub fn panic(comptime message: []const u8) noreturn {
     cpu.interruptsDisable();
 
     const msg = "KERNEL PANIC: {s}";
-    logger.err(msg, .{message});
-    tty.print(msg ++ "\n", .{message});
+    const args = .{message};
+
+    logger.err(msg, args);
+    tty.print(msg, args);
 
     cpu.halt();
 }
