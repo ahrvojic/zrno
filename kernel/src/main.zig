@@ -63,14 +63,13 @@ pub fn main() !void {
 
     const bootloader_name = std.mem.span(bootloader_res.name);
     const bootloader_version = std.mem.span(bootloader_res.version);
-
     logger.info("{s} {s}", .{bootloader_name, bootloader_version});
-
-    logger.info("Init CPU", .{});
-    try cpu.init(hhdm_res);
 
     logger.info("Init PMM", .{});
     try pmm.init(hhdm_res, mm_res);
+
+    logger.info("Init CPU", .{});
+    try cpu.init(hhdm_res);
 
     logger.info("Init ACPI", .{});
     try acpi.init(hhdm_res, rsdp_res);

@@ -64,6 +64,7 @@ export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
             // No EOI
         },
         else => {
+            logger.err("Vector {d}", .{frame.vector});
             panic("Unexpected interrupt");
         },
     }
