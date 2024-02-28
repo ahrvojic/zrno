@@ -13,6 +13,7 @@ const pit = @import("dev/pit.zig");
 const pmm = @import("mm/pmm.zig");
 const ps2 = @import("dev/ps2.zig");
 const tty = @import("dev/tty.zig");
+const vmm = @import("mm/vmm.zig");
 
 pub const std_options = struct {
     pub const logFn = log;
@@ -65,11 +66,14 @@ pub fn main() !void {
     const bootloader_version = std.mem.span(bootloader_res.version);
     logger.info("{s} {s}", .{bootloader_name, bootloader_version});
 
+    logger.info("Init CPU", .{});
+    try cpu.init(hhdm_res);
+
     logger.info("Init PMM", .{});
     try pmm.init(hhdm_res, mm_res);
 
-    logger.info("Init CPU", .{});
-    try cpu.init(hhdm_res);
+    logger.info("Init VMM", .{});
+    try vmm.init();
 
     logger.info("Init ACPI", .{});
     try acpi.init(hhdm_res, rsdp_res);
