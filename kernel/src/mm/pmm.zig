@@ -116,7 +116,7 @@ pub fn alloc(pages: usize) ?u64 {
 }
 
 pub fn allocNoZero(pages: usize) ?u64 {
-    return allocInner(last_used_index + 1, pages) orelse allocInner(0, pages);
+    return allocInner(last_used_index, pages) orelse allocInner(0, pages);
 }
 
 fn allocInner(start: usize, pages: usize) ?u64 {
@@ -124,7 +124,7 @@ fn allocInner(start: usize, pages: usize) ?u64 {
     var p_idx: usize = start;
     var p_count: usize = 0;
 
-    while (p_idx <= highest_page_index and p_idx <= pages) : (p_idx += 1) {
+    while (p_idx < highest_page_index and p_count < pages) : (p_idx += 1) {
         if (bitmap.testBit(p_idx)) {
             p_count = 0; // used page; reset counter
         } else {
