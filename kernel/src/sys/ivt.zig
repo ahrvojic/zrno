@@ -7,6 +7,7 @@ const debug = @import("../lib/debug.zig");
 const panic = @import("../lib/panic.zig").panic;
 const pit = @import("../dev/pit.zig");
 const ps2 = @import("../dev/ps2.zig");
+const vmm = @import("../mm/vmm.zig");
 
 pub const vec_gpf = 13;
 pub const vec_page_fault = 14;
@@ -48,7 +49,7 @@ export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
         },
         vec_page_fault => {
             logger.err("Page fault", .{});
-            // TODO
+            vmm.handlePageFault();
         },
         vec_pit => {
             pit.handleInterrupt();
