@@ -73,7 +73,7 @@ pub fn main() !void {
     try pmm.init(hhdm_res, mm_res);
 
     logger.info("Init VMM", .{});
-    try vmm.init();
+    try vmm.init(hhdm_res);
 
     logger.info("Init ACPI", .{});
     try acpi.init(hhdm_res, rsdp_res);
