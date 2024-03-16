@@ -1,6 +1,7 @@
 const std = @import("std");
 const limine = @import("limine");
 
+const boot = @import("../sys/boot.zig");
 const debug = @import("../lib/debug.zig");
 const font = @import("font.zig");
 const panic = @import("../lib/panic.zig").panic;
@@ -59,12 +60,12 @@ const Framebuffer = struct {
     }
 };
 
-pub fn init(fb_res: *limine.FramebufferResponse) !void {
-    if (fb_res.framebuffer_count < 1) {
+pub fn init() !void {
+    if (boot.get().framebuffer.framebuffer_count < 1) {
         panic("No framebuffer available!");
     }
 
-    fb.init(fb_res.framebuffers()[0]);
+    fb.init(boot.get().framebuffer.framebuffers()[0]);
 }
 
 pub fn get() *const Framebuffer {

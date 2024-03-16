@@ -1,14 +1,13 @@
 const logger = std.log.scoped(.main);
 
 const std = @import("std");
-const limine = @import("limine");
 
 const acpi = @import("acpi/acpi.zig");
 const apic = @import("dev/apic.zig");
+const boot = @import("sys/boot.zig");
 const cpu = @import("sys/cpu.zig");
 const debug = @import("lib/debug.zig");
 const fb = @import("dev/fb.zig");
-const panic = @import("lib/panic.zig").panic;
 const pit = @import("dev/pit.zig");
 const pmm = @import("mm/pmm.zig");
 const ps2 = @import("dev/ps2.zig");
@@ -35,13 +34,6 @@ fn log(
     debug.print(buffer.getWritten());
 }
 
-pub export var base_revision: limine.BaseRevision = .{ .revision = 1 };
-pub export var bootloader_req: limine.BootloaderInfoRequest = .{};
-pub export var fb_req: limine.FramebufferRequest = .{};
-pub export var hhdm_req: limine.HhdmRequest = .{};
-pub export var mm_req: limine.MemoryMapRequest = .{};
-pub export var rsdp_req: limine.RsdpRequest = .{};
-
 export fn _start() callconv(.C) noreturn {
     main() catch {};
     cpu.halt();
@@ -51,35 +43,26 @@ pub fn main() !void {
     cpu.interruptsDisable();
     defer cpu.interruptsEnable();
 
-    if (!base_revision.is_supported()) {
-        panic("Limine base revision not supported!");
-    }
+    try boot.init();
 
-    // Get needed info from bootloader
-    const bootloader_res = bootloader_req.response.?;
-    const fb_res = fb_req.response.?;
-    const hhdm_res = hhdm_req.response.?;
-    const mm_res = mm_req.response.?;
-    const rsdp_res = rsdp_req.response.?;
-
-    const bootloader_name = std.mem.span(bootloader_res.name);
-    const bootloader_version = std.mem.span(bootloader_res.version);
+    const bootloader_name = std.mem.span(boot.get().info.name);
+    const bootloader_version = std.mem.span(boot.get().info.version);
     logger.info("{s} {s}", .{bootloader_name, bootloader_version});
 
     logger.info("Init CPU", .{});
-    try cpu.init(hhdm_res);
+    try cpu.init();
 
     logger.info("Init PMM", .{});
-    try pmm.init(hhdm_res, mm_res);
+    try pmm.init();
 
     logger.info("Init VMM", .{});
-    try vmm.init(hhdm_res);
+    try vmm.init();
 
     logger.info("Init ACPI", .{});
-    try acpi.init(hhdm_res, rsdp_res);
+    try acpi.init();
 
     logger.info("Init APIC", .{});
-    try apic.init(hhdm_res);
+    try apic.init();
 
     logger.info("Init PIT", .{});
     try pit.init();
@@ -88,7 +71,7 @@ pub fn main() !void {
     try ps2.init();
 
     logger.info("Init framebuffer", .{});
-    try fb.init(fb_res);
+    try fb.init();
 
     logger.info("Done.", .{});
 
