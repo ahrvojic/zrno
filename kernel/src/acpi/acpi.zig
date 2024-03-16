@@ -7,7 +7,7 @@ const debug = @import("../lib/debug.zig");
 const fadt = @import("fadt.zig");
 const madt = @import("madt.zig");
 const panic = @import("../lib/panic.zig").panic;
-const vmm = @import("../mm/vmm.zig");
+const virt = @import("../lib/virt.zig");
 
 const RSDP = extern struct {
     signature: [8]u8,
@@ -53,12 +53,12 @@ const ACPI = struct {
             0 => {
                 logger.info("Load RSDT revision 0", .{});
                 const rsdp: *align(1) const RSDP = @ptrCast(boot.get().rsdp.address);
-                self.rsdt = vmm.toHH(*const SDT, rsdp.rsdt_addr);
+                self.rsdt = virt.toHH(*const SDT, rsdp.rsdt_addr);
             },
             2 => {
                 logger.info("Load RSDT revision 2", .{});
                 const xsdp: *align(1) const XSDP = @ptrCast(boot.get().rsdp.address);
-                self.rsdt = vmm.toHH(*const SDT, xsdp.xsdt_addr);
+                self.rsdt = virt.toHH(*const SDT, xsdp.xsdt_addr);
             },
             else => panic("Unknown ACPI revision!"),
         }
@@ -74,7 +74,7 @@ const ACPI = struct {
         var index_curr = index;
 
         for (entries) |entry| {
-            const sdt = vmm.toHH(*const SDT, entry);
+            const sdt = virt.toHH(*const SDT, entry);
 
             if (!std.mem.eql(u8, &sdt.signature, std.mem.sliceTo(signature, 3))) {
                 continue;
