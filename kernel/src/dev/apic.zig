@@ -1,6 +1,6 @@
 const boot = @import("../sys/boot.zig");
 const madt = @import("../acpi/madt.zig");
-const vmm = @import("../mm/vmm.zig");
+const virt = @import("../lib/virt.zig");
 
 var io_apic: IOApic = .{};
 
@@ -11,7 +11,7 @@ const IOApic = struct {
     pub fn init(self: *@This()) void {
         // QEMU Q35 machine only has one I/O APIC
         const io_apic_entry = madt.io_apics.get(0);
-        self.address = vmm.toHH(u64, io_apic_entry.address);
+        self.address = virt.toHH(u64, io_apic_entry.address);
         self.gsib = io_apic_entry.gsib;
     }
 

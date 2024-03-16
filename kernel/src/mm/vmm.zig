@@ -2,6 +2,7 @@ const std = @import("std");
 
 const boot = @import("../sys/boot.zig");
 const pmm = @import("pmm.zig");
+const virt = @import("../lib/virt.zig");
 
 const flags_mask: u64 = 0xfff0_0000_0000_0fff;
 
@@ -35,10 +36,10 @@ const PageTableEntry = extern struct {
 const PageTable = extern struct {
     entries: [512]PageTableEntry,
 
-    pub fn mapPage(self: *@This(), virt: u64, phys: u64, flags: u64) !void {
+    pub fn mapPage(self: *@This(), virt_addr: u64, phys_addr: u64, flags: u64) !void {
         _ = self;
-        _ = virt;
-        _ = phys;
+        _ = virt_addr;
+        _ = phys_addr;
         _ = flags;
     }
 };
@@ -51,7 +52,7 @@ pub const VMObject = struct {
 
 pub fn init() !void {
     const pt_addr_phys = pmm.alloc(1) orelse return error.OutOfMemory;
-    const page_table = toHH(*PageTable, pt_addr_phys);
+    const page_table = virt.toHH(*PageTable, pt_addr_phys);
     _ = page_table;
 
     // TODO: Populate higher-half address space in page table
@@ -64,9 +65,4 @@ pub fn init() !void {
 
 pub fn handlePageFault() void {
     // TODO
-}
-
-pub fn toHH(comptime T: type, address: u64) T {
-    const res = address + boot.get().higherHalf.offset;
-    return if (@typeInfo(T) == .Pointer) @as(T, @ptrFromInt(res)) else @as(T, res);
 }
