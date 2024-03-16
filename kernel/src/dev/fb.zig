@@ -61,11 +61,11 @@ const Framebuffer = struct {
 };
 
 pub fn init() !void {
-    if (boot.get().framebuffer.framebuffer_count < 1) {
+    if (boot.get().framebuffers.framebuffer_count < 1) {
         panic("No framebuffer available!");
     }
 
-    fb.init(boot.get().framebuffer.framebuffers()[0]);
+    fb.init(boot.get().framebuffers.framebuffers()[0]);
 }
 
 pub fn get() *const Framebuffer {
