@@ -3,6 +3,9 @@ const logger = std.log.scoped(.pmm);
 const std = @import("std");
 const limine = @import("limine");
 
+const boot = @import("../sys/boot.zig");
+const vmm = @import("vmm.zig");
+
 const page_size = 4096;
 
 var usable_pages: usize = 0;
@@ -14,8 +17,6 @@ var highest_page_index: usize = 0;
 var last_used_index: usize = 0;
 
 var bitmap: Bitmap = undefined;
-
-var hhdm_offset: u64 = undefined;
 
 const Bitmap = struct {
     data: []u8,
@@ -37,13 +38,11 @@ const Bitmap = struct {
     }
 };
 
-pub fn init(hhdm_res: *limine.HhdmResponse, mm_res: *limine.MemoryMapResponse) !void {
-    hhdm_offset = hhdm_res.offset;
-
+pub fn init() !void {
     // Determine highest usable address
     var highest_addr: u64 = 0;
 
-    for (mm_res.entries()) |entry| {
+    for (boot.get().memoryMap.entries()) |entry| {
         logger.info("Entry: base=0x{X:0>16} length=0x{X:0>16} kind={}", .{entry.base, entry.length, entry.kind});
 
         switch (entry.kind) {
@@ -75,7 +74,7 @@ pub fn init(hhdm_res: *limine.HhdmResponse, mm_res: *limine.MemoryMapResponse) !
     // Find where the bitmap can fit in usable memeory
     var bitmap_region: ?*limine.MemoryMapEntry = null;
 
-    for (mm_res.entries()) |entry| {
+    for (boot.get().memoryMap.entries()) |entry| {
         if (entry.kind == .usable and entry.length >= bitmap_size) {
             bitmap_region = entry;
             break;
@@ -87,12 +86,11 @@ pub fn init(hhdm_res: *limine.HhdmResponse, mm_res: *limine.MemoryMapResponse) !
     }
 
     // Create the bitmap and initialize all bits to 1 (non-free)
-    const bitmap_addr = bitmap_region.?.base + hhdm_offset;
-    bitmap = Bitmap.init(@as([*]u8, @ptrFromInt(bitmap_addr))[0..bitmap_size]);
+    bitmap = Bitmap.init(vmm.toHH([*]u8, bitmap_region.?.base)[0..bitmap_size]);
     @memset(bitmap.data, 0xff);
 
     // Clear free bits according to the memory map
-    for (mm_res.entries()) |entry| {
+    for (boot.get().memoryMap.entries()) |entry| {
         if (entry.kind == .usable) {
             var i: usize = 0;
             while (i < entry.length) : (i += page_size) {
@@ -108,7 +106,7 @@ pub fn alloc(pages: usize) ?u64 {
     if (res) |address| {
         // Zero allocated memory before returning address
         const size = pages * page_size;
-        const data = @as([*]u8, @ptrFromInt(address + hhdm_offset))[0..size];
+        const data = vmm.toHH([*]u8, address)[0..size];
         @memset(data, 0);
     }
 

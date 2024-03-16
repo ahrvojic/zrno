@@ -1,11 +1,12 @@
 const logger = std.log.scoped(.cpu);
 
 const std = @import("std");
-const limine = @import("limine");
 
+const boot = @import("boot.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const ivt = @import("ivt.zig");
+const vmm = @import("../mm/vmm.zig");
 
 const msr_lapic = 0x1b;
 
@@ -21,7 +22,7 @@ pub const CPU = struct {
     idt: idt.IDT = .{},
     lapic_base: u64 = undefined,
 
-    pub fn init(self: *@This(), hhdm_offset: u64) void {
+    pub fn init(self: *@This()) void {
         logger.info("Load GDT", .{});
         self.gdt.load(&self.tss);
 
@@ -29,7 +30,7 @@ pub const CPU = struct {
         self.idt.load();
 
         logger.info("Init local APIC", .{});
-        self.lapic_base = (readMSR(msr_lapic) & 0xfffff000) + hhdm_offset;
+        self.lapic_base = vmm.toHH(u64, readMSR(msr_lapic) & 0xfffff000);
         self.initLapic();
     }
 
@@ -64,8 +65,8 @@ pub const CPU = struct {
     }
 };
 
-pub fn init(hhdm_res: *limine.HhdmResponse) !void {
-    bsp.init(hhdm_res.offset);
+pub fn init() !void {
+    bsp.init();
 }
 
 pub fn get() *const CPU {
