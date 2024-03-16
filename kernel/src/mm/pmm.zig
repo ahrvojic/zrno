@@ -4,7 +4,7 @@ const std = @import("std");
 const limine = @import("limine");
 
 const boot = @import("../sys/boot.zig");
-const vmm = @import("vmm.zig");
+const virt = @import("../lib/virt.zig");
 
 const page_size = 4096;
 
@@ -86,7 +86,7 @@ pub fn init() !void {
     }
 
     // Create the bitmap and initialize all bits to 1 (non-free)
-    bitmap = Bitmap.init(vmm.toHH([*]u8, bitmap_region.?.base)[0..bitmap_size]);
+    bitmap = Bitmap.init(virt.toHH([*]u8, bitmap_region.?.base)[0..bitmap_size]);
     @memset(bitmap.data, 0xff);
 
     // Clear free bits according to the memory map
@@ -106,7 +106,7 @@ pub fn alloc(pages: usize) ?u64 {
     if (res) |address| {
         // Zero allocated memory before returning address
         const size = pages * page_size;
-        const data = vmm.toHH([*]u8, address)[0..size];
+        const data = virt.toHH([*]u8, address)[0..size];
         @memset(data, 0);
     }
 

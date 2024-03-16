@@ -6,7 +6,7 @@ const boot = @import("boot.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const ivt = @import("ivt.zig");
-const vmm = @import("../mm/vmm.zig");
+const virt = @import("../lib/virt.zig");
 
 const msr_lapic = 0x1b;
 
@@ -30,7 +30,7 @@ pub const CPU = struct {
         self.idt.load();
 
         logger.info("Init local APIC", .{});
-        self.lapic_base = vmm.toHH(u64, readMSR(msr_lapic) & 0xfffff000);
+        self.lapic_base = virt.toHH(u64, readMSR(msr_lapic) & 0xfffff000);
         self.initLapic();
     }
 
