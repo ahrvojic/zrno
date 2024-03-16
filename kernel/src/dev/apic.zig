@@ -1,6 +1,6 @@
-const limine = @import("limine");
-
+const boot = @import("../sys/boot.zig");
 const madt = @import("../acpi/madt.zig");
+const vmm = @import("../mm/vmm.zig");
 
 var io_apic: IOApic = .{};
 
@@ -8,10 +8,10 @@ const IOApic = struct {
     address: u64 = undefined,
     gsib: u32 = undefined,
 
-    pub fn init(self: *@This(), hhdm_offset: u64) void {
+    pub fn init(self: *@This()) void {
         // QEMU Q35 machine only has one I/O APIC
         const io_apic_entry = madt.io_apics.get(0);
-        self.address = io_apic_entry.address + hhdm_offset;
+        self.address = vmm.toHH(u64, io_apic_entry.address);
         self.gsib = io_apic_entry.gsib;
     }
 
@@ -57,8 +57,8 @@ const IOApic = struct {
     }
 };
 
-pub fn init(hhdm_res: *limine.HhdmResponse) !void {
-    io_apic.init(hhdm_res.offset);
+pub fn init() !void {
+    io_apic.init();
 }
 
 pub fn get() *const IOApic {

@@ -1,12 +1,13 @@
 const logger = std.log.scoped(.acpi);
 
 const std = @import("std");
-const limine = @import("limine");
 
+const boot = @import("../sys/boot.zig");
 const debug = @import("../lib/debug.zig");
 const fadt = @import("fadt.zig");
 const madt = @import("madt.zig");
 const panic = @import("../lib/panic.zig").panic;
+const vmm = @import("../mm/vmm.zig");
 
 const RSDP = extern struct {
     signature: [8]u8,
@@ -47,29 +48,25 @@ pub const SDT = extern struct {
 const ACPI = struct {
     rsdt: *const SDT = undefined,
 
-    hhdm_offset: u64 = undefined,
-    use_xsdt: bool = undefined,
-
-    pub fn load(self: *@This(), hhdm_res: *limine.HhdmResponse, rsdp_res: *limine.RsdpResponse) void {
-        self.hhdm_offset = hhdm_res.offset;
-        self.use_xsdt = rsdp_res.revision >= 2;
-
-        logger.info("Load RSDT revision {d}", .{rsdp_res.revision});
-        switch (rsdp_res.revision) {
+    pub fn load(self: *@This()) void {
+        switch (boot.get().rsdp.revision) {
             0 => {
-                const rsdp: *align(1) const RSDP = @ptrCast(rsdp_res.address);
-                self.rsdt = @ptrFromInt(rsdp.rsdt_addr + self.hhdm_offset);
+                logger.info("Load RSDT revision 0", .{});
+                const rsdp: *align(1) const RSDP = @ptrCast(boot.get().rsdp.address);
+                self.rsdt = vmm.toHH(*const SDT, rsdp.rsdt_addr);
             },
             2 => {
-                const xsdp: *align(1) const XSDP = @ptrCast(rsdp_res.address);
-                self.rsdt = @ptrFromInt(xsdp.xsdt_addr + self.hhdm_offset);
+                logger.info("Load RSDT revision 2", .{});
+                const xsdp: *align(1) const XSDP = @ptrCast(boot.get().rsdp.address);
+                self.rsdt = vmm.toHH(*const SDT, xsdp.xsdt_addr);
             },
             else => panic("Unknown ACPI revision!"),
         }
     }
 
     pub fn findSDT(self: *const @This(), signature: []const u8, index: usize) !*const SDT {
-        return if (self.use_xsdt) self.findSDTAt(u64, signature, index) else self.findSDTAt(u32, signature, index);
+        return if (boot.get().rsdp.revision > 0) self.findSDTAt(u64, signature, index)
+        else self.findSDTAt(u32, signature, index);
     }
 
     fn findSDTAt(self: *const @This(), comptime T: type, signature: []const u8, index: usize) !*const SDT {
@@ -77,7 +74,7 @@ const ACPI = struct {
         var index_curr = index;
 
         for (entries) |entry| {
-            const sdt: *const SDT = @ptrFromInt(entry + self.hhdm_offset);
+            const sdt = vmm.toHH(*const SDT, entry);
 
             if (!std.mem.eql(u8, &sdt.signature, std.mem.sliceTo(signature, 3))) {
                 continue;
@@ -96,9 +93,9 @@ const ACPI = struct {
     }
 };
 
-pub fn init(hhdm_res: *limine.HhdmResponse, rsdp_res: *limine.RsdpResponse) !void {
+pub fn init() !void {
     var acpi: ACPI = .{};
-    acpi.load(hhdm_res, rsdp_res);
+    acpi.load();
 
     logger.info("Load FADT", .{});
     const fadt_sdt = try acpi.findSDT("FACP", 0);
