@@ -13,7 +13,7 @@ export var rsdp_req: limine.RsdpRequest = .{};
 
 const Bootloader = struct {
     info: *limine.BootloaderInfoResponse,
-    framebuffer: *limine.FramebufferResponse,
+    framebuffers: *limine.FramebufferResponse,
     higherHalf: *limine.HhdmResponse,
     kernel: *limine.KernelAddressResponse,
     memoryMap: *limine.MemoryMapResponse,
@@ -29,7 +29,7 @@ pub fn init() !void {
 
     bootloader = .{
         .info = bootloader_req.response.?,
-        .framebuffer = fb_req.response.?,
+        .framebuffers = fb_req.response.?,
         .higherHalf = hhdm_req.response.?,
         .kernel = kaddr_req.response.?,
         .memoryMap = mm_req.response.?,
