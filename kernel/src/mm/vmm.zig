@@ -90,9 +90,9 @@ const PageTable = extern struct {
 
 fn switchPageTable(phys_addr: u64) callconv(.Inline) void {
     asm volatile (
-        \\mov %[cr3], %%cr3
+        \\movq %[phys_addr], %cr3
         :
-        : [cr3] "r" (phys_addr),
+        : [phys_addr] "r" (phys_addr),
         : "memory"
     );
 }
