@@ -6,7 +6,7 @@ const limine = @import("limine");
 const boot = @import("../sys/boot.zig");
 const virt = @import("../lib/virt.zig");
 
-pub const page_size = 4096;
+pub const page_size: usize = 4096;
 
 var usable_pages: usize = 0;
 var used_pages: usize = 0;
