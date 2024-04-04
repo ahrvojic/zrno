@@ -1,15 +1,10 @@
+const logger = std.log.scoped(.vmm);
+
 const std = @import("std");
 
 const boot = @import("../sys/boot.zig");
 const pmm = @import("pmm.zig");
 const virt = @import("../lib/virt.zig");
-
-extern const text_start_addr: u64;
-extern const text_end_addr: u64;
-extern const rodata_start_addr: u64;
-extern const rodata_end_addr: u64;
-extern const data_start_addr: u64;
-extern const data_end_addr: u64;
 
 const flags_mask: u64 = 0xfff0_0000_0000_0fff;
 
@@ -56,17 +51,24 @@ const PageTable = extern struct {
         const pml1 = pml2.getNextLevel(pml2_idx, true) orelse return error.OutOfMemory;
         const entry = &pml1.entries[pml1_idx];
 
-        entry.setAddress(phys_addr);
-        entry.setFlags(flags);
+        if (entry.getFlags() & Flags.Present != 0) {
+            return error.AlreadyMapped;
+        } else {
+            entry.setAddress(phys_addr);
+            entry.setFlags(flags);
+        }
     }
 
-    pub fn mapSection(self: *@This(), start_addr: u64, end_addr: u64, flags: u64) !void {
-        const info = boot.get();
-        const start = std.mem.alignBackward(u64, start_addr, pmm.page_size);
-        const end = std.mem.alignForward(u64, end_addr, pmm.page_size);
+    pub fn mapSection(self: *@This(), comptime section_name: []const u8, flags: u64) !void {
+        const start = @extern(*u8, .{.name = section_name ++ "_start_addr"});
+        const end = @extern(*u8, .{.name = section_name ++ "_end_addr"});
 
-        var addr = start;
-        while (addr < end) : (addr += pmm.page_size) {
+        const start_addr = std.mem.alignBackward(u64, @intFromPtr(start), pmm.page_size);
+        const end_addr = std.mem.alignForward(u64, @intFromPtr(end), pmm.page_size);
+
+        const info = boot.get();
+        var addr = start_addr;
+        while (addr < end_addr) : (addr += pmm.page_size) {
             const phys_addr = addr - info.kernel.virtual_base + info.kernel.physical_base;
             try self.mapPage(addr, phys_addr, flags);
         }
@@ -104,18 +106,17 @@ pub fn init() !void {
 
     // Allocate L3 tables for higher-half memory only
     for (256..512) |i| {
-        _ = pt.getNextLevel(i, true);
+        _ = pt.getNextLevel(i, true) orelse return error.NoPTLevel;
     }
 
     // Map kernel sections
-    try pt.mapSection(text_start_addr, text_end_addr, Flags.Present);
-    try pt.mapSection(rodata_start_addr, rodata_end_addr, Flags.Present | Flags.NoExecute);
-    try pt.mapSection(data_start_addr, data_end_addr, Flags.Present | Flags.Writable | Flags.NoExecute);
+    try pt.mapSection("text", Flags.Present);
+    try pt.mapSection("rodata", Flags.Present | Flags.NoExecute);
+    try pt.mapSection("data", Flags.Present | Flags.Writable | Flags.NoExecute);
 
     // Identity and higher-half map first 4 GiB following Limine protocol
     const boundary = 4 * 1024 * 1024 * 1024;
-
-    var addr: u64 = pmm.page_size;
+    var addr = pmm.page_size;
     while (addr < boundary) : (addr += pmm.page_size) {
         try pt.mapPage(addr, addr, Flags.Present | Flags.Writable);
         try pt.mapPage(virt.toHH(u64, addr), addr, Flags.Present | Flags.Writable | Flags.NoExecute);
