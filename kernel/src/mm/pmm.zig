@@ -69,7 +69,7 @@ pub fn init() !void {
     // Determine size of bitmap aligned to page size
     highest_page_index = highest_addr / page_size;
     const bitmap_size = std.mem.alignForward(u64, highest_page_index / 8, page_size);
-    logger.debug("Bitmap: highest_index={d} size={d}", .{highest_page_index, bitmap_size});
+    logger.info("Bitmap: highest_index={d} size={d}", .{highest_page_index, bitmap_size});
 
     // Find where the bitmap can fit in usable memeory
     var bitmap_region: ?*limine.MemoryMapEntry = null;

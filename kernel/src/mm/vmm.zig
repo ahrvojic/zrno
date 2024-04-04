@@ -100,6 +100,8 @@ fn switchPageTable(phys_addr: u64) callconv(.Inline) void {
 }
 
 pub fn init() !void {
+    logger.info("Building page table", .{});
+
     // Allocate L4 table
     const pt_addr_phys = pmm.alloc(1) orelse return error.OutOfMemory;
     const pt = virt.toHH(*PageTable, pt_addr_phys);
@@ -110,12 +112,15 @@ pub fn init() !void {
     }
 
     // Map kernel sections
+    logger.info("Mapping kernel", .{});
     try pt.mapSection("text", Flags.Present);
     try pt.mapSection("rodata", Flags.Present | Flags.NoExecute);
     try pt.mapSection("data", Flags.Present | Flags.Writable | Flags.NoExecute);
 
     // Identity and higher-half map first 4 GiB following Limine protocol
     const boundary = 4 * 1024 * 1024 * 1024;
+    logger.info("Mapping first {d} bytes", .{boundary});
+
     var addr = pmm.page_size;
     while (addr < boundary) : (addr += pmm.page_size) {
         try pt.mapPage(addr, addr, Flags.Present | Flags.Writable);
@@ -123,6 +128,7 @@ pub fn init() !void {
     }
 
     // Map identified memory map entries above 4 GB following Limine protocol
+    logger.info("Mapping memory map entries", .{});
     for (boot.get().memoryMap.entries()) |entry| {
         const base = std.mem.alignBackward(u64, entry.base, pmm.page_size);
         const top = std.mem.alignForward(u64, entry.base + entry.length, pmm.page_size);
@@ -142,6 +148,7 @@ pub fn init() !void {
         }
     }
 
+    logger.info("Loading page table", .{});
     switchPageTable(pt_addr_phys);
 }
 
