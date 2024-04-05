@@ -9,6 +9,7 @@ const virt = @import("../lib/virt.zig");
 const flags_mask: u64 = 0xfff0_0000_0000_0fff;
 
 pub const Flags = struct {
+    pub const None = 0;
     pub const Present = 1 << 0;
     pub const Writable = 1 << 1;
     pub const User = 1 << 2;
@@ -39,23 +40,25 @@ const PageTable = extern struct {
     entries: [512]PageTableEntry,
 
     pub fn mapPage(self: *@This(), virt_addr: u64, phys_addr: u64, flags: u64) !void {
-        // Extract page table indexes from virtual address
-        const pml4_idx = @as(usize, virt_addr >> 39) & 0x1ff;
-        const pml3_idx = @as(usize, virt_addr >> 30) & 0x1ff;
-        const pml2_idx = @as(usize, virt_addr >> 21) & 0x1ff;
-        const pml1_idx = @as(usize, virt_addr >> 12) & 0x1ff;
+        const entry = try self.virtToPTE(virt_addr, true);
 
-        // Walk page table hierarchy to entry
-        const pml3 = self.getNextLevel(pml4_idx, true) orelse return error.OutOfMemory;
-        const pml2 = pml3.getNextLevel(pml3_idx, true) orelse return error.OutOfMemory;
-        const pml1 = pml2.getNextLevel(pml2_idx, true) orelse return error.OutOfMemory;
-        const entry = &pml1.entries[pml1_idx];
-
-        if (entry.getFlags() & Flags.Present != 0) {
-            return error.AlreadyMapped;
-        } else {
+        if (entry.getFlags() & Flags.Present == 0) {
             entry.setAddress(phys_addr);
             entry.setFlags(flags);
+        } else {
+            return error.AlreadyMapped;
+        }
+    }
+
+    pub fn unmapPage(self: *@This(), virt_addr: u64) !void {
+        const entry = try self.virtToPTE(virt_addr, false);
+
+        if (entry.getFlags() & Flags.Present == 1) {
+            entry.setAddress(0);
+            entry.setFlags(Flags.None);
+            flushTLB(virt_addr);
+        } else {
+            return error.NotMapped;
         }
     }
 
@@ -88,7 +91,30 @@ const PageTable = extern struct {
 
         return null;
     }
+
+    fn virtToPTE(self: *@This(), virt_addr: u64, allocate: bool) !*PageTableEntry {
+        // Extract page table indexes from virtual address
+        const pml4_idx = @as(usize, virt_addr >> 39) & 0x1ff;
+        const pml3_idx = @as(usize, virt_addr >> 30) & 0x1ff;
+        const pml2_idx = @as(usize, virt_addr >> 21) & 0x1ff;
+        const pml1_idx = @as(usize, virt_addr >> 12) & 0x1ff;
+
+        // Walk page table hierarchy to entry
+        const pml3 = self.getNextLevel(pml4_idx, allocate) orelse return error.PTENotFound;
+        const pml2 = pml3.getNextLevel(pml3_idx, allocate) orelse return error.PTENotFound;
+        const pml1 = pml2.getNextLevel(pml2_idx, allocate) orelse return error.PTENotFound;
+        return &pml1.entries[pml1_idx];
+    }
 };
+
+fn flushTLB(virt_addr: u64) callconv(.Inline) void {
+    asm volatile (
+        \\invlpg %[virt_addr]
+        :
+        : [virt_addr] "r" (virt_addr)
+        : "memory"
+    );
+}
 
 fn switchPageTable(phys_addr: u64) callconv(.Inline) void {
     asm volatile (
@@ -108,7 +134,7 @@ pub fn init() !void {
 
     // Allocate L3 tables for higher-half memory only
     for (256..512) |i| {
-        _ = pt.getNextLevel(i, true) orelse return error.NoPTLevel;
+        _ = pt.getNextLevel(i, true) orelse return error.OutOfMemory;
     }
 
     // Map kernel sections
