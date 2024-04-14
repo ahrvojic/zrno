@@ -8,6 +8,8 @@ const virt = @import("../lib/virt.zig");
 
 const flags_mask: u64 = 0xfff0_0000_0000_0fff;
 
+var pt: *PageTable = undefined;
+
 pub const Flags = struct {
     pub const None = 0;
     pub const Present = 1 << 0;
@@ -107,30 +109,12 @@ const PageTable = extern struct {
     }
 };
 
-fn flushTLB(virt_addr: u64) callconv(.Inline) void {
-    asm volatile (
-        \\invlpg %[virt_addr]
-        :
-        : [virt_addr] "r" (virt_addr)
-        : "memory"
-    );
-}
-
-fn switchPageTable(phys_addr: u64) callconv(.Inline) void {
-    asm volatile (
-        \\movq %[phys_addr], %cr3
-        :
-        : [phys_addr] "r" (phys_addr),
-        : "memory"
-    );
-}
-
 pub fn init() !void {
     logger.info("Building page table", .{});
 
     // Allocate L4 table
     const pt_addr_phys = pmm.alloc(1) orelse return error.OutOfMemory;
-    const pt = virt.toHH(*PageTable, pt_addr_phys);
+    pt = virt.toHH(*PageTable, pt_addr_phys);
 
     // Allocate L3 tables for higher-half memory only
     for (256..512) |i| {
@@ -176,6 +160,24 @@ pub fn init() !void {
 
     logger.info("Loading page table", .{});
     switchPageTable(pt_addr_phys);
+}
+
+fn flushTLB(virt_addr: u64) callconv(.Inline) void {
+    asm volatile (
+        \\invlpg %[virt_addr]
+        :
+        : [virt_addr] "r" (virt_addr)
+        : "memory"
+    );
+}
+
+fn switchPageTable(phys_addr: u64) callconv(.Inline) void {
+    asm volatile (
+        \\movq %[phys_addr], %cr3
+        :
+        : [phys_addr] "r" (phys_addr),
+        : "memory"
+    );
 }
 
 pub fn handlePageFault() void {
