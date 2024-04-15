@@ -41,7 +41,7 @@ const PageTableEntry = extern struct {
 const PageTable = extern struct {
     entries: [512]PageTableEntry,
 
-    pub fn mapPage(self: *@This(), virt_addr: u64, phys_addr: u64, flags: u64) !void {
+    pub fn mapPage(self: *@This(), phys_addr: u64, virt_addr: u64, flags: u64) !void {
         const entry = try self.virtToPTE(virt_addr, true);
 
         if (entry.getFlags() & Flags.Present == 0) {
@@ -61,21 +61,6 @@ const PageTable = extern struct {
             flushTLB(virt_addr);
         } else {
             return error.NotMapped;
-        }
-    }
-
-    pub fn mapSection(self: *@This(), comptime section_name: []const u8, flags: u64) !void {
-        const start = @extern(*u8, .{.name = section_name ++ "_start_addr"});
-        const end = @extern(*u8, .{.name = section_name ++ "_end_addr"});
-
-        const start_addr = std.mem.alignBackward(u64, @intFromPtr(start), pmm.page_size);
-        const end_addr = std.mem.alignForward(u64, @intFromPtr(end), pmm.page_size);
-
-        const info = boot.get();
-        var addr = start_addr;
-        while (addr < end_addr) : (addr += pmm.page_size) {
-            const phys_addr = addr - info.kernel.virtual_base + info.kernel.physical_base;
-            try self.mapPage(addr, phys_addr, flags);
         }
     }
 
@@ -123,9 +108,9 @@ pub fn init() !void {
 
     // Map kernel sections
     logger.info("Mapping kernel", .{});
-    try pt.mapSection("text", Flags.Present);
-    try pt.mapSection("rodata", Flags.Present | Flags.NoExecute);
-    try pt.mapSection("data", Flags.Present | Flags.Writable | Flags.NoExecute);
+    try mapSection("text", Flags.Present);
+    try mapSection("rodata", Flags.Present | Flags.NoExecute);
+    try mapSection("data", Flags.Present | Flags.Writable | Flags.NoExecute);
 
     // Identity and higher-half map first 4 GiB following Limine protocol
     const boundary = 4 * 1024 * 1024 * 1024;
@@ -134,7 +119,7 @@ pub fn init() !void {
     var addr = pmm.page_size;
     while (addr < boundary) : (addr += pmm.page_size) {
         try pt.mapPage(addr, addr, Flags.Present | Flags.Writable);
-        try pt.mapPage(virt.toHH(u64, addr), addr, Flags.Present | Flags.Writable | Flags.NoExecute);
+        try pt.mapPage(addr, virt.toHH(u64, addr), Flags.Present | Flags.Writable | Flags.NoExecute);
     }
 
     // Map identified memory map entries above 4 GB following Limine protocol
@@ -154,12 +139,55 @@ pub fn init() !void {
             }
 
             try pt.mapPage(mm_addr, mm_addr, Flags.Present | Flags.Writable);
-            try pt.mapPage(virt.toHH(u64, mm_addr), mm_addr, Flags.Present | Flags.Writable | Flags.NoExecute);
+            try pt.mapPage(mm_addr, virt.toHH(u64, mm_addr), Flags.Present | Flags.Writable | Flags.NoExecute);
         }
     }
 
     logger.info("Loading page table", .{});
     switchPageTable(pt_addr_phys);
+}
+
+pub fn handlePageFault() void {
+    // TODO
+}
+
+pub fn map(phys_addr: u64, virt_addr: u64, pages: usize, flags: u64) !void {
+    std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
+    std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
+    std.debug.assert(std.mem.isAligned(pages, pmm.page_size));
+
+    var i = 0;
+    while (i < pages) : (i += pmm.page_size) {
+        const new_phys_addr = phys_addr + i;
+        const new_virt_addr = virt_addr + i;
+        try pt.mapPage(new_phys_addr, new_virt_addr, flags);
+    }
+}
+
+pub fn unmap(virt_addr: u64, pages: usize) !void {
+    std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
+    std.debug.assert(std.mem.isAligned(pages, pmm.page_size));
+
+    var i = 0;
+    while (i < pages) : (i += pmm.page_size) {
+        const new_virt_addr = virt_addr + i;
+        try pt.unmapPage(new_virt_addr);
+    }
+}
+
+fn mapSection(comptime section_name: []const u8, flags: u64) !void {
+    const start = @extern(*u8, .{.name = section_name ++ "_start_addr"});
+    const end = @extern(*u8, .{.name = section_name ++ "_end_addr"});
+
+    const start_addr = std.mem.alignBackward(u64, @intFromPtr(start), pmm.page_size);
+    const end_addr = std.mem.alignForward(u64, @intFromPtr(end), pmm.page_size);
+
+    const info = boot.get();
+    var virt_addr = start_addr;
+    while (virt_addr < end_addr) : (virt_addr += pmm.page_size) {
+        const phys_addr = virt_addr - info.kernel.virtual_base + info.kernel.physical_base;
+        try pt.mapPage(phys_addr, virt_addr, flags);
+    }
 }
 
 fn flushTLB(virt_addr: u64) callconv(.Inline) void {
@@ -178,8 +206,4 @@ fn switchPageTable(phys_addr: u64) callconv(.Inline) void {
         : [phys_addr] "r" (phys_addr),
         : "memory"
     );
-}
-
-pub fn handlePageFault() void {
-    // TODO
 }
