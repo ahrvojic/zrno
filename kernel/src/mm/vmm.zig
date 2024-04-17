@@ -95,6 +95,7 @@ const PageTable = extern struct {
 };
 
 const VMM = struct {
+    pt_addr_phys: u64 = undefined,
     pt: *PageTable = undefined,
 
     pub fn map(self: *@This(), virt_addr: u64, phys_addr: u64, pages: usize, flags: u64) !void {
@@ -141,14 +142,18 @@ const VMM = struct {
             return error.NotMapped;
         }
     }
+
+    pub fn switchTo(self: *@This()) void {
+        switchPageTable(self.pt_addr_phys);
+    }
 };
 
 pub fn init() !void {
     logger.info("Building kernel VMM", .{});
 
     // Allocate L4 table
-    const pt_addr_phys = pmm.alloc(1) orelse return error.OutOfMemory;
-    kernel_vmm.pt = virt.toHH(*PageTable, pt_addr_phys);
+    kernel_vmm.pt_addr_phys = pmm.alloc(1) orelse return error.OutOfMemory;
+    kernel_vmm.pt = virt.toHH(*PageTable, kernel_vmm.pt_addr_phys);
 
     // Allocate L3 tables for higher-half kernel memory only
     for (256..512) |i| {
@@ -192,7 +197,7 @@ pub fn init() !void {
     }
 
     logger.info("Loading kernel VMM", .{});
-    switchPageTable(pt_addr_phys);
+    kernel_vmm.switchTo();
 }
 
 fn mapKernelSection(vmm: *VMM, comptime section_name: []const u8, flags: u64) !void {
