@@ -172,7 +172,7 @@ pub fn init() !void {
 
     // Map identified memory map entries above 4 GB following Limine protocol
     logger.info("Mapping memory map entries", .{});
-    for (boot.get().memoryMap.entries()) |entry| {
+    for (boot.info.memory_map.entries()) |entry| {
         const base = std.mem.alignBackward(u64, entry.base, pmm.page_size);
         const top = std.mem.alignForward(u64, entry.base + entry.length, pmm.page_size);
 
@@ -201,7 +201,7 @@ fn mapKernelSection(vmm: *VMM, comptime section_name: []const u8, flags: u64) !v
 
     const virt_addr = std.mem.alignBackward(u64, section_start, pmm.page_size);
     const pages = std.mem.alignForward(u64, section_end, pmm.page_size) - virt_addr;
-    const phys_addr = virt_addr - boot.get().kernel.virtual_base + boot.get().kernel.physical_base;
+    const phys_addr = virt_addr - boot.info.kernel.virtual_base + boot.info.kernel.physical_base;
 
     try vmm.map(virt_addr, phys_addr, pages, flags);
 }

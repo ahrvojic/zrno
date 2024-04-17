@@ -49,15 +49,15 @@ const ACPI = struct {
     rsdt: *const SDT = undefined,
 
     pub fn load(self: *@This()) void {
-        switch (boot.get().rsdp.revision) {
+        switch (boot.info.rsdp.revision) {
             0 => {
                 logger.info("Load RSDT revision 0", .{});
-                const rsdp: *align(1) const RSDP = @ptrCast(boot.get().rsdp.address);
+                const rsdp: *align(1) const RSDP = @ptrCast(boot.info.rsdp.address);
                 self.rsdt = virt.toHH(*const SDT, rsdp.rsdt_addr);
             },
             2 => {
                 logger.info("Load RSDT revision 2", .{});
-                const xsdp: *align(1) const XSDP = @ptrCast(boot.get().rsdp.address);
+                const xsdp: *align(1) const XSDP = @ptrCast(boot.info.rsdp.address);
                 self.rsdt = virt.toHH(*const SDT, xsdp.xsdt_addr);
             },
             else => panic("Unknown ACPI revision!"),
@@ -65,7 +65,7 @@ const ACPI = struct {
     }
 
     pub fn findSDT(self: *const @This(), signature: []const u8, index: usize) !*const SDT {
-        return if (boot.get().rsdp.revision > 0) self.findSDTAt(u64, signature, index)
+        return if (boot.info.rsdp.revision > 0) self.findSDTAt(u64, signature, index)
         else self.findSDTAt(u32, signature, index);
     }
 

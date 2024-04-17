@@ -11,32 +11,28 @@ export var kaddr_req: limine.KernelAddressRequest = .{};
 export var mm_req: limine.MemoryMapRequest = .{};
 export var rsdp_req: limine.RsdpRequest = .{};
 
-const Bootloader = struct {
-    info: *limine.BootloaderInfoResponse,
+const Info = struct {
+    bootloader_info: *limine.BootloaderInfoResponse,
     framebuffers: *limine.FramebufferResponse,
-    higherHalf: *limine.HhdmResponse,
+    higher_half: *limine.HhdmResponse,
     kernel: *limine.KernelAddressResponse,
-    memoryMap: *limine.MemoryMapResponse,
+    memory_map: *limine.MemoryMapResponse,
     rsdp: *limine.RsdpResponse,
 };
 
-var bootloader: Bootloader = undefined;
+pub var info: Info = undefined;
 
 pub fn init() !void {
     if (!base_revision.is_supported()) {
         panic("Limine base revision not supported!");
     }
 
-    bootloader = .{
-        .info = bootloader_req.response.?,
+    info = .{
+        .bootloader_info = bootloader_req.response.?,
         .framebuffers = fb_req.response.?,
-        .higherHalf = hhdm_req.response.?,
+        .higher_half = hhdm_req.response.?,
         .kernel = kaddr_req.response.?,
-        .memoryMap = mm_req.response.?,
+        .memory_map = mm_req.response.?,
         .rsdp = rsdp_req.response.?,
     };
-}
-
-pub fn get() *const Bootloader {
-    return &bootloader;
 }
