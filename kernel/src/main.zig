@@ -45,8 +45,8 @@ pub fn main() !void {
 
     try boot.init();
 
-    const bootloader_name = std.mem.span(boot.get().info.name);
-    const bootloader_version = std.mem.span(boot.get().info.version);
+    const bootloader_name = std.mem.span(boot.info.bootloader_info.name);
+    const bootloader_version = std.mem.span(boot.info.bootloader_info.version);
     logger.info("{s} {s}", .{bootloader_name, bootloader_version});
 
     logger.info("Init CPU", .{});

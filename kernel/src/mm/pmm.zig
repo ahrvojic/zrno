@@ -42,7 +42,7 @@ pub fn init() !void {
     // Determine highest usable address
     var highest_addr: u64 = 0;
 
-    for (boot.get().memoryMap.entries()) |entry| {
+    for (boot.info.memory_map.entries()) |entry| {
         logger.info("Entry: base=0x{X:0>16} length=0x{X:0>16} kind={}", .{entry.base, entry.length, entry.kind});
 
         switch (entry.kind) {
@@ -74,7 +74,7 @@ pub fn init() !void {
     // Find where the bitmap can fit in usable memeory
     var bitmap_region: ?*limine.MemoryMapEntry = null;
 
-    for (boot.get().memoryMap.entries()) |entry| {
+    for (boot.info.memory_map.entries()) |entry| {
         if (entry.kind == .usable and entry.length >= bitmap_size) {
             bitmap_region = entry;
             break;
@@ -90,7 +90,7 @@ pub fn init() !void {
     @memset(bitmap.data, 0xff);
 
     // Clear free bits according to the memory map
-    for (boot.get().memoryMap.entries()) |entry| {
+    for (boot.info.memory_map.entries()) |entry| {
         if (entry.kind == .usable) {
             var i: usize = 0;
             while (i < entry.length) : (i += page_size) {
