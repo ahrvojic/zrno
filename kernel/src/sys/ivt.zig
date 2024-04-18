@@ -45,11 +45,26 @@ const InterruptFrame = extern struct {
 export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
     switch (frame.vector) {
         vec_gpf => {
+            printRegisters(frame);
             panic("General protection fault");
         },
         vec_page_fault => {
             logger.err("Page fault", .{});
-            vmm.handlePageFault();
+
+            const fault_addr = asm volatile (
+                \\mov %%cr2, %[result]
+                : [result] "=r" (-> u64)
+            );
+
+            const handled = vmm.handlePageFault(fault_addr, frame.error_code) catch |err| blk: {
+                logger.err("Error handling page fault: {s}", .{@errorName(err)});
+                break :blk false;
+            };
+
+            if (handled) return;
+
+            printRegisters(frame);
+            panic("Unhandled page fault");
         },
         vec_pit => {
             pit.handleInterrupt();
@@ -66,6 +81,7 @@ export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
         },
         else => {
             logger.err("Vector {d}", .{frame.vector});
+            printRegisters(frame);
             panic("Unexpected interrupt");
         },
     }
@@ -146,4 +162,22 @@ pub fn makeHandler(comptime vector: u8) InterruptHandler {
             }
         }
     }.handler;
+}
+
+fn printRegisters(frame: *InterruptFrame) void {
+    const cr2 = asm volatile (
+        \\mov %%cr2, %[result]
+        : [result] "=r" (-> u64)
+    );
+
+    const cr3 = asm volatile (
+        \\mov %%cr3, %[result]
+        : [result] "=r" (-> u64)
+    );
+
+    logger.err("rax={x:0>16} rbx={x:0>16} rcx={x:0>16} rdx={x:0>16}", .{frame.rax, frame.rbx, frame.rcx, frame.rdx});
+    logger.err("rbp={x:0>16} rdi={x:0>16} rsi={x:0>16} rsp={x:0>16}", .{frame.rbp, frame.rdi, frame.rsi, frame.iret_rsp});
+    logger.err(" r8={x:0>16}  r9={x:0>16} r10={x:0>16} r11={x:0>16}", .{frame.r8, frame.r9, frame.r10, frame.r11});
+    logger.err("r12={x:0>16} r13={x:0>16} r14={x:0>16} r15={x:0>16}", .{frame.r12, frame.r13, frame.r14, frame.r15});
+    logger.err("rip={x:0>16} cr2={x:0>16} cr3={x:0>16} err={x:0>16}", .{frame.iret_rip, cr2, cr3, frame.error_code});
 }

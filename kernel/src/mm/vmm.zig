@@ -229,6 +229,9 @@ fn switchPageTable(phys_addr: u64) callconv(.Inline) void {
     );
 }
 
-pub fn handlePageFault() void {
-    // TODO
+pub fn handlePageFault(fault_addr: u64, reason: u64) !bool {
+    // TODO: Map page if in valid range of kernel or user space
+    _ = fault_addr;
+    _ = reason;
+    return false;
 }
