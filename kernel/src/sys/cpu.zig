@@ -14,7 +14,7 @@ const lapic_reg_id = 0x20;
 const lapic_reg_eoi = 0xb0;
 const lapic_reg_spurious = 0xf0;
 
-var bsp: CPU = .{};
+pub var bsp: CPU = .{};
 
 pub const CPU = struct {
     gdt: gdt.GDT = .{},
@@ -66,11 +66,8 @@ pub const CPU = struct {
 };
 
 pub fn init() !void {
+    logger.info("Init bootstrap processor", .{});
     bsp.init();
-}
-
-pub fn get() *const CPU {
-    return &bsp;
 }
 
 pub fn interruptsEnable() callconv(.Inline) void {

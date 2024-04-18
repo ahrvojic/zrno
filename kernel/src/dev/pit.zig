@@ -10,8 +10,8 @@ const timer_freq_ms = 1000;
 
 pub fn init() !void {
     try setFrequency(timer_freq_ms);
-    const lapic_id = cpu.get().lapicId();
-    apic.get().routeIrq(lapic_id, ivt.vec_pit, 0);
+    const lapic_id = cpu.bsp.lapicId();
+    apic.io_apic.routeIrq(lapic_id, ivt.vec_pit, 0);
 }
 
 pub fn handleInterrupt() void {

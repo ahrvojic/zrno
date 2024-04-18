@@ -61,8 +61,8 @@ var kb_buffer_write_pos: u8 = 0;
 var keyboard_state: KeyboardState = .{ .modifiers = std.StaticBitSet(4) };
 
 pub fn init() !void {
-    const lapic_id = cpu.get().lapicId();
-    apic.get().routeIrq(lapic_id, ivt.vec_keyboard, 1);
+    const lapic_id = cpu.bsp.lapicId();
+    apic.io_apic.routeIrq(lapic_id, ivt.vec_keyboard, 1);
     _ = port.inb(ps2_data_port);
 }
 

@@ -2,7 +2,7 @@ const boot = @import("../sys/boot.zig");
 const madt = @import("../acpi/madt.zig");
 const virt = @import("../lib/virt.zig");
 
-var io_apic: IOApic = .{};
+pub var io_apic: IOApic = .{};
 
 const IOApic = struct {
     address: u64 = undefined,
@@ -59,8 +59,4 @@ const IOApic = struct {
 
 pub fn init() !void {
     io_apic.init();
-}
-
-pub fn get() *const IOApic {
-    return &io_apic;
 }

@@ -6,7 +6,7 @@ const debug = @import("../lib/debug.zig");
 const font = @import("font.zig");
 const panic = @import("../lib/panic.zig").panic;
 
-var fb: Framebuffer = .{};
+pub var fb: Framebuffer = .{};
 
 const Framebuffer = struct {
     info: *limine.Framebuffer = undefined,
@@ -66,8 +66,4 @@ pub fn init() !void {
     }
 
     fb.init(boot.info.framebuffers.framebuffers()[0]);
-}
-
-pub fn get() *const Framebuffer {
-    return &fb;
 }
