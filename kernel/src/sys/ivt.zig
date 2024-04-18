@@ -53,12 +53,12 @@ export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
         },
         vec_pit => {
             pit.handleInterrupt();
-            cpu.get().eoi();
+            cpu.bsp.eoi();
         },
         vec_keyboard => {
             logger.info("Keyboard interrupt", .{});
             ps2.handleInterrupt();
-            cpu.get().eoi();
+            cpu.bsp.eoi();
         },
         vec_apic_spurious => {
             logger.info("APIC spurious interrupt", .{});

@@ -7,11 +7,11 @@ const apic = @import("dev/apic.zig");
 const boot = @import("sys/boot.zig");
 const cpu = @import("sys/cpu.zig");
 const debug = @import("lib/debug.zig");
-const fb = @import("dev/fb.zig");
 const pit = @import("dev/pit.zig");
 const pmm = @import("mm/pmm.zig");
 const ps2 = @import("dev/ps2.zig");
 const tty = @import("dev/tty.zig");
+const video = @import("dev/video.zig");
 const vmm = @import("mm/vmm.zig");
 
 pub const std_options = struct {
@@ -49,7 +49,7 @@ pub fn main() !void {
     const bootloader_version = std.mem.span(boot.info.bootloader_info.version);
     logger.info("{s} {s}", .{bootloader_name, bootloader_version});
 
-    logger.info("Init CPU", .{});
+    logger.info("Init CPUs", .{});
     try cpu.init();
 
     logger.info("Init PMM", .{});
@@ -70,8 +70,8 @@ pub fn main() !void {
     logger.info("Init PS/2 keyboard", .{});
     try ps2.init();
 
-    logger.info("Init framebuffer", .{});
-    try fb.init();
+    logger.info("Init video", .{});
+    try video.init();
 
     logger.info("Done.", .{});
 
