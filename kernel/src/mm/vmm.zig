@@ -128,9 +128,9 @@ const VMM = struct {
     }
 
     pub fn free(self: *@This(), virt_addr: u64, pages: usize) !void {
+        try self.pt.unmap(virt_addr, pages);
         const phys_addr = try self.virtToPhys(virt_addr);
         pmm.free(phys_addr, pages);
-        try self.pt.unmap(virt_addr, pages);
     }
 
     pub fn virtToPhys(self: *@This(), virt_addr: u64) !u64 {
@@ -232,8 +232,12 @@ fn switchPageTable(phys_addr: u64) callconv(.Inline) void {
 }
 
 pub fn handlePageFault(fault_addr: u64, reason: u64) !bool {
-    // TODO: Map page if in valid range of kernel or user space
-    _ = fault_addr;
     _ = reason;
+
+    if (fault_addr < 0x8000_0000_0000_0000) {
+        // TODO: Handle lower-half (user space) page fault
+        return false;
+    }
+
     return false;
 }
