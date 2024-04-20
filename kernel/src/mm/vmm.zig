@@ -122,9 +122,9 @@ const VMM = struct {
         }
     }
 
-    pub fn alloc(self: *@This(), virt_addr: u64, pages: usize, flags: u64) !void {
+    pub fn alloc(self: *@This(), virt_addr: u64, pages: usize) !void {
         const phys_addr = try pmm.alloc(pages) orelse return error.OutOfMemory;
-        try self.pt.map(virt_addr, phys_addr, pages, flags);
+        try self.pt.map(virt_addr, phys_addr, pages, Flags.Present | Flags.Writable);
     }
 
     pub fn free(self: *@This(), virt_addr: u64, pages: usize) !void {
