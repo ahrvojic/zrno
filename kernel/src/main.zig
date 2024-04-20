@@ -7,6 +7,7 @@ const apic = @import("dev/apic.zig");
 const boot = @import("sys/boot.zig");
 const cpu = @import("sys/cpu.zig");
 const debug = @import("lib/debug.zig");
+const heap = @import("mm/heap.zig");
 const pit = @import("dev/pit.zig");
 const pmm = @import("mm/pmm.zig");
 const ps2 = @import("dev/ps2.zig");
@@ -57,6 +58,9 @@ pub fn main() !void {
 
     logger.info("Init VMM", .{});
     try vmm.init();
+
+    logger.info("Init kernel heap", .{});
+    try heap.init();
 
     logger.info("Init ACPI", .{});
     try acpi.init();

@@ -149,28 +149,27 @@ const VMM = struct {
 };
 
 pub fn init() !void {
-    logger.info("Building kernel VMM", .{});
+    logger.info("Init kernel VMM", .{});
 
     // Allocate L4 table
     kernel_vmm.pt_addr_phys = pmm.alloc(1) orelse return error.OutOfMemory;
     kernel_vmm.pt = virt.toHH(*PageTable, kernel_vmm.pt_addr_phys);
 
-    // Allocate L3 tables for higher-half kernel memory only
+    // Allocate L3 tables for kernel space only
     for (256..512) |i| {
         _ = kernel_vmm.pt.getNextLevel(i, true) orelse return error.OutOfMemory;
     }
 
-    // Identity and higher-half map first 4 GiB following Limine protocol
+    // Map first 4 GiB as per Limine protocol base revision 1
     const boundary = 4 * 1024 * 1024 * 1024;
     logger.info("Mapping first {d} bytes", .{boundary});
-
-    var addr = pmm.page_size; // Skip first page; never marked as usable
+    var addr: usize = 0;
     while (addr < boundary) : (addr += pmm.page_size) {
         try kernel_vmm.pt.mapPage(addr, addr, Flags.Present | Flags.Writable);
         try kernel_vmm.pt.mapPage(virt.toHH(u64, addr), addr, Flags.Present | Flags.Writable | Flags.NoExecute);
     }
 
-    // Map identified memory map entries above 4 GB following Limine protocol
+    // Map identified memory map entries above 4 GiB as per Limine protocol base revision 1
     logger.info("Mapping memory map entries", .{});
     for (boot.info.memory_map.entries()) |entry| {
         const base = std.mem.alignBackward(u64, entry.base, pmm.page_size);
@@ -191,8 +190,8 @@ pub fn init() !void {
         }
     }
 
-    // Map kernel sections
-    logger.info("Mapping kernel sections", .{});
+    // Map kernel
+    logger.info("Mapping kernel", .{});
     try mapKernelSection(&kernel_vmm, "text", Flags.Present);
     try mapKernelSection(&kernel_vmm, "rodata", Flags.Present | Flags.NoExecute);
     try mapKernelSection(&kernel_vmm, "data", Flags.Present | Flags.Writable | Flags.NoExecute);
