@@ -160,11 +160,6 @@ pub fn init() !void {
         _ = kernel_vmm.pt.getNextLevel(i, true) orelse return error.OutOfMemory;
     }
 
-    logger.info("Mapping kernel sections", .{});
-    try mapKernelSection(&kernel_vmm, "text", Flags.Present);
-    try mapKernelSection(&kernel_vmm, "rodata", Flags.Present | Flags.NoExecute);
-    try mapKernelSection(&kernel_vmm, "data", Flags.Present | Flags.Writable | Flags.NoExecute);
-
     // Identity and higher-half map first 4 GiB following Limine protocol
     const boundary = 4 * 1024 * 1024 * 1024;
     logger.info("Mapping first {d} bytes", .{boundary});
@@ -196,6 +191,13 @@ pub fn init() !void {
         }
     }
 
+    // Map kernel sections
+    logger.info("Mapping kernel sections", .{});
+    try mapKernelSection(&kernel_vmm, "text", Flags.Present);
+    try mapKernelSection(&kernel_vmm, "rodata", Flags.Present | Flags.NoExecute);
+    try mapKernelSection(&kernel_vmm, "data", Flags.Present | Flags.Writable | Flags.NoExecute);
+
+    // Switch address space
     logger.info("Loading kernel VMM", .{});
     kernel_vmm.switchTo();
 }
