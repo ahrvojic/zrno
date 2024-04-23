@@ -155,7 +155,8 @@ pub fn init() !void {
     logger.info("Mapping first {d} bytes", .{boundary});
     var addr: usize = 0;
     while (addr < boundary) : (addr += pmm.page_size) {
-        try kernel_vmm.pt.mapPage(virt.toHH(u64, addr), addr, Flags.Present | Flags.Writable | Flags.NoExecute);
+        try kernel_vmm.pt.mapPage(virt.toHH(u64, addr), addr,
+            Flags.Present | Flags.Writable | Flags.NoExecute);
     }
 
     // Map identified memory map entries above 4 GiB in kernel space as per
@@ -175,7 +176,8 @@ pub fn init() !void {
                 continue;
             }
 
-            try kernel_vmm.pt.mapPage(virt.toHH(u64, mm_addr), mm_addr, Flags.Present | Flags.Writable | Flags.NoExecute);
+            try kernel_vmm.pt.mapPage(virt.toHH(u64, mm_addr), mm_addr,
+                Flags.Present | Flags.Writable | Flags.NoExecute);
         }
     }
 
