@@ -15,8 +15,8 @@ const tty = @import("dev/tty.zig");
 const video = @import("dev/video.zig");
 const vmm = @import("mm/vmm.zig");
 
-pub const std_options = struct {
-    pub const logFn = log;
+pub const std_options: std.Options = .{
+    .logFn = log,
 };
 
 fn log(
