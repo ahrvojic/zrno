@@ -5,6 +5,17 @@ const std = @import("std");
 const vmm = @import("vmm");
 
 pub const HeapAllocator = struct {
+    pub fn allocator(self: *@This()) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .free = free,
+            },
+        };
+    }
+
     pub fn alloc(self: *@This(), len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
         _ = self;
         _ = len;
