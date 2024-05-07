@@ -94,7 +94,7 @@ const PageTable = extern struct {
     }
 };
 
-const VMM = struct {
+pub const VMM = struct {
     pt_addr_phys: u64 = undefined,
     pt: *PageTable = undefined,
 
