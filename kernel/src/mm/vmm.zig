@@ -18,6 +18,14 @@ pub const Flags = struct {
     pub const NoExecute = 1 << 63;
 };
 
+pub const FaultReason = struct {
+    pub const Protection = 1 << 0;
+    pub const Write = 1 << 1;
+    pub const User = 1 << 2;
+    pub const Reserved = 1 << 3;
+    pub const InstFetch = 1 << 4;
+};
+
 const PageTableEntry = extern struct {
     value: u64,
 
@@ -224,11 +232,18 @@ fn switchPageTable(phys_addr: u64) callconv(.Inline) void {
 }
 
 pub fn handlePageFault(fault_addr: u64, reason: u64) !bool {
-    _ = reason;
-
-    if (fault_addr < 0x8000_0000_0000_0000) {
-        // TODO: Use page faults to allocate physical memory in user space
+    if (reason & FaultReason.Protection == 1) {
         return false;
+    }
+
+    if (reason & FaultReason.User == 1) {
+        // User space fault; allocate physical memory and map page
+        std.debug.assert(fault_addr < 0x8000_0000_0000_0000);
+        const base_addr = std.mem.alignBackward(u64, fault_addr, pmm.page_size);
+        const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
+        const flags = Flags.Present | Flags.User | Flags.Writable;
+        try kernel_vmm.pt.mapPage(base_addr, phys_addr, flags);
+        return true;
     }
 
     return false;
