@@ -60,6 +60,18 @@ const PageTable = extern struct {
         }
     }
 
+    pub fn remapPage(self: *@This(), virt_addr: u64, phys_addr: u64, flags: u64) !void {
+        const entry = try self.virtToPTE(virt_addr, false);
+
+        if (entry.getFlags() & Flags.Present == 1) {
+            entry.setAddress(phys_addr);
+            entry.setFlags(flags);
+            flushTLB(virt_addr);
+        } else {
+            return error.NotMapped;
+        }
+    }
+
     pub fn unmapPage(self: *@This(), virt_addr: u64) !void {
         const entry = try self.virtToPTE(virt_addr, false);
 
@@ -116,6 +128,19 @@ pub const VMM = struct {
             const new_virt_addr = virt_addr + i;
             const new_phys_addr = phys_addr + i;
             try self.pt.mapPage(new_virt_addr, new_phys_addr, flags);
+        }
+    }
+
+    pub fn remap(self: *@This(), virt_addr: u64, phys_addr: u64, size: usize, flags: u64) !void {
+        std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
+        std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
+        std.debug.assert(std.mem.isAligned(size, pmm.page_size));
+
+        var i: usize = 0;
+        while (i < size) : (i += pmm.page_size) {
+            const new_virt_addr = virt_addr + i;
+            const new_phys_addr = phys_addr + i;
+            try self.pt.remapPage(new_virt_addr, new_phys_addr, flags);
         }
     }
 
