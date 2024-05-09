@@ -75,11 +75,32 @@ pub const HeapAllocator = struct {
     }
 
     pub fn resize(self: *@This(), buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
-        _ = self;
-        _ = buf;
-        _ = buf_align;
-        _ = new_len;
-        _ = ret_addr;
+        if (new_len == 0) {
+            self.free(buf, buf_align, ret_addr);
+            return true;
+        }
+
+        if (new_len == buf.len) {
+            return true;
+        }
+
+        const base_addr = @intFromPtr(buf.ptr);
+
+        var it = self.used_list.first();
+        while (it) |node| : (it = node.next) {
+            if (node.data.base_addr == base_addr) {
+                break;
+            }
+        }
+
+        const new_size = std.alignForward(u64, new_len, pmm.page_size);
+        if (new_size > buf.len) {
+            // TODO: Grow allocation
+        } else {
+            // TODO: Shrink allocation
+        }
+
+        return false;
     }
 
     pub fn free(self: *@This(), buf: []u8, buf_align: u8, ret_addr: usize) void {
@@ -88,7 +109,7 @@ pub const HeapAllocator = struct {
 
         const base_addr = @intFromPtr(buf.ptr);
 
-        // Look for the specified node and move it to the free list
+        // Find the specified node and move it to the free list
         var it = self.used_list.first();
         while (it) |node| : (it = node.next) {
             if (node.data.base_addr == base_addr) {
