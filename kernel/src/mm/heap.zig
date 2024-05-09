@@ -65,8 +65,8 @@ pub const HeapAllocator = struct {
 
         // Map all virtual PTEs to the same read-only physical page with the
         // expectation that the page fault handler will allocate real memory
-        // on demand.
-        self.heap_vmm.map(self.heap_curr_addr, self.zeros_phys_addr, size, vmm.Flags.Present | vmm.Flags.User);
+        // on demand. For that reason, also do not set as present.
+        self.heap_vmm.map(self.heap_curr_addr, self.zeros_phys_addr, size, vmm.Flags.User);
 
         // Advance the next available virtual address
         self.heap_curr_addr += size;
