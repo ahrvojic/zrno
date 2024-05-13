@@ -10,7 +10,7 @@ pub const HeapAllocator = struct {
     heap_end_addr: u64 = undefined,
     heap_curr_addr: u64 = undefined,
 
-    pub fn init(self: *@This(), heap_vmm: *vmm.VMM, base_addr: u64, size: usize, vmm_flags: u64) !void {
+    pub fn init(self: *@This(), heap_vmm: *vmm.VMM, base_addr: u64, size: usize, kernel: bool) !void {
         // Page-align the heap address space
         self.heap_base_addr = std.mem.alignBackward(u64, base_addr, pmm.page_size);
         self.heap_end_addr = std.mem.alignForward(u64, base_addr + size, pmm.page_size);
@@ -22,7 +22,8 @@ pub const HeapAllocator = struct {
         // expectation that the page fault handler will allocate real memory
         // on demand. For that reason, also do not set as present.
         const zeros_phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
-        heap_vmm.map(base_addr, zeros_phys_addr, size, vmm_flags);
+        const flags = if (kernel) vmm.Flags.None else vmm.Flags.User;
+        heap_vmm.map(base_addr, zeros_phys_addr, size, flags);
     }
 
     pub fn allocator(self: *@This()) std.mem.Allocator {
