@@ -15,20 +15,10 @@ pub const HeapAllocator = struct {
     heap_end_addr: u64 = undefined,
     heap_curr_addr: u64 = undefined,
 
-    pub fn init(self: *@This(), heap_vmm: *vmm.VMM, base_addr: u64, size: usize, comptime kernel: bool) !void {
-        // Page-align the heap address space
-        self.heap_base_addr = std.mem.alignBackward(u64, base_addr, pmm.page_size);
-        self.heap_end_addr = std.mem.alignForward(u64, base_addr + size, pmm.page_size);
-
-        // Set current address to the beginning of the heap
-        self.heap_curr_addr = self.heap_base_addr;
-
-        // Map all virtual PTEs to the same read-only physical page with the
-        // expectation that the page fault handler will allocate real memory
-        // on demand. For that reason, also do not set as present.
-        const zeros_phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
-        const flags = if (kernel) vmm.Flags.None else vmm.Flags.User;
-        try heap_vmm.map(base_addr, zeros_phys_addr, size, flags);
+    pub fn init(self: *@This(), base_addr: u64, size: usize) !void {
+        self.heap_base_addr = base_addr;
+        self.heap_end_addr = base_addr + size;
+        self.heap_curr_addr = base_addr;
     }
 
     pub fn allocator(self: *@This()) std.mem.Allocator {
@@ -88,5 +78,12 @@ pub const HeapAllocator = struct {
 
 pub fn init() !void {
     logger.info("Init kernel heap", .{});
-    try kernel_heap.init(&vmm.kernel_vmm, kernel_heap_base_addr, kernel_heap_size, true);
+
+    // Map all virtual PTEs to the same read-only physical page with the
+    // expectation that the page fault handler will allocate real memory
+    // on demand. For that reason, also do not set as present.
+    const zeros_phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
+    try vmm.kernel_vmm.map(kernel_heap_base_addr, zeros_phys_addr, kernel_heap_size, vmm.Flags.None);
+
+    try kernel_heap.init(kernel_heap_base_addr, kernel_heap_size);
 }
