@@ -6,9 +6,9 @@ const boot = @import("../sys/boot.zig");
 const pmm = @import("pmm.zig");
 const virt = @import("../lib/virt.zig");
 
-const flags_mask: u64 = 0xfff0_0000_0000_0fff;
+pub var kernel_vmm: VMM = .{};
 
-var kernel_vmm: VMM = .{};
+const flags_mask: u64 = 0xfff0_0000_0000_0fff;
 
 pub const Flags = struct {
     pub const None = 0;
@@ -261,12 +261,16 @@ pub fn handlePageFault(fault_addr: u64, reason: u64) !bool {
         return false;
     }
 
-    if (reason & FaultReason.User == 1) {
-        // User space fault; allocate physical memory and map page
-        std.debug.assert(fault_addr < 0x8000_0000_0000_0000);
+    if (fault_addr < 0x8000_0000_0000_0000) {
         const base_addr = std.mem.alignBackward(u64, fault_addr, pmm.page_size);
         const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
-        const flags = Flags.Present | Flags.User | Flags.Writable;
+        const flags = Flags.Present | Flags.Writable | Flags.User;
+        try kernel_vmm.pt.mapPage(base_addr, phys_addr, flags);
+        return true;
+    } else if (fault_addr >= 0xffff_ffff_9000_0000) {
+        const base_addr = std.mem.alignBackward(u64, fault_addr, pmm.page_size);
+        const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
+        const flags = Flags.Present | Flags.Writable;
         try kernel_vmm.pt.mapPage(base_addr, phys_addr, flags);
         return true;
     }
