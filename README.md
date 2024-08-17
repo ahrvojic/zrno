@@ -6,7 +6,7 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 
 ## Requirements
 
-- Zig 0.12.0
+- Zig 0.13.0
 - QEMU
 
 ## Acknowledgments
