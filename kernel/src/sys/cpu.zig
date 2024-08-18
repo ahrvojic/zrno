@@ -16,6 +16,33 @@ const lapic_reg_spurious = 0xf0;
 
 pub var bsp: CPU = .{};
 
+pub const Context = extern struct {
+    r15: u64,
+    r14: u64,
+    r13: u64,
+    r12: u64,
+    r11: u64,
+    r10: u64,
+    r9: u64,
+    r8: u64,
+    rsi: u64,
+    rdi: u64,
+    rbp: u64,
+    rdx: u64,
+    rcx: u64,
+    rbx: u64,
+    rax: u64,
+
+    vector: u64,
+    error_code: u64,
+
+    iret_rip: u64,
+    iret_cs: u64,
+    iret_flags: u64,
+    iret_rsp: u64,
+    iret_ss: u64,
+};
+
 pub const CPU = struct {
     gdt: gdt.GDT = .{},
     tss: gdt.TSS = .{},
