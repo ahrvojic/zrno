@@ -15,37 +15,10 @@ pub const vec_pit = 32;
 pub const vec_keyboard = 33;
 pub const vec_apic_spurious = 255;
 
-const InterruptFrame = extern struct {
-    r15: u64,
-    r14: u64,
-    r13: u64,
-    r12: u64,
-    r11: u64,
-    r10: u64,
-    r9: u64,
-    r8: u64,
-    rsi: u64,
-    rdi: u64,
-    rbp: u64,
-    rdx: u64,
-    rcx: u64,
-    rbx: u64,
-    rax: u64,
-
-    vector: u64,
-    error_code: u64,
-
-    iret_rip: u64,
-    iret_cs: u64,
-    iret_flags: u64,
-    iret_rsp: u64,
-    iret_ss: u64,
-};
-
-export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
-    switch (frame.vector) {
+export fn interruptDispatch(ctx: *cpu.Context) callconv(.C) void {
+    switch (ctx.vector) {
         vec_gpf => {
-            printRegisters(frame);
+            printRegisters(ctx);
             panic("General protection fault");
         },
         vec_page_fault => {
@@ -56,14 +29,14 @@ export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
                 : [result] "=r" (-> u64)
             );
 
-            const handled = vmm.handlePageFault(fault_addr, frame.error_code) catch |err| blk: {
+            const handled = vmm.handlePageFault(fault_addr, ctx.error_code) catch |err| blk: {
                 logger.err("Error handling page fault: {s}", .{@errorName(err)});
                 break :blk false;
             };
 
             if (handled) return;
 
-            printRegisters(frame);
+            printRegisters(ctx);
             panic("Unhandled page fault");
         },
         vec_pit => {
@@ -80,8 +53,8 @@ export fn interruptDispatch(frame: *InterruptFrame) callconv(.C) void {
             // No EOI
         },
         else => {
-            logger.err("Vector {d}", .{frame.vector});
-            printRegisters(frame);
+            logger.err("Vector {d}", .{ctx.vector});
+            printRegisters(ctx);
             panic("Unexpected interrupt");
         },
     }
@@ -164,7 +137,7 @@ pub fn makeHandler(comptime vector: u8) InterruptHandler {
     }.handler;
 }
 
-fn printRegisters(frame: *InterruptFrame) void {
+fn printRegisters(ctx: *cpu.Context) void {
     const cr2 = asm volatile (
         \\mov %%cr2, %[result]
         : [result] "=r" (-> u64)
@@ -175,9 +148,9 @@ fn printRegisters(frame: *InterruptFrame) void {
         : [result] "=r" (-> u64)
     );
 
-    logger.err("rax={x:0>16} rbx={x:0>16} rcx={x:0>16} rdx={x:0>16}", .{frame.rax, frame.rbx, frame.rcx, frame.rdx});
-    logger.err("rbp={x:0>16} rdi={x:0>16} rsi={x:0>16} rsp={x:0>16}", .{frame.rbp, frame.rdi, frame.rsi, frame.iret_rsp});
-    logger.err(" r8={x:0>16}  r9={x:0>16} r10={x:0>16} r11={x:0>16}", .{frame.r8, frame.r9, frame.r10, frame.r11});
-    logger.err("r12={x:0>16} r13={x:0>16} r14={x:0>16} r15={x:0>16}", .{frame.r12, frame.r13, frame.r14, frame.r15});
-    logger.err("rip={x:0>16} cr2={x:0>16} cr3={x:0>16} err={x:0>16}", .{frame.iret_rip, cr2, cr3, frame.error_code});
+    logger.err("rax={x:0>16} rbx={x:0>16} rcx={x:0>16} rdx={x:0>16}", .{ctx.rax, ctx.rbx, ctx.rcx, ctx.rdx});
+    logger.err("rbp={x:0>16} rdi={x:0>16} rsi={x:0>16} rsp={x:0>16}", .{ctx.rbp, ctx.rdi, ctx.rsi, ctx.iret_rsp});
+    logger.err(" r8={x:0>16}  r9={x:0>16} r10={x:0>16} r11={x:0>16}", .{ctx.r8, ctx.r9, ctx.r10, ctx.r11});
+    logger.err("r12={x:0>16} r13={x:0>16} r14={x:0>16} r15={x:0>16}", .{ctx.r12, ctx.r13, ctx.r14, ctx.r15});
+    logger.err("rip={x:0>16} cr2={x:0>16} cr3={x:0>16} err={x:0>16}", .{ctx.iret_rip, cr2, cr3, ctx.error_code});
 }
