@@ -38,9 +38,7 @@ const IOApic = struct {
         // Construct redirection entry value
         // Flags: level-triggered (bit 15), active-low (bit 13)
         // N.B. APIC will be unmasked
-        const value = @as(u64, @intCast(vector))
-            | @as(u64, @intCast(flags & 0b1010)) << 12
-            | @as(u64, @intCast(lapic_id)) << 56;
+        const value = @as(u64, @intCast(vector)) | @as(u64, @intCast(flags & 0b1010)) << 12 | @as(u64, @intCast(lapic_id)) << 56;
 
         self.write(offset + 0, @truncate(value));
         self.write(offset + 1, @truncate(value >> 32));

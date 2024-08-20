@@ -96,7 +96,7 @@ pub fn init(sdt: *const acpi.SDT) !void {
             },
             else => {
                 logger.info("Found unrecognized entry", .{});
-            }
+            },
         }
 
         offset += @max(entry.length, header_size);
