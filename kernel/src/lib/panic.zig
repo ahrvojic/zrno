@@ -6,7 +6,7 @@ const cpu = @import("../sys/cpu.zig");
 const tty = @import("../dev/tty.zig");
 
 pub fn panic(comptime message: []const u8) noreturn {
-    cpu.interruptsDisable();
+    cpu.interruptsOff();
 
     const msg = "KERNEL PANIC: {s}";
     const args = .{message};
