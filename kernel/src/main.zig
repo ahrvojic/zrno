@@ -19,12 +19,7 @@ pub const std_options: std.Options = .{
     .logFn = log,
 };
 
-fn log(
-    comptime level: std.log.Level,
-    comptime scope: anytype,
-    comptime fmt: []const u8,
-    args: anytype
-) void {
+fn log(comptime level: std.log.Level, comptime scope: anytype, comptime fmt: []const u8, args: anytype) void {
     var log_buffer: [1024]u8 = undefined;
     var buffer = std.io.fixedBufferStream(&log_buffer);
     var writer = buffer.writer();
@@ -48,7 +43,7 @@ pub fn main() !void {
 
     const bootloader_name = std.mem.span(boot.info.bootloader_info.name);
     const bootloader_version = std.mem.span(boot.info.bootloader_info.version);
-    logger.info("{s} {s}", .{bootloader_name, bootloader_version});
+    logger.info("{s} {s}", .{ bootloader_name, bootloader_version });
 
     logger.info("Init CPUs", .{});
     try cpu.init();

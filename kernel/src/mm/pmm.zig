@@ -43,33 +43,28 @@ pub fn init() !void {
     var highest_addr: u64 = 0;
 
     for (boot.info.memory_map.entries()) |entry| {
-        logger.info("Entry: base=0x{X:0>16} length=0x{X:0>16} kind={}", .{entry.base, entry.length, entry.kind});
+        logger.info("Entry: base=0x{X:0>16} length=0x{X:0>16} kind={}", .{ entry.base, entry.length, entry.kind });
 
         switch (entry.kind) {
             .usable => {
                 usable_pages += try std.math.divCeil(u64, entry.length, page_size);
                 highest_addr = @max(highest_addr, entry.base + entry.length);
             },
-            .reserved,
-            .acpi_reclaimable,
-            .acpi_nvs,
-            .bootloader_reclaimable,
-            .kernel_and_modules,
-            .framebuffer => {
+            .reserved, .acpi_reclaimable, .acpi_nvs, .bootloader_reclaimable, .kernel_and_modules, .framebuffer => {
                 reserved_pages += try std.math.divCeil(u64, entry.length, page_size);
             },
             .bad_memory => {
                 bad_pages += try std.math.divCeil(u64, entry.length, page_size);
-            }
+            },
         }
     }
 
-    logger.info("Pages: usable={d} reserved={d} bad={d}", .{usable_pages, reserved_pages, bad_pages});
+    logger.info("Pages: usable={d} reserved={d} bad={d}", .{ usable_pages, reserved_pages, bad_pages });
 
     // Determine size of bitmap aligned to page size
     highest_page_index = highest_addr / page_size;
     const bitmap_size = std.mem.alignForward(u64, highest_page_index / 8, page_size);
-    logger.info("Bitmap: highest_index={d} size={d}", .{highest_page_index, bitmap_size});
+    logger.info("Bitmap: highest_index={d} size={d}", .{ highest_page_index, bitmap_size });
 
     // Find where the bitmap can fit in usable memeory
     var bitmap_region: ?*limine.MemoryMapEntry = null;

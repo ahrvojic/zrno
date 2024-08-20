@@ -26,18 +26,18 @@ const tss_access = 0b10001001;
 const code_flags = 0b1010;
 const data_flags = 0b1100;
 
-const GDTR = extern struct {
-    limit: u16 align(1),
-    base: u64 align(1),
+const GDTR = packed struct(u80) {
+    limit: u16,
+    base: u64,
 };
 
-const GDTEntry = extern struct {
-    limit: u16 align(1),
-    base_1: u16 align(1),
-    base_2: u8 align(1),
-    access: u8 align(1),
-    flags: u8 align(1),
-    base_3: u8 align(1),
+const GDTEntry = packed struct(u64) {
+    limit: u16,
+    base_1: u16,
+    base_2: u8,
+    access: u8,
+    flags: u8,
+    base_3: u8,
 
     pub fn make(base: u32, limit: u20, access: u8, flags: u4) GDTEntry {
         return .{
@@ -63,15 +63,15 @@ pub const TSS = extern struct {
     iopb_offset: u16 align(1) = 0,
 };
 
-const TSSEntry = extern struct {
-    limit: u16 align(1),
-    base_1: u16 align(1),
-    base_2: u8 align(1),
-    access: u8 align(1),
-    flags: u8 align(1),
-    base_3: u8 align(1),
-    base_4: u32 align(1),
-    reserved: u32 align(1),
+const TSSEntry = packed struct(u128) {
+    limit: u16,
+    base_1: u16,
+    base_2: u8,
+    access: u8,
+    flags: u8,
+    base_3: u8,
+    base_4: u32,
+    reserved: u32,
 
     pub fn make(base: u64, limit: u16, access: u8) TSSEntry {
         return .{
@@ -104,7 +104,7 @@ pub const GDT = struct {
         self.entries[5] = tss_entry_bits[0];
         self.entries[6] = tss_entry_bits[1];
 
-        const gdtr = GDTR {
+        const gdtr = GDTR{
             .limit = @sizeOf(GDT) - 1,
             .base = @intFromPtr(self),
         };
@@ -113,14 +113,14 @@ pub const GDT = struct {
         asm volatile (
             \\lgdt (%[gdtr])
             :
-            : [gdtr] "r" (&gdtr)
+            : [gdtr] "r" (&gdtr),
         );
 
         logger.info("Reload selectors", .{});
         reload();
 
         logger.info("Load TSS", .{});
-        asm volatile(
+        asm volatile (
             \\ltr %[tss_sel]
             :
             : [tss_sel] "r" (@as(u16, tss_sel)),
@@ -128,7 +128,7 @@ pub const GDT = struct {
     }
 };
 
-fn reload() callconv(.Inline) void {
+inline fn reload() void {
     asm volatile (
         \\pushq %[kernel_code_sel]
         \\lea .reload_cs(%rip), %rax
@@ -150,7 +150,7 @@ fn reload() callconv(.Inline) void {
 
 test "GDT entry construction" {
     const value = GDTEntry.make(0x80808000, 0x8000, 0, 0);
-    const expected = GDTEntry {
+    const expected = GDTEntry{
         .base_1 = 0x8000,
         .base_2 = 0x80,
         .base_3 = 0x80,
@@ -163,7 +163,7 @@ test "GDT entry construction" {
 
 test "TSS entry construction" {
     const value = TSSEntry.make(0x800080808000, 0, 0);
-    const expected = TSSEntry {
+    const expected = TSSEntry{
         .base_1 = 0x8000,
         .base_2 = 0x80,
         .base_3 = 0x80,

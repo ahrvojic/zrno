@@ -28,8 +28,7 @@ const Framebuffer = struct {
 
         for (glyph) |glyphRow| {
             for (0..font.builtin.width) |i| {
-                if (glyphRow & std.math.shr(u8, 0x80, i) != 0)
-                {
+                if (glyphRow & std.math.shr(u8, 0x80, i) != 0) {
                     @as(*u32, @ptrCast(@alignCast(self.info.address + rowOffset + colOffset))).* = 0xffffffff;
                 }
 

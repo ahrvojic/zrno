@@ -65,8 +65,7 @@ const ACPI = struct {
     }
 
     pub fn findSDT(self: *const @This(), signature: []const u8, index: usize) !*const SDT {
-        return if (boot.info.rsdp.revision > 0) self.findSDTAt(u64, signature, index)
-        else self.findSDTAt(u32, signature, index);
+        return if (boot.info.rsdp.revision > 0) self.findSDTAt(u64, signature, index) else self.findSDTAt(u32, signature, index);
     }
 
     fn findSDTAt(self: *const @This(), comptime T: type, signature: []const u8, index: usize) !*const SDT {

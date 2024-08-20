@@ -73,10 +73,7 @@ pub const CPU = struct {
         // Spurious interrupt vector register:
         // - Set lowest byte to interrupt vector
         // - Set bit 8 to enable local APIC
-        self.lapicWrite(
-            lapic_reg_spurious,
-            self.lapicRead(lapic_reg_spurious) | ivt.vec_apic_spurious | 0x100
-        );
+        self.lapicWrite(lapic_reg_spurious, self.lapicRead(lapic_reg_spurious) | ivt.vec_apic_spurious | 0x100);
     }
 
     fn lapicRead(self: *const @This(), reg: u32) u32 {
@@ -97,21 +94,21 @@ pub fn init() !void {
     bsp.init();
 }
 
-pub fn interruptsEnable() callconv(.Inline) void {
+pub inline fn interruptsEnable() void {
     asm volatile ("sti");
 }
 
-pub fn interruptsDisable() callconv(.Inline) void {
+pub inline fn interruptsDisable() void {
     asm volatile ("cli");
 }
 
-pub fn halt() callconv(.Inline) noreturn {
+pub inline fn halt() noreturn {
     while (true) {
         asm volatile ("hlt");
     }
 }
 
-fn readMSR(msr: u32) callconv(.Inline) u64 {
+inline fn readMSR(msr: u32) u64 {
     var high: u32 = undefined;
     var low: u32 = undefined;
 
@@ -125,7 +122,7 @@ fn readMSR(msr: u32) callconv(.Inline) u64 {
     return (@as(u64, high) << 32) | low;
 }
 
-fn writeMSR(msr: u32, value: u64) callconv(.Inline) void {
+inline fn writeMSR(msr: u32, value: u64) void {
     asm volatile (
         \\wrmsr
         :
