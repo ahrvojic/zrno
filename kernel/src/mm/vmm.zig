@@ -18,12 +18,13 @@ pub const Flags = packed struct(u64) {
     noexec: bool = false,
 };
 
-pub const FaultReason = struct {
-    pub const Protection = 1 << 0;
-    pub const Write = 1 << 1;
-    pub const User = 1 << 2;
-    pub const Reserved = 1 << 3;
-    pub const InstFetch = 1 << 4;
+pub const FaultReason = packed struct(u64) {
+    protection: bool = false,
+    write: bool = false,
+    user: bool = false,
+    reserved: bool = false,
+    inst_fetch: bool = false,
+    _padding: u59 = 0,
 };
 
 const PageTableEntry = extern struct {
@@ -261,8 +262,10 @@ fn switchPageTable(phys_addr: u64) callconv(.Inline) void {
     );
 }
 
-pub fn handlePageFault(fault_addr: u64, reason: u64) !bool {
-    if (reason & FaultReason.Protection == 1) {
+pub fn handlePageFault(fault_addr: u64, fault_reason: u64) !bool {
+    const reason = @as(FaultReason, @bitCast(fault_reason));
+
+    if (reason.protection) {
         return false;
     }
 
