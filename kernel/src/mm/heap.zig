@@ -56,7 +56,7 @@ pub fn init() !void {
     // expectation that the page fault handler will allocate real memory
     // on demand. For that reason, also do not set as present.
     const zeros_phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
-    try vmm.kernel_vmm.map(kernel_heap_base_addr, zeros_phys_addr, kernel_heap_size, vmm.Flags.None);
+    try vmm.kernel_vmm.map(kernel_heap_base_addr, zeros_phys_addr, kernel_heap_size, 0);
 
     try kernel_heap.init(kernel_heap_base_addr, kernel_heap_size);
 }

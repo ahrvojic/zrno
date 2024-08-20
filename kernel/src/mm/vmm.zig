@@ -10,12 +10,12 @@ pub var kernel_vmm: VMM = .{};
 
 const flags_mask: u64 = 0xfff0_0000_0000_0fff;
 
-pub const Flags = struct {
-    pub const None = 0;
-    pub const Present = 1 << 0;
-    pub const Writable = 1 << 1;
-    pub const User = 1 << 2;
-    pub const NoExecute = 1 << 63;
+pub const Flags = packed struct(u64) {
+    present: bool = false,
+    writable: bool = false,
+    user: bool = false,
+    _padding: u60 = 0,
+    noexec: bool = false,
 };
 
 pub const FaultReason = struct {
@@ -51,8 +51,9 @@ const PageTable = extern struct {
 
     pub fn mapPage(self: *@This(), virt_addr: u64, phys_addr: u64, flags: u64) !void {
         const entry = try self.virtToPTE(virt_addr, true);
+        const entry_flags = @as(Flags, @bitCast(entry.getFlags()));
 
-        if (entry.getFlags() & Flags.Present == 0) {
+        if (!entry_flags.present) {
             entry.setAddress(phys_addr);
             entry.setFlags(flags);
         } else {
@@ -62,8 +63,9 @@ const PageTable = extern struct {
 
     pub fn remapPage(self: *@This(), virt_addr: u64, phys_addr: u64, flags: u64) !void {
         const entry = try self.virtToPTE(virt_addr, false);
+        const entry_flags = @as(Flags, @bitCast(entry.getFlags()));
 
-        if (entry.getFlags() & Flags.Present == 1) {
+        if (entry_flags.present) {
             entry.setAddress(phys_addr);
             entry.setFlags(flags);
             flushTLB(virt_addr);
@@ -74,8 +76,9 @@ const PageTable = extern struct {
 
     pub fn unmapPage(self: *@This(), virt_addr: u64) !void {
         const entry = try self.virtToPTE(virt_addr, false);
+        const entry_flags = @as(Flags, @bitCast(entry.getFlags()));
 
-        if (entry.getFlags() & Flags.Present == 1) {
+        if (entry_flags.present) {
             entry.setAddress(0);
             entry.setFlags(Flags.None);
             flushTLB(virt_addr);
@@ -100,13 +103,14 @@ const PageTable = extern struct {
 
     pub fn getNextLevel(self: *@This(), index: usize, allocate: bool) ?*PageTable {
         var entry = &self.entries[index];
+        const entry_flags = @as(Flags, @bitCast(entry.getFlags()));
 
-        if (entry.getFlags() & Flags.Present == 1) {
+        if (entry_flags.present) {
             return virt.toHH(*PageTable, entry.getAddress());
         } else if (allocate) {
             const next_level = pmm.alloc(1) orelse return null;
             entry.setAddress(next_level);
-            entry.setFlags(Flags.Present | Flags.Writable | Flags.User);
+            entry.setFlags(@bitCast(Flags{.present = true, .writable = true, .user = true}));
             return virt.toHH(*PageTable, next_level);
         }
 
@@ -157,8 +161,9 @@ pub const VMM = struct {
 
     pub fn virtToPhys(self: *@This(), virt_addr: u64) !u64 {
         const entry = try self.pt.virtToPTE(virt_addr, false);
+        const entry_flags = @as(Flags, @bitCast(entry.getFlags()));
 
-        if (entry.getFlags() & Flags.Present == 1) {
+        if (entry_flags.present) {
             return entry.getAddress();
         } else {
             return error.NotMapped;
@@ -189,7 +194,7 @@ pub fn init() !void {
     var addr: usize = 0;
     while (addr < boundary) : (addr += pmm.page_size) {
         try kernel_vmm.pt.mapPage(virt.toHH(u64, addr), addr,
-            Flags.Present | Flags.Writable | Flags.NoExecute);
+            @bitCast(Flags{.present = true, .writable = true, .noexec = true}));
     }
 
     // Map identified memory map entries above 4 GiB in kernel space as per
@@ -210,15 +215,15 @@ pub fn init() !void {
             }
 
             try kernel_vmm.pt.mapPage(virt.toHH(u64, mm_addr), mm_addr,
-                Flags.Present | Flags.Writable | Flags.NoExecute);
+                @bitCast(Flags{.present = true, .writable = true, .noexec = true}));
         }
     }
 
     // Map kernel
     logger.info("Mapping kernel", .{});
-    try mapKernelSection(&kernel_vmm, "text", Flags.Present);
-    try mapKernelSection(&kernel_vmm, "rodata", Flags.Present | Flags.NoExecute);
-    try mapKernelSection(&kernel_vmm, "data", Flags.Present | Flags.Writable | Flags.NoExecute);
+    try mapKernelSection(&kernel_vmm, "text", @bitCast(Flags{.present = true}));
+    try mapKernelSection(&kernel_vmm, "rodata", @bitCast(Flags{.present = true, .noexec = true}));
+    try mapKernelSection(&kernel_vmm, "data", @bitCast(Flags{.present = true, .writable = true, .noexec = true}));
 
     // Switch address space
     logger.info("Loading kernel VMM", .{});
@@ -264,16 +269,21 @@ pub fn handlePageFault(fault_addr: u64, reason: u64) !bool {
     if (fault_addr < 0x8000_0000_0000_0000) {
         const base_addr = std.mem.alignBackward(u64, fault_addr, pmm.page_size);
         const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
-        const flags = Flags.Present | Flags.Writable | Flags.User;
-        try kernel_vmm.pt.mapPage(base_addr, phys_addr, flags);
+        const flags = Flags{.present = true, .writable = true, .user = true};
+        try kernel_vmm.pt.mapPage(base_addr, phys_addr, @bitCast(flags));
         return true;
     } else if (fault_addr >= 0xffff_ffff_9000_0000) {
         const base_addr = std.mem.alignBackward(u64, fault_addr, pmm.page_size);
         const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
-        const flags = Flags.Present | Flags.Writable;
-        try kernel_vmm.pt.mapPage(base_addr, phys_addr, flags);
+        const flags = Flags{.present = true, .writable = true};
+        try kernel_vmm.pt.mapPage(base_addr, phys_addr, @bitCast(flags));
         return true;
     }
 
     return false;
+}
+
+test "Flags construction" {
+    const flags = Flags{.present = true, .writable = true, .noexec = true};
+    try std.testing.expect(@as(u64, @bitCast(flags)) == 0x8000000000000003);
 }
