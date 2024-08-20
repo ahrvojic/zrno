@@ -94,11 +94,11 @@ pub fn init() !void {
     bsp.init();
 }
 
-pub inline fn interruptsEnable() void {
+pub inline fn interruptsOn() void {
     asm volatile ("sti");
 }
 
-pub inline fn interruptsDisable() void {
+pub inline fn interruptsOff() void {
     asm volatile ("cli");
 }
 

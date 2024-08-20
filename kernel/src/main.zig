@@ -36,8 +36,8 @@ export fn _start() callconv(.C) noreturn {
 }
 
 pub fn main() !void {
-    cpu.interruptsDisable();
-    defer cpu.interruptsEnable();
+    cpu.interruptsOff();
+    defer cpu.interruptsOn();
 
     try boot.init();
 
