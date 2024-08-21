@@ -29,11 +29,11 @@ pub fn getCount() u16 {
 pub fn setCount(count: u16) void {
     // Channel 0, low/high access mode, mode 2
     port.outb(0x43, 0b00110100);
-    port.outb(0x40, @as(u8, @intCast(count & 0xff)));
-    port.outb(0x40, @as(u8, @intCast(count >> 8)));
+    port.outb(0x40, @intCast(count & 0xff));
+    port.outb(0x40, @intCast(count >> 8));
 }
 
 pub fn setFrequency(freq: u64) !void {
     const count = try std.math.divCeil(u64, pit_freq_hz, freq);
-    setCount(@as(u16, @intCast(count)));
+    setCount(@intCast(count));
 }

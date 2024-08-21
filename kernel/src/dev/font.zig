@@ -5,7 +5,7 @@ pub const Font = struct {
     height: u8,
     bytes: []const u8,
 
-    pub fn glyph(self: *const @This(), i: usize) []const u8 {
+    pub fn glyph(self: *const @This(), i: u64) []const u8 {
         const row = i * self.height;
         const len = row + self.height;
         return self.bytes[row..len];

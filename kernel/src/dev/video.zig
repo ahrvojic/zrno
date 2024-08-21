@@ -10,14 +10,14 @@ pub var fb: Framebuffer = .{};
 
 const Framebuffer = struct {
     info: *limine.Framebuffer = undefined,
-    maxRow: usize = 25,
-    maxCol: usize = 80,
+    maxRow: u64 = 25,
+    maxCol: u64 = 80,
 
     pub fn init(self: *@This(), info: *limine.Framebuffer) void {
         self.info = info;
     }
 
-    pub fn plotChar(self: *const @This(), ch: u8, row: usize, col: usize) void {
+    pub fn plotChar(self: *const @This(), ch: u8, row: u64, col: u64) void {
         const glyph = font.builtin.glyph(ch);
 
         const rowOffsetStart = self.toRowOffset(row);
@@ -50,11 +50,11 @@ const Framebuffer = struct {
         }
     }
 
-    pub fn toRowOffset(self: *const @This(), row: usize) usize {
+    pub fn toRowOffset(self: *const @This(), row: u64) u64 {
         return row * self.info.pitch * font.builtin.height;
     }
 
-    pub fn toColOffset(self: *const @This(), col: usize) usize {
+    pub fn toColOffset(self: *const @This(), col: u64) u64 {
         return col * self.info.bpp / 8 * font.builtin.width;
     }
 };

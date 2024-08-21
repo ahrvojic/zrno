@@ -57,7 +57,7 @@ pub fn init(sdt: *const acpi.SDT) !void {
     const madt_entries = madt_data[8..];
     const header_size = @sizeOf(Header);
 
-    var offset: usize = 0;
+    var offset: u64 = 0;
 
     while (madt_entries.len - offset >= header_size) {
         const header_end = offset + header_size;

@@ -90,10 +90,10 @@ const TSSEntry = packed struct(u128) {
 pub const GDT = struct {
     entries: [7]u64 align(8) = .{
         0, // null
-        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, kernel_code_access, code_flags))),
-        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, kernel_data_access, data_flags))),
-        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, user_code_access, code_flags))),
-        @as(u64, @bitCast(GDTEntry.make(0, 0xfffff, user_data_access, data_flags))),
+        @bitCast(GDTEntry.make(0, 0xfffff, kernel_code_access, code_flags)),
+        @bitCast(GDTEntry.make(0, 0xfffff, kernel_data_access, data_flags)),
+        @bitCast(GDTEntry.make(0, 0xfffff, user_code_access, code_flags)),
+        @bitCast(GDTEntry.make(0, 0xfffff, user_data_access, data_flags)),
         0, // TSS low
         0, // TSS high
     },
