@@ -15,7 +15,7 @@ pub const HeapAllocator = struct {
     heap_end_addr: u64 = undefined,
     heap_curr_addr: u64 = undefined,
 
-    pub fn init(self: *@This(), base_addr: u64, size: usize) !void {
+    pub fn init(self: *@This(), base_addr: u64, size: u64) !void {
         self.heap_base_addr = base_addr;
         self.heap_end_addr = base_addr + size;
         self.heap_curr_addr = base_addr;
@@ -32,7 +32,7 @@ pub const HeapAllocator = struct {
         };
     }
 
-    pub fn alloc(self: *@This(), len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+    pub fn alloc(self: *@This(), len: u64, ptr_align: u8, ret_addr: u64) ?[*]u8 {
         _ = ptr_align;
         _ = ret_addr;
 

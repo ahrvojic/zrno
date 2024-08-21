@@ -64,11 +64,11 @@ const ACPI = struct {
         }
     }
 
-    pub fn findSDT(self: *const @This(), signature: []const u8, index: usize) !*const SDT {
+    pub fn findSDT(self: *const @This(), signature: []const u8, index: u64) !*const SDT {
         return if (boot.info.rsdp.revision > 0) self.findSDTAt(u64, signature, index) else self.findSDTAt(u32, signature, index);
     }
 
-    fn findSDTAt(self: *const @This(), comptime T: type, signature: []const u8, index: usize) !*const SDT {
+    fn findSDTAt(self: *const @This(), comptime T: type, signature: []const u8, index: u64) !*const SDT {
         const entries = std.mem.bytesAsSlice(T, self.rsdt.getData());
         var index_curr = index;
 

@@ -6,15 +6,15 @@ const limine = @import("limine");
 const boot = @import("../sys/boot.zig");
 const virt = @import("../lib/virt.zig");
 
-pub const page_size: usize = 4096;
+pub const page_size: u64 = 4096;
 
-var usable_pages: usize = 0;
-var used_pages: usize = 0;
-var reserved_pages: usize = 0;
-var bad_pages: usize = 0;
+var usable_pages: u64 = 0;
+var used_pages: u64 = 0;
+var reserved_pages: u64 = 0;
+var bad_pages: u64 = 0;
 
-var highest_page_index: usize = 0;
-var last_used_index: usize = 0;
+var highest_page_index: u64 = 0;
+var last_used_index: u64 = 0;
 
 var bitmap: Bitmap = undefined;
 
@@ -25,15 +25,15 @@ const Bitmap = struct {
         return .{ .data = data };
     }
 
-    pub fn testBit(self: *const @This(), bit: usize) bool {
+    pub fn testBit(self: *const @This(), bit: u64) bool {
         return self.data[bit / 8] & (@as(u8, 1) << @as(u3, @intCast(bit % 8))) != 0;
     }
 
-    pub fn setBit(self: *@This(), bit: usize) void {
+    pub fn setBit(self: *@This(), bit: u64) void {
         self.data[bit / 8] |= (@as(u8, 1) << @as(u3, @intCast(bit % 8)));
     }
 
-    pub fn clearBit(self: *@This(), bit: usize) void {
+    pub fn clearBit(self: *@This(), bit: u64) void {
         self.data[bit / 8] &= ~(@as(u8, 1) << @as(u3, @intCast(bit % 8)));
     }
 };
@@ -87,7 +87,7 @@ pub fn init() !void {
     // Clear free bits according to the memory map
     for (boot.info.memory_map.entries()) |entry| {
         if (entry.kind == .usable) {
-            var i: usize = 0;
+            var i: u64 = 0;
             while (i < entry.length) : (i += page_size) {
                 bitmap.clearBit((entry.base + i) / page_size);
             }
@@ -95,7 +95,7 @@ pub fn init() !void {
     }
 }
 
-pub fn alloc(pages: usize) ?u64 {
+pub fn alloc(pages: u64) ?u64 {
     const res = allocNoZero(pages);
 
     if (res) |address| {
@@ -108,14 +108,14 @@ pub fn alloc(pages: usize) ?u64 {
     return res;
 }
 
-pub fn allocNoZero(pages: usize) ?u64 {
+pub fn allocNoZero(pages: u64) ?u64 {
     return allocInner(last_used_index, pages) orelse allocInner(0, pages);
 }
 
-fn allocInner(start: usize, pages: usize) ?u64 {
+fn allocInner(start: u64, pages: u64) ?u64 {
     // Scan the bitmap for a contiguous block of free pages
-    var p_idx: usize = start;
-    var p_count: usize = 0;
+    var p_idx: u64 = start;
+    var p_count: u64 = 0;
 
     while (p_idx < highest_page_index and p_count < pages) : (p_idx += 1) {
         if (bitmap.testBit(p_idx)) {
@@ -141,7 +141,7 @@ fn allocInner(start: usize, pages: usize) ?u64 {
     return i * page_size;
 }
 
-pub fn free(address: u64, pages: usize) void {
+pub fn free(address: u64, pages: u64) void {
     const start = address / page_size;
     const end = start + pages;
 

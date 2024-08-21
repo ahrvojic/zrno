@@ -90,10 +90,10 @@ const PageTable = extern struct {
 
     pub fn virtToPTE(self: *@This(), virt_addr: u64, allocate: bool) !*PageTableEntry {
         // Extract page table indexes from virtual address
-        const pml4_idx = @as(usize, virt_addr >> 39) & 0x1ff;
-        const pml3_idx = @as(usize, virt_addr >> 30) & 0x1ff;
-        const pml2_idx = @as(usize, virt_addr >> 21) & 0x1ff;
-        const pml1_idx = @as(usize, virt_addr >> 12) & 0x1ff;
+        const pml4_idx = @as(u64, virt_addr >> 39) & 0x1ff;
+        const pml3_idx = @as(u64, virt_addr >> 30) & 0x1ff;
+        const pml2_idx = @as(u64, virt_addr >> 21) & 0x1ff;
+        const pml1_idx = @as(u64, virt_addr >> 12) & 0x1ff;
 
         // Walk page table hierarchy to entry
         const pml3 = self.getNextLevel(pml4_idx, allocate) orelse return error.PTENotFound;
@@ -102,7 +102,7 @@ const PageTable = extern struct {
         return &pml1.entries[pml1_idx];
     }
 
-    pub fn getNextLevel(self: *@This(), index: usize, allocate: bool) ?*PageTable {
+    pub fn getNextLevel(self: *@This(), index: u64, allocate: bool) ?*PageTable {
         var entry = &self.entries[index];
         const entry_flags = @as(Flags, @bitCast(entry.getFlags()));
 
@@ -123,12 +123,12 @@ pub const VMM = struct {
     pt_addr_phys: u64 = undefined,
     pt: *PageTable = undefined,
 
-    pub fn map(self: *@This(), virt_addr: u64, phys_addr: u64, size: usize, flags: u64) !void {
+    pub fn map(self: *@This(), virt_addr: u64, phys_addr: u64, size: u64, flags: u64) !void {
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(size, pmm.page_size));
 
-        var i: usize = 0;
+        var i: u64 = 0;
         while (i < size) : (i += pmm.page_size) {
             const new_virt_addr = virt_addr + i;
             const new_phys_addr = phys_addr + i;
@@ -136,12 +136,12 @@ pub const VMM = struct {
         }
     }
 
-    pub fn remap(self: *@This(), virt_addr: u64, phys_addr: u64, size: usize, flags: u64) !void {
+    pub fn remap(self: *@This(), virt_addr: u64, phys_addr: u64, size: u64, flags: u64) !void {
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(size, pmm.page_size));
 
-        var i: usize = 0;
+        var i: u64 = 0;
         while (i < size) : (i += pmm.page_size) {
             const new_virt_addr = virt_addr + i;
             const new_phys_addr = phys_addr + i;
@@ -149,11 +149,11 @@ pub const VMM = struct {
         }
     }
 
-    pub fn unmap(self: *@This(), virt_addr: u64, size: usize) !void {
+    pub fn unmap(self: *@This(), virt_addr: u64, size: u64) !void {
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(size, pmm.page_size));
 
-        var i: usize = 0;
+        var i: u64 = 0;
         while (i < size) : (i += pmm.page_size) {
             const new_virt_addr = virt_addr + i;
             try self.pt.unmapPage(new_virt_addr);
@@ -192,7 +192,7 @@ pub fn init() !void {
     // Map first 4 GiB of kernel space as per Limine protocol base revision 1
     const boundary = 4 * 1024 * 1024 * 1024;
     logger.info("Mapping first {d} bytes", .{boundary});
-    var addr: usize = 0;
+    var addr: u64 = 0;
     while (addr < boundary) : (addr += pmm.page_size) {
         try kernel_vmm.pt.mapPage(virt.toHH(u64, addr), addr, @bitCast(Flags{ .present = true, .writable = true, .noexec = true }));
     }
