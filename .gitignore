@@ -1,5 +1,5 @@
-/iso_root
-/limine
-/ovmf
+iso_root/
+limine/
+ovmf/
 *.iso
 *.hdd

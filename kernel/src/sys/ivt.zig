@@ -5,8 +5,8 @@ const std = @import("std");
 const cpu = @import("cpu.zig");
 const debug = @import("../lib/debug.zig");
 const panic = @import("../lib/panic.zig").panic;
-const pit = @import("../dev/pit.zig");
 const ps2 = @import("../dev/ps2.zig");
+const sched = @import("../sched/sched.zig");
 const vmm = @import("../mm/vmm.zig");
 
 pub const vec_gpf = 13;
@@ -40,7 +40,7 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.C) void {
             panic("Unhandled page fault");
         },
         vec_pit => {
-            pit.handleInterrupt();
+            sched.schedule(ctx);
             cpu.bsp.eoi();
         },
         vec_keyboard => {

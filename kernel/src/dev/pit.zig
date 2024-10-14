@@ -14,10 +14,6 @@ pub fn init() !void {
     apic.io_apic.routeIrq(lapic_id, ivt.vec_pit, 0);
 }
 
-pub fn handleInterrupt() void {
-    // TODO
-}
-
 pub fn getCount() u16 {
     // Channel 0, latch count value command, mode 0
     port.outb(0x43, 0x00);
