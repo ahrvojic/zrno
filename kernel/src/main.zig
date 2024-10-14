@@ -11,6 +11,7 @@ const heap = @import("mm/heap.zig");
 const pit = @import("dev/pit.zig");
 const pmm = @import("mm/pmm.zig");
 const ps2 = @import("dev/ps2.zig");
+const sched = @import("sched/sched.zig");
 const tty = @import("dev/tty.zig");
 const video = @import("dev/video.zig");
 const vmm = @import("mm/vmm.zig");
@@ -65,6 +66,9 @@ pub fn main() !void {
 
     logger.info("Init PIT", .{});
     try pit.init();
+
+    logger.info("Init scheduler", .{});
+    try sched.init();
 
     logger.info("Init PS/2 keyboard", .{});
     try ps2.init();
