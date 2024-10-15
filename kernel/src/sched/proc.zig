@@ -1,13 +1,16 @@
-const cpu = @import("../sys/cpu.zig");
+const std = @import("std");
 
-pub const Status = enum {
-    ready,
-    running,
-    dead,
+const cpu = @import("../sys/cpu.zig");
+const vmm = @import("../mm/vmm.zig");
+
+pub const Thread = struct {
+    tid: u64,
+    parent: *Process,
+    ctx: cpu.Context = std.mem.zeroes(cpu.Context),
 };
 
 pub const Process = struct {
     pid: u64,
-    ctx: cpu.Context,
-    status: Status,
+    threads: std.DoublyLinkedList(*Thread),
+    vmm: *vmm.VMM,
 };
