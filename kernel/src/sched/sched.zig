@@ -26,16 +26,16 @@ var kernel_process: proc.Process = .{
 
 pub fn init() !void {
     kernel_process.vmm = &vmm.kernel_vmm;
-    idle_thread = try newKernelThread(&kernel_process, @intFromPtr(&idleThread), 0);
+    idle_thread = try newKernelThread(@intFromPtr(&idleThread), 0);
 }
 
-pub fn newKernelThread(parent: *proc.Process, pc: u64, arg: u64) !proc.Thread {
+pub fn newKernelThread(pc: u64, arg: u64) !proc.Thread {
     const stack_phys = pmm.alloc(stack_size / pmm.page_size) orelse return error.OutOfMemory;
     const stack_virt = virt.toHH(u64, stack_phys);
 
     var thread: proc.Thread = .{
         .tid = @atomicRmw(u64, &tid_next, .Add, 1, .acq_rel),
-        .parent = parent,
+        .parent = &kernel_process,
     };
 
     thread.ctx.rflags = 0x202;
