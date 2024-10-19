@@ -12,20 +12,19 @@ const vmm = @import("../mm/vmm.zig");
 const stack_size: u64 = 4096;
 
 var processes = std.DoublyLinkedList(proc.Process);
-
+var kernel_process: proc.Process = undefined;
 var idle_thread: proc.Thread = undefined;
 
 var pid_next: u64 = 1;
 var tid_next: u64 = 0;
 
-var kernel_process: proc.Process = .{
-    .pid = 0,
-    .threads = .{},
-    .vmm = undefined,
-};
-
 pub fn init() !void {
-    kernel_process.vmm = &vmm.kernel_vmm;
+    kernel_process = .{
+        .pid = 0,
+        .threads = .{},
+        .vmm = &vmm.kernel_vmm,
+    };
+
     idle_thread = try newKernelThread(@intFromPtr(&idleThread), 0);
 }
 
