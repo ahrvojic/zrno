@@ -36,11 +36,11 @@ pub const Context = extern struct {
     vector: u64,
     error_code: u64,
 
-    iret_rip: u64,
-    iret_cs: u64,
-    iret_flags: u64,
-    iret_rsp: u64,
-    iret_ss: u64,
+    rip: u64,
+    cs: u64,
+    rflags: u64,
+    rsp: u64,
+    ss: u64,
 };
 
 pub const CPU = struct {

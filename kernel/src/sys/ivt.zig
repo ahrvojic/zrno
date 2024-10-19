@@ -149,8 +149,8 @@ fn printRegisters(ctx: *cpu.Context) void {
     );
 
     logger.err("rax={x:0>16} rbx={x:0>16} rcx={x:0>16} rdx={x:0>16}", .{ ctx.rax, ctx.rbx, ctx.rcx, ctx.rdx });
-    logger.err("rbp={x:0>16} rdi={x:0>16} rsi={x:0>16} rsp={x:0>16}", .{ ctx.rbp, ctx.rdi, ctx.rsi, ctx.iret_rsp });
+    logger.err("rbp={x:0>16} rdi={x:0>16} rsi={x:0>16} rsp={x:0>16}", .{ ctx.rbp, ctx.rdi, ctx.rsi, ctx.rsp });
     logger.err(" r8={x:0>16}  r9={x:0>16} r10={x:0>16} r11={x:0>16}", .{ ctx.r8, ctx.r9, ctx.r10, ctx.r11 });
     logger.err("r12={x:0>16} r13={x:0>16} r14={x:0>16} r15={x:0>16}", .{ ctx.r12, ctx.r13, ctx.r14, ctx.r15 });
-    logger.err("rip={x:0>16} cr2={x:0>16} cr3={x:0>16} err={x:0>16}", .{ ctx.iret_rip, cr2, cr3, ctx.error_code });
+    logger.err("rip={x:0>16} cr2={x:0>16} cr3={x:0>16} err={x:0>16}", .{ ctx.rip, cr2, cr3, ctx.error_code });
 }
