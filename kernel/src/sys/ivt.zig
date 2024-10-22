@@ -22,8 +22,6 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.C) void {
             panic("General protection fault");
         },
         vec_page_fault => {
-            logger.err("Page fault", .{});
-
             const fault_addr = asm volatile (
                 \\mov %%cr2, %[result]
                 : [result] "=r" (-> u64),
