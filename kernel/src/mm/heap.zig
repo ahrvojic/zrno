@@ -25,16 +25,18 @@ pub const HeapAllocator = struct {
         return .{
             .ptr = self,
             .vtable = &.{
-                .alloc = self.alloc,
+                .alloc = HeapAllocator.alloc,
                 .resize = std.mem.Allocator.noResize,
                 .free = std.mem.Allocator.noFree,
             },
         };
     }
 
-    pub fn alloc(self: *@This(), len: u64, ptr_align: u8, ret_addr: u64) ?[*]u8 {
+    pub fn alloc(ctx: *anyopaque, len: u64, ptr_align: u8, ret_addr: u64) ?[*]u8 {
         _ = ptr_align;
         _ = ret_addr;
+
+        const self: *HeapAllocator = @alignCast(@ptrCast(ctx));
 
         if (self.heap_curr_addr + len > self.heap_end_addr) {
             return null;
@@ -45,7 +47,7 @@ pub const HeapAllocator = struct {
         // Advance the next available virtual address
         self.heap_curr_addr += len;
 
-        return @as([*]u8, base_addr);
+        return @as([*]u8, @ptrFromInt(base_addr));
     }
 };
 
