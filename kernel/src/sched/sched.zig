@@ -12,34 +12,48 @@ const virt = @import("../lib/virt.zig");
 const stack_size: u64 = 4096;
 
 var processes: std.DoublyLinkedList(void) = .{};
-var kernel_process: proc.Process = undefined;
+var threads: std.DoublyLinkedList(void) = .{};
+
+var kernel_process: *proc.Process = undefined;
 var idle_thread: *proc.Thread = undefined;
 
-var pid_next: u64 = 1;
+var pid_next: u64 = 0;
 var tid_next: u64 = 0;
 
 pub fn init() !void {
-    kernel_process = .{
-        .pid = 0,
-        .heap = heap.kernel_heap.allocator(),
+    const allocator = heap.kernel_heap.allocator();
+    kernel_process = try startProcess(allocator, false);
+    idle_thread = try startKernelThread(kernel_process,@intFromPtr(&idleThread), 0, false);
+}
+
+pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process {
+    const process = try allocator.create(proc.Process);
+    errdefer allocator.destroy(process);
+
+    process.* = .{
+        .pid = @atomicRmw(u64, &pid_next, .Add, 1, .acq_rel),
+        .heap = allocator,
         .threads = .{},
         .node = .{ .data = {} }
     };
 
-    idle_thread = try newKernelThread(@intFromPtr(&idleThread), 0);
-    kernel_process.threads.append(&idle_thread.node);
+    if (enqueue) {
+        processes.append(&process.node);
+    }
+
+    return process;
 }
 
-pub fn newKernelThread(pc: u64, arg: u64) !*proc.Thread {
+pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool) !*proc.Thread {
+    var thread = try parent.heap.create(proc.Thread);
+    errdefer parent.heap.destroy(thread);
+
     const stack_phys = pmm.alloc(stack_size / pmm.page_size) orelse return error.OutOfMemory;
     const stack_virt = virt.toHH(u64, stack_phys);
 
-    var thread = try kernel_process.heap.create(proc.Thread);
-    errdefer kernel_process.heap.destroy(thread);
-
     thread.* = .{
         .tid = @atomicRmw(u64, &tid_next, .Add, 1, .acq_rel),
-        .parent = &kernel_process,
+        .parent = parent,
         .node = .{ .data = {} },
     };
 
@@ -49,6 +63,12 @@ pub fn newKernelThread(pc: u64, arg: u64) !*proc.Thread {
     thread.ctx.rip = pc;
     thread.ctx.rdi = arg;
     thread.ctx.rsp = stack_virt + stack_size;
+
+    parent.threads.append(&thread.node);
+
+    if (enqueue) {
+        threads.append(&thread.node);
+    }
 
     return thread;
 }
