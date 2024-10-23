@@ -23,7 +23,7 @@ var tid_next: u64 = 0;
 pub fn init() !void {
     const allocator = heap.kernel_heap.allocator();
     kernel_process = try startProcess(allocator, false);
-    idle_thread = try startKernelThread(kernel_process,@intFromPtr(&idleThread), 0, false);
+    idle_thread = try startKernelThread(kernel_process, @intFromPtr(&idleThread), 0, false);
 }
 
 pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process {
