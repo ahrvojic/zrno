@@ -74,8 +74,26 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
 }
 
 pub fn schedule(ctx: *cpu.Context) void {
-    _ = ctx;
-    // TODO
+    var next_thread: ?*proc.Thread = null;
+
+    if (cpu.bsp.thread) |curr_thread| {
+        curr_thread.ctx = ctx.*;
+
+        if (curr_thread.node.next) |next| {
+            next_thread = @fieldParentPtr("node", next);
+        } else {
+            next_thread = if (threads.first) |first| @fieldParentPtr("node", first) else null;
+        }
+    } else {
+        next_thread = if (threads.first) |first| @fieldParentPtr("node", first) else null;
+    }
+
+    if (next_thread) |thread| {
+        cpu.bsp.thread = thread;
+        ctx.* = thread.ctx;
+    } else {
+        cpu.bsp.thread = idle_thread;
+    }
 }
 
 fn idleThread() callconv(.Naked) noreturn {

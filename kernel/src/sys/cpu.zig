@@ -6,6 +6,7 @@ const boot = @import("boot.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const ivt = @import("ivt.zig");
+const proc = @import("../sched/proc.zig");
 const virt = @import("../lib/virt.zig");
 
 const msr_lapic = 0x1b;
@@ -45,9 +46,10 @@ pub const Context = extern struct {
 
 pub const CPU = struct {
     gdt: gdt.GDT = .{},
-    tss: gdt.TSS = .{},
     idt: idt.IDT = .{},
+    tss: gdt.TSS = std.mem.zeroes(gdt.TSS),
     lapic_base: u64 = undefined,
+    thread: ?*proc.Thread = null,
 
     pub fn init(self: *@This()) void {
         logger.info("Load GDT", .{});
