@@ -3,9 +3,8 @@ const std = @import("std");
 const cpu = @import("../sys/cpu.zig");
 
 pub const ProcessStatus = enum {
-    runnable,
+    ready,
     running,
-    sleeping,
     stopped,
 };
 
@@ -18,7 +17,7 @@ pub const Process = struct {
 };
 
 pub const ThreadStatus = enum {
-    runnable,
+    ready,
     running,
     sleeping,
     waiting,
