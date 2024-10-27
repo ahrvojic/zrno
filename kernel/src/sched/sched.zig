@@ -32,15 +32,13 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
 
     process.* = .{
         .pid = @atomicRmw(u64, &pid_next, .Add, 1, .acq_rel),
+        .status = .runnable,
         .heap = allocator,
         .threads = .{},
         .node = .{ .data = {} }
     };
 
-    if (enqueue) {
-        processes.append(&process.node);
-    }
-
+    if (enqueue) enqueueProcess(process);
     return process;
 }
 
@@ -53,6 +51,7 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
 
     thread.* = .{
         .tid = @atomicRmw(u64, &tid_next, .Add, 1, .acq_rel),
+        .status = .runnable,
         .parent = parent,
         .node = .{ .data = {} },
     };
@@ -66,10 +65,7 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
 
     parent.threads.append(&thread.node);
 
-    if (enqueue) {
-        threads.append(&thread.node);
-    }
-
+    if (enqueue) enqueueThread(thread);
     return thread;
 }
 
@@ -79,6 +75,7 @@ pub fn schedule(ctx: *cpu.Context) void {
     if (cpu.bsp.thread) |curr_thread| {
         // Save the current context in the current thread
         curr_thread.ctx = ctx.*;
+        curr_thread.status = .sleeping;
 
         if (curr_thread.node.next) |next| {
             next_thread = @fieldParentPtr("node", next);
@@ -90,11 +87,13 @@ pub fn schedule(ctx: *cpu.Context) void {
     }
 
     if (next_thread) |thread| {
-        // Context switch to the next thread
+        thread.status = .running;
         cpu.bsp.thread = thread;
-        ctx.* = thread.ctx;
+        ctx.* = thread.ctx; // context switch
     } else {
+        idle_thread.status = .running;
         cpu.bsp.thread = idle_thread;
+        ctx.* = idle_thread.ctx; // context switch
     }
 }
 
@@ -102,4 +101,13 @@ fn idleThread() callconv(.Naked) noreturn {
     while (true) {
         asm volatile ("hlt");
     }
+}
+
+fn enqueueProcess(process: *proc.Process) void {
+    process.status = .running;
+    processes.append(&process.node);
+}
+
+fn enqueueThread(thread: *proc.Thread) void {
+    threads.append(&thread.node);
 }
