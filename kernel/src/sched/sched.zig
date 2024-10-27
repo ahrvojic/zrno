@@ -32,7 +32,7 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
 
     process.* = .{
         .pid = @atomicRmw(u64, &pid_next, .Add, 1, .acq_rel),
-        .status = .runnable,
+        .status = .ready,
         .heap = allocator,
         .threads = .{},
         .node = .{ .data = {} }
@@ -51,7 +51,7 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
 
     thread.* = .{
         .tid = @atomicRmw(u64, &tid_next, .Add, 1, .acq_rel),
-        .status = .runnable,
+        .status = .ready,
         .parent = parent,
         .node = .{ .data = {} },
     };
