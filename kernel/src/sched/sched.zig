@@ -77,6 +77,7 @@ pub fn schedule(ctx: *cpu.Context) void {
     var next_thread: ?*proc.Thread = null;
 
     if (cpu.bsp.thread) |curr_thread| {
+        // Save the current context in the current thread
         curr_thread.ctx = ctx.*;
 
         if (curr_thread.node.next) |next| {
@@ -89,6 +90,7 @@ pub fn schedule(ctx: *cpu.Context) void {
     }
 
     if (next_thread) |thread| {
+        // Context switch to the next thread
         cpu.bsp.thread = thread;
         ctx.* = thread.ctx;
     } else {
