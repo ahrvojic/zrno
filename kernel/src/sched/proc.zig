@@ -10,10 +10,12 @@ pub const ProcessStatus = enum {
 
 pub const Process = struct {
     pid: u64,
+    parent: u64,
     status: ProcessStatus,
     heap: std.mem.Allocator,
     threads: std.DoublyLinkedList(void),
     node: std.DoublyLinkedList(void).Node,
+    exit_code: u8,
 };
 
 pub const ThreadStatus = enum {
