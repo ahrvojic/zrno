@@ -135,6 +135,14 @@ pub fn makeHandler(comptime vector: u8) InterruptHandler {
     }.handler;
 }
 
+pub fn interrupt(vector: u64) void {
+    asm volatile (
+        \\int %[vec]
+        :
+        : [vec] "i" (vector),
+    );
+}
+
 fn printRegisters(ctx: *cpu.Context) void {
     const cr2 = asm volatile (
         \\mov %%cr2, %[result]

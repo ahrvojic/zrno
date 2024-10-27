@@ -5,6 +5,7 @@ const std = @import("std");
 const cpu = @import("../sys/cpu.zig");
 const gdt = @import("../sys/gdt.zig");
 const heap = @import("../mm/heap.zig");
+const ivt = @import("../sys/ivt.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
 const virt = @import("../lib/virt.zig");
@@ -32,10 +33,12 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
 
     process.* = .{
         .pid = @atomicRmw(u64, &pid_next, .Add, 1, .acq_rel),
+        .parent = 0,
         .status = .ready,
         .heap = allocator,
         .threads = .{},
-        .node = .{ .data = {} }
+        .node = .{ .data = {} },
+        .exit_code = 0,
     };
 
     if (enqueue) enqueueProcess(process);
@@ -93,8 +96,22 @@ pub fn schedule(ctx: *cpu.Context) void {
     } else {
         idle_thread.status = .running;
         cpu.bsp.thread = idle_thread;
-        ctx.* = idle_thread.ctx; // context switch
     }
+}
+
+pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
+    process.exit_code = exit_code;
+    cpu.bsp.thread = null;
+}
+
+pub fn exitThread() noreturn {
+    cpu.bsp.thread = null;
+    yield();
+}
+
+pub fn yield() void {
+    // Timer interrupt to reschedule
+    ivt.interrupt(ivt.vec_pit);
 }
 
 fn idleThread() callconv(.Naked) noreturn {
