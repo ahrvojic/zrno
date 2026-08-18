@@ -3,6 +3,7 @@ const logger = std.log.scoped(.madt);
 const std = @import("std");
 
 const acpi = @import("acpi.zig");
+const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
 const debug = @import("../lib/debug.zig");
 const panic = @import("../lib/panic.zig").panic;
 
@@ -42,12 +43,12 @@ const IOApicISO = extern struct {
     flags: u16 align(1),
 };
 
-pub var lapics = std.BoundedArray(Lapic, 8).init(0) catch unreachable;
-pub var lapic_nmis = std.BoundedArray(LapicNMI, 8).init(0) catch unreachable;
-pub var io_apics = std.BoundedArray(IOApic, 8).init(0) catch unreachable;
-pub var io_apic_isos = std.BoundedArray(IOApicISO, 8).init(0) catch unreachable;
+pub var lapics: BoundedArray(Lapic, 8) = .{};
+pub var lapic_nmis: BoundedArray(LapicNMI, 8) = .{};
+pub var io_apics: BoundedArray(IOApic, 8) = .{};
+pub var io_apic_isos: BoundedArray(IOApicISO, 8) = .{};
 
-pub fn init(sdt: *const acpi.SDT) !void {
+pub fn init(sdt: *align(1) const acpi.SDT) !void {
     const madt_data = sdt.getData();
     const fields = std.mem.bytesAsValue(Fields, madt_data[0..8]);
     if (fields.flags & 0x1 == 0) {

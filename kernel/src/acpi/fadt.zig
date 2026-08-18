@@ -64,8 +64,8 @@ const FADT = extern struct {
     x_gpe1_block: GenericAddress align(1),
 };
 
-pub fn init(sdt: *const acpi.SDT) !void {
-    const fadt: *const FADT = @ptrCast(sdt.getData().ptr);
+pub fn init(sdt: *align(1) const acpi.SDT) !void {
+    const fadt: *align(1) const FADT = @ptrCast(sdt.getData().ptr);
     if (fadt.flags & 0x80000 == 1) {
         panic("Hardware-reduced ACPI not supported!");
     }

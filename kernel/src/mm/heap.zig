@@ -27,27 +27,24 @@ pub const HeapAllocator = struct {
             .vtable = &.{
                 .alloc = HeapAllocator.alloc,
                 .resize = std.mem.Allocator.noResize,
+                .remap = std.mem.Allocator.noRemap,
                 .free = std.mem.Allocator.noFree,
             },
         };
     }
 
-    pub fn alloc(ctx: *anyopaque, len: u64, ptr_align: u8, ret_addr: u64) ?[*]u8 {
-        _ = ptr_align;
+    pub fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
         _ = ret_addr;
 
         const self: *HeapAllocator = @alignCast(@ptrCast(ctx));
+        const aligned = std.mem.alignForward(u64, self.heap_curr_addr, alignment.toByteUnits());
 
-        if (self.heap_curr_addr + len > self.heap_end_addr) {
+        if (aligned + len > self.heap_end_addr) {
             return null;
         }
 
-        const base_addr = self.heap_curr_addr;
-
-        // Advance the next available virtual address
-        self.heap_curr_addr += len;
-
-        return @as([*]u8, @ptrFromInt(base_addr));
+        self.heap_curr_addr = aligned + len;
+        return @ptrFromInt(aligned);
     }
 };
 

@@ -12,8 +12,8 @@ const virt = @import("../lib/virt.zig");
 
 const stack_size: u64 = 4096;
 
-var processes: std.DoublyLinkedList(void) = .{};
-var threads: std.DoublyLinkedList(void) = .{};
+var processes: std.DoublyLinkedList = .{};
+var threads: std.DoublyLinkedList = .{};
 
 var kernel_process: *proc.Process = undefined;
 var idle_thread: *proc.Thread = undefined;
@@ -37,7 +37,7 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .status = .ready,
         .heap = allocator,
         .threads = .{},
-        .node = .{ .data = {} },
+        .node = .{},
         .exit_code = 0,
     };
 
@@ -56,7 +56,7 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
         .tid = @atomicRmw(u64, &tid_next, .Add, 1, .acq_rel),
         .status = .ready,
         .parent = parent,
-        .node = .{ .data = {} },
+        .node = .{},
     };
 
     thread.ctx.rflags = 0x202;
@@ -114,7 +114,7 @@ pub fn yield() void {
     ivt.interrupt(ivt.vec_pit);
 }
 
-fn idleThread() callconv(.Naked) noreturn {
+fn idleThread() callconv(.naked) noreturn {
     while (true) {
         asm volatile ("hlt");
     }

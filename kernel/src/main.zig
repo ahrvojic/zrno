@@ -8,6 +8,7 @@ const boot = @import("sys/boot.zig");
 const cpu = @import("sys/cpu.zig");
 const debug = @import("lib/debug.zig");
 const heap = @import("mm/heap.zig");
+const lib_panic = @import("lib/panic.zig");
 const pit = @import("dev/pit.zig");
 const pmm = @import("mm/pmm.zig");
 const ps2 = @import("dev/ps2.zig");
@@ -20,19 +21,30 @@ pub const std_options: std.Options = .{
     .logFn = log,
 };
 
-fn log(comptime level: std.log.Level, comptime scope: anytype, comptime fmt: []const u8, args: anytype) void {
+pub const panic = std.debug.FullPanic(lib_panic.panicImpl);
+
+fn log(
+    comptime level: std.log.Level,
+    comptime scope: @EnumLiteral(),
+    comptime fmt: []const u8,
+    args: anytype,
+) void {
     var log_buffer: [1024]u8 = undefined;
-    var buffer = std.io.fixedBufferStream(&log_buffer);
-    var writer = buffer.writer();
+    var writer: std.Io.Writer = .fixed(&log_buffer);
 
-    writer.print("[{s}] ({s}) ", .{ @tagName(scope), @tagName(level) }) catch unreachable;
-    writer.print(fmt ++ "\r\n", args) catch unreachable;
+    writer.print("[{s}] ({s}) ", .{ @tagName(scope), @tagName(level) }) catch {};
+    writer.print(fmt ++ "\r\n", args) catch {};
 
-    debug.print(buffer.getWritten());
+    debug.print(writer.buffered());
 }
 
-export fn _start() callconv(.C) noreturn {
-    main() catch {};
+export fn _start() callconv(.c) noreturn {
+    main() catch |err| {
+        var buf: [64]u8 = undefined;
+        var writer: std.Io.Writer = .fixed(&buf);
+        writer.print("kernel init failed: {s}", .{@errorName(err)}) catch {};
+        @panic(writer.buffered());
+    };
     cpu.halt();
 }
 

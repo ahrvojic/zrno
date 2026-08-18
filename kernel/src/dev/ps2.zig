@@ -3,6 +3,7 @@ const logger = std.log.scoped(.ps2);
 const std = @import("std");
 
 const apic = @import("apic.zig");
+const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
 const cpu = @import("../sys/cpu.zig");
 const ivt = @import("../sys/ivt.zig");
 const port = @import("../sys/port.zig");
@@ -52,7 +53,7 @@ const KeyboardState = struct {
     }
 };
 
-var code_buffer = std.BoundedArray(u8, 8).init(0) catch unreachable;
+var code_buffer: BoundedArray(u8, 8) = .{};
 
 var kb_buffer = [_]?KeyEvent{null} ** 256;
 var kb_buffer_read_pos: u8 = 0;

@@ -15,7 +15,7 @@ pub const vec_pit = 32;
 pub const vec_keyboard = 33;
 pub const vec_apic_spurious = 255;
 
-export fn interruptDispatch(ctx: *cpu.Context) callconv(.C) void {
+export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
     switch (ctx.vector) {
         vec_gpf => {
             printRegisters(ctx);
@@ -58,7 +58,7 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.C) void {
     }
 }
 
-export fn interruptStub() callconv(.Naked) void {
+export fn interruptStub() callconv(.naked) void {
     asm volatile (
         \\push %rax
         \\push %rbx
@@ -100,11 +100,11 @@ export fn interruptStub() callconv(.Naked) void {
     );
 }
 
-pub const InterruptHandler = *const fn () callconv(.Naked) void;
+pub const InterruptHandler = *const fn () callconv(.naked) void;
 
 pub fn makeHandler(comptime vector: u8) InterruptHandler {
     return struct {
-        fn handler() callconv(.Naked) void {
+        fn handler() callconv(.naked) void {
             const has_error_code = switch (vector) {
                 8 => true,
                 10...14 => true,

@@ -7,12 +7,11 @@ var col: u8 = 0;
 
 pub fn print(comptime fmt: []const u8, args: anytype) void {
     var print_buffer: [1024]u8 = undefined;
-    var buffer = std.io.fixedBufferStream(&print_buffer);
-    var writer = buffer.writer();
+    var writer: std.Io.Writer = .fixed(&print_buffer);
 
-    writer.print(fmt, args) catch unreachable;
+    writer.print(fmt, args) catch {};
 
-    for (buffer.getWritten()) |ch| {
+    for (writer.buffered()) |ch| {
         putChar(ch);
     }
 }

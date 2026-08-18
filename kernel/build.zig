@@ -1,40 +1,48 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    // Define a freestanding x86_64 cross-compilation target.
-    var target: std.zig.CrossTarget = .{
+    const Features = std.Target.x86.Feature;
+    const target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
         .os_tag = .freestanding,
         .abi = .none,
-    };
+        .cpu_features_add = std.Target.x86.featureSet(&.{.soft_float}),
+        .cpu_features_sub = std.Target.x86.featureSet(&.{
+            Features.mmx,
+            Features.sse,
+            Features.sse2,
+            Features.avx,
+            Features.avx2,
+        }),
+    });
 
-    // Disable CPU features that require additional initialization
-    // like MMX, SSE/2 and AVX. That requires us to enable the soft-float feature.
-    const Features = std.Target.x86.Feature;
-    target.cpu_features_sub.addFeature(@intFromEnum(Features.mmx));
-    target.cpu_features_sub.addFeature(@intFromEnum(Features.sse));
-    target.cpu_features_sub.addFeature(@intFromEnum(Features.sse2));
-    target.cpu_features_sub.addFeature(@intFromEnum(Features.avx));
-    target.cpu_features_sub.addFeature(@intFromEnum(Features.avx2));
-    target.cpu_features_add.addFeature(@intFromEnum(Features.soft_float));
-
-    // Build the kernel itself.
     const optimize = b.standardOptimizeOption(.{});
-    const limine = b.dependency("limine", .{});
-    const kernel = b.addExecutable(.{
-        .name = "kernel",
-        .root_source_file = .{ .cwd_relative = "src/main.zig" },
-        .target = b.resolveTargetQuery(target),
+
+    const limine = b.dependency("limine", .{}).module("limine");
+
+    const kernel_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
         .optimize = optimize,
         .code_model = .kernel,
         .pic = true,
+        .red_zone = false,
+        .imports = &.{
+            .{ .name = "limine", .module = limine },
+        },
     });
 
-    kernel.root_module.addImport("limine", limine.module("limine"));
-    kernel.setLinkerScriptPath(.{ .cwd_relative = "linker.ld" });
+    const kernel = b.addExecutable(.{
+        .name = "kernel",
+        .root_module = kernel_mod,
+    });
 
-    // Disable LTO. This prevents issues with limine requests
-    kernel.want_lto = false;
+    kernel.setLinkerScript(b.path("linker.ld"));
+    // The self-hosted x86 backend cannot encode kernel asm (port I/O,
+    // CR3, AT&T memory operands, jumps to exported stubs).
+    kernel.use_llvm = true;
+    // LTO can discard Limine request symbols.
+    kernel.lto = .none;
 
     b.installArtifact(kernel);
 }

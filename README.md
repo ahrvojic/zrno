@@ -6,10 +6,10 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 
 ## Requirements
 
-- [Zig](https://ziglang.org) 0.13.0
+- [Zig](https://ziglang.org) 0.16.0
 - [QEMU](https://www.qemu.org)
 
-## Acknowledgments
+## References
 
 - [OSDev.org](https://wiki.osdev.org)
 - [Osdev Notes](https://github.com/dreamportdev/Osdev-Notes)

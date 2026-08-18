@@ -13,8 +13,8 @@ pub const Process = struct {
     parent: u64,
     status: ProcessStatus,
     heap: std.mem.Allocator,
-    threads: std.DoublyLinkedList(void),
-    node: std.DoublyLinkedList(void).Node,
+    threads: std.DoublyLinkedList,
+    node: std.DoublyLinkedList.Node,
     exit_code: u8,
 };
 
@@ -31,5 +31,5 @@ pub const Thread = struct {
     status: ThreadStatus,
     parent: *Process,
     ctx: cpu.Context = std.mem.zeroes(cpu.Context),
-    node: std.DoublyLinkedList(void).Node,
+    node: std.DoublyLinkedList.Node,
 };

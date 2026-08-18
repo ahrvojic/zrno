@@ -40,40 +40,45 @@ pub const SDT = extern struct {
     creator_id: u32,
     creator_revision: u32,
 
-    pub fn getData(self: *const @This()) []const u8 {
+    pub fn getData(self: *align(1) const @This()) []const u8 {
         return @as([*]const u8, @ptrCast(self))[0..self.length][@sizeOf(SDT)..];
     }
 };
 
 const ACPI = struct {
-    rsdt: *const SDT = undefined,
+    rsdt: *align(1) const SDT = undefined,
+    use_xsdt: bool = false,
 
     pub fn load(self: *@This()) void {
-        switch (boot.info.rsdp.revision) {
-            0 => {
-                logger.info("Load RSDT revision 0", .{});
-                const rsdp: *align(1) const RSDP = @ptrCast(boot.info.rsdp.address);
-                self.rsdt = virt.toHH(*const SDT, rsdp.rsdt_addr);
-            },
-            2 => {
-                logger.info("Load RSDT revision 2", .{});
-                const xsdp: *align(1) const XSDP = @ptrCast(boot.info.rsdp.address);
-                self.rsdt = virt.toHH(*const SDT, xsdp.xsdt_addr);
-            },
-            else => panic("Unknown ACPI revision!"),
+        // Old limine-zig gives a virtual (HHDM) pointer. Table *addresses*
+        // inside RSDP/XSDP are still physical.
+        const rsdp: *align(1) const RSDP = @ptrCast(boot.info.rsdp.address);
+
+        if (rsdp.revision >= 2) {
+            logger.info("Load XSDT (ACPI revision {d})", .{rsdp.revision});
+            const xsdp: *align(1) const XSDP = @ptrCast(rsdp);
+            self.rsdt = virt.toHH(*align(1) const SDT, xsdp.xsdt_addr);
+            self.use_xsdt = true;
+        } else {
+            logger.info("Load RSDT (ACPI revision {d})", .{rsdp.revision});
+            self.rsdt = virt.toHH(*align(1) const SDT, rsdp.rsdt_addr);
         }
     }
 
-    pub fn findSDT(self: *const @This(), signature: []const u8, index: u64) !*const SDT {
-        return if (boot.info.rsdp.revision > 0) self.findSDTAt(u64, signature, index) else self.findSDTAt(u32, signature, index);
+    pub fn findSDT(self: *const @This(), signature: []const u8, index: u64) !*align(1) const SDT {
+        return if (self.use_xsdt) self.findSDTAt(u64, signature, index) else self.findSDTAt(u32, signature, index);
     }
 
-    fn findSDTAt(self: *const @This(), comptime T: type, signature: []const u8, index: u64) !*const SDT {
-        const entries = std.mem.bytesAsSlice(T, self.rsdt.getData());
+    fn findSDTAt(self: *const @This(), comptime T: type, signature: []const u8, index: u64) !*align(1) const SDT {
+        const data = self.rsdt.getData();
+        const entry_size = @sizeOf(T);
+        var offset: usize = 0;
         var index_curr = index;
 
-        for (entries) |entry| {
-            const sdt = virt.toHH(*const SDT, entry);
+        // XSDT entries sit at SDT+36 (4-aligned, not 8). Read them unaligned.
+        while (offset + entry_size <= data.len) : (offset += entry_size) {
+            const entry = std.mem.readInt(T, data[offset..][0..entry_size], .little);
+            const sdt = virt.toHH(*align(1) const SDT, entry);
 
             if (!std.mem.eql(u8, &sdt.signature, std.mem.sliceTo(signature, 3))) {
                 continue;

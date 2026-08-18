@@ -247,7 +247,7 @@ inline fn flushTLB(virt_addr: u64) void {
         \\invlpg %[virt_addr]
         :
         : [virt_addr] "r" (virt_addr),
-        : "memory"
+        : .{ .memory = true }
     );
 }
 
@@ -256,7 +256,7 @@ inline fn switchPageTable(phys_addr: u64) void {
         \\movq %[phys_addr], %cr3
         :
         : [phys_addr] "r" (phys_addr),
-        : "memory"
+        : .{ .memory = true }
     );
 }
 
