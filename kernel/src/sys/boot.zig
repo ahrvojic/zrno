@@ -1,6 +1,7 @@
 const limine = @import("limine");
 
 const panic = @import("../lib/panic.zig").panic;
+const virt = @import("../lib/virt.zig");
 
 export var start_marker: limine.RequestsStartMarker linksection(".limine_requests_start") = .{};
 export var end_marker: limine.RequestsEndMarker linksection(".limine_requests_end") = .{};
@@ -23,16 +24,21 @@ const Info = struct {
     rsdp: *limine.RsdpResponse,
 };
 
+const State = enum { uninit, live, dropped };
+
 var info_value: Info = undefined;
-var initialized = false;
+var state: State = .uninit;
 
 pub fn info() *const Info {
-    if (!initialized) panic("boot used before init");
-    return &info_value;
+    return switch (state) {
+        .live => &info_value,
+        .uninit => panic("boot used before init"),
+        .dropped => panic("boot info used after drop"),
+    };
 }
 
 pub fn init() !void {
-    if (initialized) panic("boot already initialized");
+    if (state != .uninit) panic("boot already initialized");
 
     if (!base_revision.isSupported()) {
         panic("Limine base revision not supported!");
@@ -46,5 +52,15 @@ pub fn init() !void {
         .memory_map = mm_req.response orelse return error.NoMemoryMap,
         .rsdp = rsdp_req.response orelse return error.NoRsdp,
     };
-    initialized = true;
+    virt.init(info_value.higher_half.offset);
+    state = .live;
+}
+
+/// Limine responses (and the boot stack) live in bootloader-reclaimable
+/// memory. After this, `info()` panics; callers must have copied what
+/// they still need.
+pub fn drop() void {
+    if (state != .live) panic("boot drop without init");
+    info_value = undefined;
+    state = .dropped;
 }

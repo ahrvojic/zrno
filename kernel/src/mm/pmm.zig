@@ -3,11 +3,20 @@ const logger = std.log.scoped(.pmm);
 const std = @import("std");
 const limine = @import("limine");
 
+const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
 const boot = @import("../sys/boot.zig");
 const Lock = @import("../lib/lock.zig");
 const virt = @import("../lib/virt.zig");
 
 pub const page_size: u64 = 4096;
+
+const ReclaimRange = struct {
+    base: u64,
+    length: u64,
+};
+
+// Typical Limine maps have a handful of bootloader_reclaimable entries.
+const max_reclaim_ranges = 64;
 
 var usable_pages: u64 = 0;
 var used_pages: u64 = 0;
@@ -20,6 +29,8 @@ var last_used_index: u64 = 0;
 var bitmap: Bitmap = undefined;
 var lock: Lock.SpinLock = .{};
 var initialized = false;
+var bootloader_reclaimed = false;
+var reclaim_ranges: BoundedArray(ReclaimRange, max_reclaim_ranges) = .{};
 
 fn expectInit() void {
     if (!initialized) @panic("pmm used before init");
@@ -52,7 +63,7 @@ const Bitmap = struct {
 pub fn init() !void {
     expectUninit();
 
-    // Determine highest usable address
+    // Bitmap must cover usable RAM and bootloader_reclaimable (freed later).
     var highest_addr: u64 = 0;
 
     for (boot.info().memory_map.entries()) |entry| {
@@ -63,7 +74,12 @@ pub fn init() !void {
                 usable_pages += try std.math.divCeil(u64, entry.length, page_size);
                 highest_addr = @max(highest_addr, entry.base + entry.length);
             },
-            .reserved, .acpi_reclaimable, .acpi_nvs, .bootloader_reclaimable, .executable_and_modules, .framebuffer, .reserved_mapped => {
+            .bootloader_reclaimable => {
+                reserved_pages += try std.math.divCeil(u64, entry.length, page_size);
+                highest_addr = @max(highest_addr, entry.base + entry.length);
+                try reclaim_ranges.append(.{ .base = entry.base, .length = entry.length });
+            },
+            .reserved, .acpi_reclaimable, .acpi_nvs, .executable_and_modules, .framebuffer, .reserved_mapped => {
                 reserved_pages += try std.math.divCeil(u64, entry.length, page_size);
             },
             .bad_memory => {
@@ -120,6 +136,41 @@ pub fn init() !void {
     }
     used_pages += bitmap_pages;
     initialized = true;
+}
+
+/// Mark previously reserved bootloader_reclaimable pages free. Call after
+/// Limine responses have been copied out and `boot.drop()` has run. The
+/// Limine boot stack lives in this memory; do not allocate until the
+/// first schedule has abandoned it.
+pub fn reclaimBootloader() void {
+    expectInit();
+    if (bootloader_reclaimed) @panic("bootloader already reclaimed");
+
+    lock.lock();
+    defer lock.unlock();
+
+    var pages: u64 = 0;
+    var first_idx: ?u64 = null;
+
+    for (reclaim_ranges.constSlice()) |range| {
+        var offset: u64 = 0;
+        while (offset < range.length) : (offset += page_size) {
+            const idx = (range.base + offset) / page_size;
+            if (idx >= highest_page_index) continue;
+            if (!bitmap.testBit(idx)) continue;
+            bitmap.clearBit(idx);
+            if (first_idx == null) first_idx = idx;
+            pages += 1;
+        }
+    }
+
+    reserved_pages -= pages;
+    usable_pages += pages;
+    if (first_idx) |idx| {
+        last_used_index = @min(last_used_index, idx);
+    }
+    bootloader_reclaimed = true;
+    logger.info("Reclaimed {d} bootloader pages ({d} KiB)", .{ pages, pages * 4 });
 }
 
 pub fn alloc(pages: u64) ?u64 {

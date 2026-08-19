@@ -83,6 +83,10 @@ pub fn main() !void {
     logger.info("Init ACPI", .{});
     try acpi.init();
 
+    // HHDM offset and framebuffer metadata are in BSS; ACPI tables and
+    // framebuffer pixels stay reserved. Limine responses are now unused.
+    boot.drop();
+
     logger.info("Init APIC", .{});
     try apic.init();
 
@@ -96,6 +100,10 @@ pub fn main() !void {
     try ps2.init();
 
     _ = try sched.spawnKernelThread(@intFromPtr(&keyboardThread), 0);
+
+    // IRQs still off; next pmm.alloc is after yield leaves the boot stack.
+    logger.info("Reclaim bootloader memory", .{});
+    pmm.reclaimBootloader();
 
     logger.info("Done.", .{});
 
