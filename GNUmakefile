@@ -1,7 +1,7 @@
 # Nuke built-in rules and variables.
 override MAKEFLAGS += -rR
 
-override IMAGE_NAME := template
+override IMAGE_NAME := zrno
 
 # Pin the bootloader release. Limine does not guarantee protocol or config
 # compatibility across versions; /releases/latest can break a working kernel.
