@@ -51,10 +51,26 @@ pub const max_io_apics = 8;
 // One override per ISA IRQ (0-15).
 pub const max_io_apic_isos = 16;
 
-pub var lapics: BoundedArray(Lapic, max_lapics) = .{};
-pub var lapic_nmis: BoundedArray(LapicNMI, max_lapic_nmis) = .{};
-pub var io_apics: BoundedArray(IOApic, max_io_apics) = .{};
-pub var io_apic_isos: BoundedArray(IOApicISO, max_io_apic_isos) = .{};
+var lapics_value: BoundedArray(Lapic, max_lapics) = .{};
+var lapic_nmis_value: BoundedArray(LapicNMI, max_lapic_nmis) = .{};
+var io_apics_value: BoundedArray(IOApic, max_io_apics) = .{};
+var io_apic_isos_value: BoundedArray(IOApicISO, max_io_apic_isos) = .{};
+
+pub fn lapics() []const Lapic {
+    return lapics_value.constSlice();
+}
+
+pub fn lapicNmis() []const LapicNMI {
+    return lapic_nmis_value.constSlice();
+}
+
+pub fn ioApics() []const IOApic {
+    return io_apics_value.constSlice();
+}
+
+pub fn ioApicIsos() []const IOApicISO {
+    return io_apic_isos_value.constSlice();
+}
 
 pub fn init(sdt: *align(1) const acpi.SDT) !void {
     const madt_data = sdt.getData();
@@ -82,19 +98,19 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
                 logger.info("Found local APIC", .{});
                 if (data.len < @sizeOf(Lapic)) return error.InvalidMadt;
                 const lapic = std.mem.bytesToValue(Lapic, data[0..@sizeOf(Lapic)]);
-                try lapics.append(lapic);
+                try lapics_value.append(lapic);
             },
             1 => {
                 logger.info("Found I/O APIC", .{});
                 if (data.len < @sizeOf(IOApic)) return error.InvalidMadt;
                 const io_apic = std.mem.bytesToValue(IOApic, data[0..@sizeOf(IOApic)]);
-                try io_apics.append(io_apic);
+                try io_apics_value.append(io_apic);
             },
             2 => {
                 logger.info("Found I/O APIC interrupt source override", .{});
                 if (data.len < @sizeOf(IOApicISO)) return error.InvalidMadt;
                 const io_apic_iso = std.mem.bytesToValue(IOApicISO, data[0..@sizeOf(IOApicISO)]);
-                try io_apic_isos.append(io_apic_iso);
+                try io_apic_isos_value.append(io_apic_iso);
             },
             3 => {
                 logger.info("Found I/O APIC NMI source", .{});
@@ -103,7 +119,7 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
                 logger.info("Found local APIC NMIs", .{});
                 if (data.len < @sizeOf(LapicNMI)) return error.InvalidMadt;
                 const lapic_nmi = std.mem.bytesToValue(LapicNMI, data[0..@sizeOf(LapicNMI)]);
-                try lapic_nmis.append(lapic_nmi);
+                try lapic_nmis_value.append(lapic_nmi);
             },
             5 => {
                 logger.info("Found local APIC address override", .{});

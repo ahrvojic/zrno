@@ -52,21 +52,21 @@ fn putCharUnlocked(ch: u8) void {
         '\x08' => { // backspace
             if (col > 0) {
                 col -= 1;
-                video.fb.plotChar(' ', row, col);
+                video.plotChar(' ', row, col);
             }
         },
         else => {
-            video.fb.plotChar(ch, row, col);
+            video.plotChar(ch, row, col);
             col += 1;
-            if (col == video.fb.max_col) {
+            if (col == video.maxCol()) {
                 col = 0;
                 row += 1;
             }
         },
     }
 
-    if (row == video.fb.max_row) {
-        video.fb.scroll();
+    if (row == video.maxRow()) {
+        video.scroll();
         row -= 1;
     }
 }

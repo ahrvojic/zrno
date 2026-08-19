@@ -88,11 +88,11 @@ pub fn init() !void {
     port.outb(pic1_data, 0xff);
     port.outb(pic2_data, 0xff);
 
-    if (madt.io_apics.len == 0) {
+    if (madt.ioApics().len == 0) {
         return error.NoIoApic;
     }
 
-    for (madt.io_apics.slice()) |entry| {
+    for (madt.ioApics()) |entry| {
         const io_apic = try IOApic.init(entry.address, entry.gsi_base);
         for (io_apics.slice()) |*existing| {
             if (io_apic.overlaps(existing)) return error.OverlappingIoApic;
@@ -107,7 +107,7 @@ pub fn routeIrq(lapic_id: u32, vector: u8, irq: u8) void {
     expectInit();
     var gsi: u32 = irq;
     var flags: u16 = 0;
-    for (madt.io_apic_isos.slice()) |iso| {
+    for (madt.ioApicIsos()) |iso| {
         if (iso.irq_source == irq) {
             gsi = iso.gsi;
             flags = iso.flags;

@@ -5,7 +5,7 @@ const boot = @import("../sys/boot.zig");
 const font = @import("font.zig");
 const panic = @import("../lib/panic.zig").panic;
 
-pub var fb: Framebuffer = .{};
+var fb: Framebuffer = .{};
 
 const Framebuffer = struct {
     info: *limine.Framebuffer = undefined,
@@ -13,7 +13,7 @@ const Framebuffer = struct {
     max_col: u64 = 80,
     initialized: bool = false,
 
-    pub fn init(self: *@This(), info: *limine.Framebuffer) void {
+    fn init(self: *@This(), info: *limine.Framebuffer) void {
         self.expectUninit();
         self.info = info;
         self.max_col = info.width / font.builtin.width;
@@ -21,7 +21,7 @@ const Framebuffer = struct {
         self.initialized = true;
     }
 
-    pub fn plotChar(self: *const @This(), ch: u8, row: u64, col: u64) void {
+    fn plotChar(self: *const @This(), ch: u8, row: u64, col: u64) void {
         self.expectInit();
         if (row >= self.max_row or col >= self.max_col) return;
 
@@ -45,7 +45,7 @@ const Framebuffer = struct {
         }
     }
 
-    pub fn scroll(self: *const @This()) void {
+    fn scroll(self: *const @This()) void {
         self.expectInit();
         // Shift framebuffer up one character row
         const new_top = self.toRowOffset(1);
@@ -75,6 +75,22 @@ const Framebuffer = struct {
 
 pub fn isReady() bool {
     return fb.initialized;
+}
+
+pub fn plotChar(ch: u8, row: u64, col: u64) void {
+    fb.plotChar(ch, row, col);
+}
+
+pub fn scroll() void {
+    fb.scroll();
+}
+
+pub fn maxRow() u64 {
+    return fb.max_row;
+}
+
+pub fn maxCol() u64 {
+    return fb.max_col;
 }
 
 pub fn init() !void {

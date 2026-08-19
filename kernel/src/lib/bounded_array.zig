@@ -24,6 +24,10 @@ pub fn BoundedArray(comptime T: type, comptime capacity: usize) type {
             return self.buffer[0..self.len];
         }
 
+        pub fn constSlice(self: *const Self) []const T {
+            return self.buffer[0..self.len];
+        }
+
         pub fn resize(self: *Self, new_len: usize) error{Overflow}!void {
             if (new_len > capacity) return error.Overflow;
             self.len = new_len;
