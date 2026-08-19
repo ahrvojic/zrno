@@ -1,7 +1,8 @@
-const boot = @import("../sys/boot.zig");
 const madt = @import("../acpi/madt.zig");
+const pmm = @import("../mm/pmm.zig");
 const port = @import("../sys/port.zig");
 const virt = @import("../lib/virt.zig");
+const vmm = @import("../mm/vmm.zig");
 
 const pic1_data = 0x21;
 const pic2_data = 0xa1;
@@ -19,6 +20,7 @@ const IOApic = struct {
 
         // QEMU Q35 machine only has one I/O APIC
         const io_apic_entry = madt.io_apics.get(0);
+        try vmm.mapMmio(io_apic_entry.address, pmm.page_size);
         self.address = virt.toHH(u64, io_apic_entry.address);
         self.gsib = io_apic_entry.gsib;
     }

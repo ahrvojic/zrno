@@ -18,7 +18,9 @@ pub fn build(b: *std.Build) void {
 
     const optimize = b.standardOptimizeOption(.{});
 
-    const limine = b.dependency("limine", .{}).module("limine");
+    const limine = b.createModule(.{
+        .root_source_file = b.path("src/sys/limine.zig"),
+    });
 
     const kernel_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),

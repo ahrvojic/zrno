@@ -48,8 +48,8 @@ const ACPI = struct {
     use_xsdt: bool = false,
 
     pub fn load(self: *@This()) void {
-        // Old limine-zig gives a virtual (HHDM) pointer. Table *addresses*
-        // inside RSDP/XSDP are still physical.
+        // Base revision 6 returns a virtual (HHDM) pointer. Table
+        // addresses inside RSDP/XSDP are still physical.
         const rsdp: *align(1) const RSDP = @ptrCast(boot.info.rsdp.address);
 
         if (rsdp.revision >= 2) {

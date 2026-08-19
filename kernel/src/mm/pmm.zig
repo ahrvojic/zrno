@@ -50,7 +50,7 @@ pub fn init() !void {
                 usable_pages += try std.math.divCeil(u64, entry.length, page_size);
                 highest_addr = @max(highest_addr, entry.base + entry.length);
             },
-            .reserved, .acpi_reclaimable, .acpi_nvs, .bootloader_reclaimable, .kernel_and_modules, .framebuffer => {
+            .reserved, .acpi_reclaimable, .acpi_nvs, .bootloader_reclaimable, .executable_and_modules, .framebuffer, .reserved_mapped => {
                 reserved_pages += try std.math.divCeil(u64, entry.length, page_size);
             },
             .bad_memory => {

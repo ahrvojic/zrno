@@ -190,33 +190,11 @@ pub fn init() !void {
         _ = kernel_vmm.pt.getNextLevel(i, true) orelse return error.OutOfMemory;
     }
 
-    // Map first 4 GiB of kernel space as per Limine protocol base revision 1
-    const boundary = 4 * 1024 * 1024 * 1024;
-    logger.info("Mapping first {d} bytes", .{boundary});
-    var addr: u64 = 0;
-    while (addr < boundary) : (addr += pmm.page_size) {
-        try kernel_vmm.pt.mapPage(virt.toHH(u64, addr), addr, @bitCast(Flags{ .present = true, .writable = true, .noexec = true }));
-    }
-
-    // Map identified memory map entries above 4 GiB in kernel space as per
-    // Limine protocol base revision 1
-    logger.info("Mapping memory map entries", .{});
+    // Base revision 6 maps only selected memory-map types into the HHDM.
+    logger.info("Mapping HHDM regions", .{});
     for (boot.info.memory_map.entries()) |entry| {
-        const base = std.mem.alignBackward(u64, entry.base, pmm.page_size);
-        const top = std.mem.alignForward(u64, entry.base + entry.length, pmm.page_size);
-
-        if (top <= boundary) {
-            continue;
-        }
-
-        var mm_addr = base;
-        while (mm_addr < top) : (mm_addr += pmm.page_size) {
-            if (mm_addr < boundary) {
-                continue;
-            }
-
-            try kernel_vmm.pt.mapPage(virt.toHH(u64, mm_addr), mm_addr, @bitCast(Flags{ .present = true, .writable = true, .noexec = true }));
-        }
+        if (!entry.kind.inHhdm()) continue;
+        try mapHhdmRange(kernel_vmm.pt, entry.base, entry.base + entry.length);
     }
 
     // Map kernel
@@ -228,6 +206,23 @@ pub fn init() !void {
     // Switch address space
     logger.info("Loading kernel VMM", .{});
     kernel_vmm.switchTo();
+}
+
+pub fn mapMmio(phys_addr: u64, size: u64) !void {
+    std.debug.assert(size > 0);
+    try mapHhdmRange(kernel_vmm.pt, phys_addr, phys_addr + size);
+}
+
+fn mapHhdmRange(pt: *PageTable, base: u64, top: u64) !void {
+    const flags: u64 = @bitCast(Flags{ .present = true, .writable = true, .noexec = true });
+    var addr = std.mem.alignBackward(u64, base, pmm.page_size);
+    const end = std.mem.alignForward(u64, top, pmm.page_size);
+    while (addr < end) : (addr += pmm.page_size) {
+        pt.mapPage(virt.toHH(u64, addr), addr, flags) catch |err| switch (err) {
+            error.AlreadyMapped => {},
+            else => return err,
+        };
+    }
 }
 
 fn mapKernelSection(vmm: *VMM, comptime section_name: []const u8, flags: u64) !void {

@@ -1,12 +1,7 @@
 .{
     .name = .zrno,
     .version = "1.0.0",
-    .dependencies = .{
-        .limine = .{
-            .url = "https://github.com/limine-bootloader/limine-zig/archive/7b29b6e6f6d35052f01ed3831085a39aae131705.tar.gz",
-            .hash = "N-V-__8AAGg-AAD5Rvg56rLsSdyhyAXOcqw-PvnEezr83s0c",
-        },
-    },
+    .dependencies = .{},
     .fingerprint = 0x54c0193a4d0340de,
     .minimum_zig_version = "0.16.0",
     .paths = .{

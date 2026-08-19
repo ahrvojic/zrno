@@ -2,12 +2,13 @@ const logger = std.log.scoped(.cpu);
 
 const std = @import("std");
 
-const boot = @import("boot.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const ivt = @import("ivt.zig");
+const pmm = @import("../mm/pmm.zig");
 const proc = @import("../sched/proc.zig");
 const virt = @import("../lib/virt.zig");
+const vmm = @import("../mm/vmm.zig");
 
 const msr_lapic = 0x1b;
 
@@ -61,10 +62,14 @@ pub const CPU = struct {
 
         logger.info("Load IDT", .{});
         self.idt.load();
+    }
 
+    pub fn initLapic(self: *@This()) !void {
         logger.info("Init local APIC", .{});
-        self.lapic_base = virt.toHH(u64, readMSR(msr_lapic) & 0xfffff000);
-        self.initLapic();
+        const phys = readMSR(msr_lapic) & 0xfffff000;
+        try vmm.mapMmio(phys, pmm.page_size);
+        self.lapic_base = virt.toHH(u64, phys);
+        self.enableLapic();
     }
 
     pub fn eoi(self: *const @This()) void {
@@ -76,7 +81,7 @@ pub const CPU = struct {
         return self.lapicRead(lapic_reg_id) >> 24;
     }
 
-    fn initLapic(self: *const @This()) void {
+    fn enableLapic(self: *const @This()) void {
         // Spurious interrupt vector register:
         // - Set lowest byte to interrupt vector
         // - Set bit 8 to enable local APIC
@@ -99,6 +104,10 @@ pub const CPU = struct {
 pub fn init() !void {
     logger.info("Init bootstrap processor", .{});
     bsp.init();
+}
+
+pub fn initLapic() !void {
+    try bsp.initLapic();
 }
 
 pub inline fn interruptsOn() void {

@@ -2,28 +2,15 @@ const limine = @import("limine");
 
 const panic = @import("../lib/panic.zig").panic;
 
-const RequestsStartMarker = extern struct {
-    marker: [4]u64 = .{
-        0xf6b8f4b39de7d1ae,
-        0xfab91a6940fcb9cf,
-        0x785c6ed015d3e316,
-        0x181e920a7852b9d9,
-    },
-};
+export var start_marker: limine.RequestsStartMarker linksection(".limine_requests_start") = .{};
+export var end_marker: limine.RequestsEndMarker linksection(".limine_requests_end") = .{};
 
-const RequestsEndMarker = extern struct {
-    marker: [2]u64 = .{ 0xadc0e0531bb10d03, 0x9572709f31764c62 },
-};
-
-export var start_marker: RequestsStartMarker linksection(".limine_requests_start") = .{};
-export var end_marker: RequestsEndMarker linksection(".limine_requests_end") = .{};
-
-export var base_revision: limine.BaseRevision linksection(".limine_requests") = .{ .revision = 1 };
+export var base_revision: limine.BaseRevision linksection(".limine_requests") = .{ .revision = 6 };
 
 export var bootloader_req: limine.BootloaderInfoRequest linksection(".limine_requests") = .{};
 export var fb_req: limine.FramebufferRequest linksection(".limine_requests") = .{};
 export var hhdm_req: limine.HhdmRequest linksection(".limine_requests") = .{};
-export var kaddr_req: limine.KernelAddressRequest linksection(".limine_requests") = .{};
+export var kaddr_req: limine.ExecutableAddressRequest linksection(".limine_requests") = .{};
 export var mm_req: limine.MemoryMapRequest linksection(".limine_requests") = .{};
 export var rsdp_req: limine.RsdpRequest linksection(".limine_requests") = .{};
 
@@ -31,7 +18,7 @@ const Info = struct {
     bootloader_info: *limine.BootloaderInfoResponse,
     framebuffers: *limine.FramebufferResponse,
     higher_half: *limine.HhdmResponse,
-    kernel: *limine.KernelAddressResponse,
+    kernel: *limine.ExecutableAddressResponse,
     memory_map: *limine.MemoryMapResponse,
     rsdp: *limine.RsdpResponse,
 };
@@ -39,7 +26,7 @@ const Info = struct {
 pub var info: Info = undefined;
 
 pub fn init() !void {
-    if (!base_revision.is_supported()) {
+    if (!base_revision.isSupported()) {
         panic("Limine base revision not supported!");
     }
 
