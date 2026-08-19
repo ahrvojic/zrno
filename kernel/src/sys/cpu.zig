@@ -18,6 +18,8 @@ const lapic_reg_spurious = 0xf0;
 
 pub var bsp: CPU = .{};
 
+// Layout matches interruptStub: last register pushed is first field,
+// then vector/error_code, then the CPU-pushed iretq frame.
 pub const Context = extern struct {
     r15: u64,
     r14: u64,

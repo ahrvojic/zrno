@@ -2,7 +2,9 @@ const logger = std.log.scoped(.gdt);
 
 const std = @import("std");
 
-// GDT long mode selectors
+// GDT long mode selectors (index << 3). User selectors need | 3 for RPL
+// when loaded into CS/SS. Code-then-data is fine for iret; SYSRET wants
+// the opposite (user data at STAR+8, user code at STAR+16).
 pub const kernel_code_sel = 0x08;
 pub const kernel_data_sel = 0x10;
 pub const user_code_sel = 0x18;

@@ -32,7 +32,7 @@ const IOApic = extern struct {
     apic_id: u8 align(1),
     reserved: u8 align(1),
     address: u32 align(1),
-    gsib: u32 align(1),
+    gsi_base: u32 align(1),
 };
 
 const IOApicISO = extern struct {

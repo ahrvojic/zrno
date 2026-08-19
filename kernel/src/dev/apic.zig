@@ -11,7 +11,7 @@ pub var io_apic: IOApic = .{};
 
 const IOApic = struct {
     address: u64 = undefined,
-    gsib: u32 = undefined,
+    gsi_base: u32 = undefined,
 
     pub fn init(self: *@This()) !void {
         if (madt.io_apics.len == 0) {
@@ -22,7 +22,7 @@ const IOApic = struct {
         const io_apic_entry = madt.io_apics.get(0);
         try vmm.mapMmio(io_apic_entry.address, pmm.page_size);
         self.address = virt.toHH(u64, io_apic_entry.address);
-        self.gsib = io_apic_entry.gsib;
+        self.gsi_base = io_apic_entry.gsi_base;
     }
 
     pub fn routeIrq(self: *const @This(), lapic_id: u32, vector: u8, irq: u8) void {
@@ -39,13 +39,13 @@ const IOApic = struct {
     }
 
     fn route(self: *const @This(), lapic_id: u32, vector: u8, gsi: u32, flags: u16) void {
-        if (gsi < self.gsib) return;
+        if (gsi < self.gsi_base) return;
 
         // Calculate offset to I/O redirection table entry:
         // - Table starts at 0x10
         // - Add entry distance from global system interrupt base
         // - Two registers per entry
-        const offset = 0x10 + (gsi - self.gsib) * 2;
+        const offset = 0x10 + (gsi - self.gsi_base) * 2;
 
         // Construct redirection entry value
         // Flags: level-triggered (bit 15), active-low (bit 13)

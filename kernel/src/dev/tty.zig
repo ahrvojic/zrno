@@ -24,17 +24,26 @@ pub fn putChar(ch: u8) void {
             row += 1;
             col = 0;
         },
+        '\r' => {
+            col = 0;
+        },
+        '\x08' => { // backspace
+            if (col > 0) {
+                col -= 1;
+                video.fb.plotChar(' ', row, col);
+            }
+        },
         else => {
             video.fb.plotChar(ch, row, col);
             col += 1;
-            if (col == video.fb.maxCol) {
+            if (col == video.fb.max_col) {
                 col = 0;
                 row += 1;
             }
         },
     }
 
-    if (row == video.fb.maxRow) {
+    if (row == video.fb.max_row) {
         video.fb.scroll();
         row -= 1;
     }

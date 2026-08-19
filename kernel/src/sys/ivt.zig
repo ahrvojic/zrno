@@ -41,7 +41,6 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
             cpu.bsp.eoi();
         },
         vec_keyboard => {
-            logger.info("Keyboard interrupt", .{});
             ps2.handleInterrupt();
             cpu.bsp.eoi();
         },
@@ -94,7 +93,7 @@ export fn interruptStub() callconv(.naked) void {
         \\pop %rbx
         \\pop %rax
         \\
-        \\addq $16, %rsp
+        \\addq $16, %rsp // discard vector + error_code
         \\iretq
     );
 }

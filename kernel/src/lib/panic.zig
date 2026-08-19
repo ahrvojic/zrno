@@ -13,7 +13,7 @@ pub fn panicImpl(message: []const u8, first_trace_addr: ?usize) noreturn {
     if (panicking) cpu.halt();
     panicking = true;
 
-    const msg = "KERNEL PANIC: {s}";
+    const msg = "KERNEL PANIC: {s}\n";
     const args = .{message};
 
     logger.err(msg, args);

@@ -41,9 +41,8 @@ pub const IDT = struct {
 
     pub fn load(self: *@This()) void {
         logger.info("Set interrupt handlers", .{});
-        comptime var i: u64 = 0;
-        inline while (i < 256) : (i += 1) {
-            const handler = comptime ivt.makeHandler(i);
+        inline for (0..256) |i| {
+            const handler = ivt.makeHandler(i);
             self.entries[i] = IDTEntry.make(@intFromPtr(handler), 0, interrupt_gate);
         }
 

@@ -53,7 +53,7 @@ const PageTable = extern struct {
 
     pub fn mapPage(self: *@This(), virt_addr: u64, phys_addr: u64, flags: u64) !void {
         const entry = try self.virtToPTE(virt_addr, true);
-        const entry_flags = @as(Flags, @bitCast(entry.getFlags()));
+        const entry_flags: Flags = @bitCast(entry.getFlags());
 
         if (!entry_flags.present) {
             entry.setAddress(phys_addr);
@@ -65,7 +65,7 @@ const PageTable = extern struct {
 
     pub fn remapPage(self: *@This(), virt_addr: u64, phys_addr: u64, flags: u64) !void {
         const entry = try self.virtToPTE(virt_addr, false);
-        const entry_flags = @as(Flags, @bitCast(entry.getFlags()));
+        const entry_flags: Flags = @bitCast(entry.getFlags());
 
         if (entry_flags.present) {
             entry.setAddress(phys_addr);
@@ -78,7 +78,7 @@ const PageTable = extern struct {
 
     pub fn unmapPage(self: *@This(), virt_addr: u64) !void {
         const entry = try self.virtToPTE(virt_addr, false);
-        const entry_flags = @as(Flags, @bitCast(entry.getFlags()));
+        const entry_flags: Flags = @bitCast(entry.getFlags());
 
         if (entry_flags.present) {
             entry.setAddress(0);
@@ -104,14 +104,16 @@ const PageTable = extern struct {
     }
 
     pub fn getNextLevel(self: *@This(), index: u64, allocate: bool) ?*PageTable {
-        var entry = &self.entries[index];
-        const entry_flags = @as(Flags, @bitCast(entry.getFlags()));
+        const entry = &self.entries[index];
+        const entry_flags: Flags = @bitCast(entry.getFlags());
 
         if (entry_flags.present) {
             return virt.toHH(*PageTable, entry.getAddress());
         } else if (allocate) {
             const next_level = pmm.alloc(1) orelse return null;
             entry.setAddress(next_level);
+            // User pages are reachable only if every ancestor is user;
+            // kernel leaves still protect kernel pages.
             entry.setFlags(@bitCast(Flags{ .present = true, .writable = true, .user = true }));
             return virt.toHH(*PageTable, next_level);
         }
@@ -163,10 +165,10 @@ pub const VMM = struct {
 
     pub fn virtToPhys(self: *@This(), virt_addr: u64) !u64 {
         const entry = try self.pt.virtToPTE(virt_addr, false);
-        const entry_flags = @as(Flags, @bitCast(entry.getFlags()));
+        const entry_flags: Flags = @bitCast(entry.getFlags());
 
         if (entry_flags.present) {
-            return entry.getAddress();
+            return entry.getAddress() + (virt_addr & (pmm.page_size - 1));
         } else {
             return error.NotMapped;
         }
@@ -257,7 +259,7 @@ inline fn switchPageTable(phys_addr: u64) void {
 }
 
 pub fn handlePageFault(fault_addr: u64, fault_reason: u64) !bool {
-    const reason = @as(FaultReason, @bitCast(fault_reason));
+    const reason: FaultReason = @bitCast(fault_reason);
 
     if (reason.protection) {
         return false;

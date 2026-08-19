@@ -22,6 +22,7 @@ var tid_next: u64 = 0;
 pub fn init() !void {
     const allocator = heap.kernel_heap.allocator();
     kernel_process = try startProcess(allocator, false);
+    // Fallback only; never linked into `threads`.
     idle_thread = try startKernelThread(kernel_process, @intFromPtr(&idleThread), 0, false);
 }
 
@@ -30,7 +31,7 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
     errdefer allocator.destroy(process);
 
     process.* = .{
-        .pid = @atomicRmw(u64, &pid_next, .Add, 1, .acq_rel),
+        .pid = pid_next,
         .parent = 0,
         .status = .ready,
         .heap = allocator,
@@ -38,6 +39,7 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .node = .{},
         .exit_code = 0,
     };
+    pid_next += 1;
 
     if (enqueue) enqueueProcess(process);
     return process;
@@ -51,13 +53,14 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
     const stack_virt = virt.toHH(u64, stack_phys);
 
     thread.* = .{
-        .tid = @atomicRmw(u64, &tid_next, .Add, 1, .acq_rel),
+        .tid = tid_next,
         .status = .ready,
         .parent = parent,
         .proc_node = .{},
         .sched_node = .{},
         .on_runqueue = false,
     };
+    tid_next += 1;
 
     thread.ctx.rflags = 0x202;
     thread.ctx.cs = gdt.kernel_code_sel;

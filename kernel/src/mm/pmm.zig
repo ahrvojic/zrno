@@ -163,5 +163,6 @@ pub fn free(address: u64, pages: u64) void {
         bitmap.clearBit(i);
     }
 
+    last_used_index = @min(last_used_index, start);
     used_pages -= pages;
 }

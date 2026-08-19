@@ -70,7 +70,6 @@ pub fn init() !void {
 
 pub fn handleInterrupt() void {
     const code = port.inb(ps2_data_port);
-    logger.info("Scan code: {d}", .{code});
 
     code_buffer.append(code) catch {};
 
@@ -121,7 +120,7 @@ fn toKey(code: u8, extended: bool) ?Key {
             0x38 => .ralt,
             0x5b => .lsuper,
             0x5c => .rsuper,
-            else => return null,
+            else => null,
         };
     } else {
         return switch (code) {
@@ -194,7 +193,7 @@ fn toKey(code: u8, extended: bool) ?Key {
             0x44 => .f10,
             0x57 => .f11,
             0x58 => .f12,
-            else => return null,
+            else => null,
         };
     }
 }
