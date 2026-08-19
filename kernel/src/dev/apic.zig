@@ -1,6 +1,10 @@
 const boot = @import("../sys/boot.zig");
 const madt = @import("../acpi/madt.zig");
+const port = @import("../sys/port.zig");
 const virt = @import("../lib/virt.zig");
+
+const pic1_data = 0x21;
+const pic2_data = 0xa1;
 
 pub var io_apic: IOApic = .{};
 
@@ -56,5 +60,10 @@ const IOApic = struct {
 };
 
 pub fn init() !void {
+    // Dual 8259 is still live (MADT PC-AT flag). Mask it so IRQs
+    // only arrive through the I/O APIC.
+    port.outb(pic1_data, 0xff);
+    port.outb(pic2_data, 0xff);
+
     io_apic.init();
 }
