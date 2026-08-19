@@ -2,6 +2,8 @@ const logger = std.log.scoped(.main);
 
 const std = @import("std");
 
+const build_options = @import("build_options");
+
 const acpi = @import("acpi/acpi.zig");
 const apic = @import("dev/apic.zig");
 const boot = @import("sys/boot.zig");
@@ -95,7 +97,7 @@ pub fn main() !void {
 
     logger.info("Done.", .{});
 
-    tty.print("ZRNO kernel 1.0\n", .{});
+    tty.print("Zrno kernel {s}\n", .{build_options.version});
     tty.print("READY.\n", .{});
 }
 

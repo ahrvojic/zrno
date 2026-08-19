@@ -48,10 +48,14 @@ pub const Context = extern struct {
     ss: u64,
 };
 
+const df_stack_size = 2 * pmm.page_size;
+
 pub const CPU = struct {
     gdt: gdt.GDT = .{},
     idt: idt.IDT = .{},
     tss: gdt.TSS = std.mem.zeroes(gdt.TSS),
+    // Dedicated stack for #DF (IST). Lives in BSS so it is valid before PMM.
+    df_stack: [df_stack_size]u8 align(16) = undefined,
     lapic_base: u64 = undefined,
     thread: ?*proc.Thread = null,
     ncli: u32 = 0,
@@ -65,6 +69,10 @@ pub const CPU = struct {
         // IOPB at the TSS limit means no I/O bitmap (offset 0 would
         // interpret the TSS itself as permission bits).
         self.tss.iopb_offset = @sizeOf(gdt.TSS);
+
+        // IDT IST n uses TSS.ist[n - 1]. Set before LTR so #DF is safe
+        // from the moment the TSS is loaded.
+        self.tss.ist[ivt.ist_double_fault - 1] = @intFromPtr(&self.df_stack) + self.df_stack.len;
 
         logger.info("Load GDT", .{});
         self.gdt.load(&self.tss);

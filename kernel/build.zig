@@ -22,6 +22,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/sys/limine.zig"),
     });
 
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", @import("build.zig.zon").version);
+
     const kernel_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -31,6 +34,7 @@ pub fn build(b: *std.Build) void {
         .red_zone = false,
         .imports = &.{
             .{ .name = "limine", .module = limine },
+            .{ .name = "build_options", .module = options.createModule() },
         },
     });
 

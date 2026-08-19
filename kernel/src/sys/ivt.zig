@@ -3,23 +3,37 @@ const logger = std.log.scoped(.ivt);
 const std = @import("std");
 
 const cpu = @import("cpu.zig");
+const debug = @import("../lib/debug.zig");
 const panic = @import("../lib/panic.zig").panic;
 const ps2 = @import("../dev/ps2.zig");
 const sched = @import("../sched/sched.zig");
 const vmm = @import("../mm/vmm.zig");
 
+pub const vec_div_error = 0;
+pub const vec_invalid_opcode = 6;
+pub const vec_device_not_available = 7;
+pub const vec_double_fault = 8;
+pub const vec_stack_segment = 12;
 pub const vec_gpf = 13;
 pub const vec_page_fault = 14;
 pub const vec_pit = 32;
 pub const vec_keyboard = 33;
 pub const vec_apic_spurious = 255;
 
+// IDT IST index (1-7). TSS.ist[index - 1] is the stack pointer.
+pub const ist_double_fault: u8 = 1;
+comptime {
+    std.debug.assert(ist_double_fault >= 1 and ist_double_fault <= 7);
+}
+
 export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
     switch (ctx.vector) {
-        vec_gpf => {
-            printRegisters(ctx);
-            panic("General protection fault");
-        },
+        vec_div_error => fatalException(ctx, "Divide error"),
+        vec_invalid_opcode => fatalException(ctx, "Invalid opcode"),
+        vec_device_not_available => fatalException(ctx, "Device not available"),
+        vec_double_fault => fatalException(ctx, "Double fault"),
+        vec_stack_segment => fatalException(ctx, "Stack-segment fault"),
+        vec_gpf => fatalException(ctx, "General protection fault"),
         vec_page_fault => {
             const fault_addr = asm volatile (
                 \\mov %%cr2, %[result]
@@ -33,8 +47,7 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
 
             if (handled) return;
 
-            printRegisters(ctx);
-            panic("Unhandled page fault");
+            fatalException(ctx, "Unhandled page fault");
         },
         vec_pit => {
             sched.schedule(ctx);
@@ -48,11 +61,7 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
             logger.info("APIC spurious interrupt", .{});
             // No EOI
         },
-        else => {
-            logger.err("Vector {d}", .{ctx.vector});
-            printRegisters(ctx);
-            panic("Unexpected interrupt");
-        },
+        else => fatalException(ctx, "Unexpected interrupt"),
     }
 }
 
@@ -104,7 +113,7 @@ pub fn makeHandler(comptime vector: u8) InterruptHandler {
     return struct {
         fn handler() callconv(.naked) void {
             const has_error_code = switch (vector) {
-                8 => true,
+                vec_double_fault => true,
                 10...14 => true,
                 17 => true,
                 21 => true,
@@ -141,6 +150,11 @@ pub fn interrupt(comptime vector: u8) void {
     );
 }
 
+fn fatalException(ctx: *cpu.Context, comptime message: []const u8) noreturn {
+    printRegisters(ctx);
+    panic(message);
+}
+
 fn printRegisters(ctx: *cpu.Context) void {
     const cr2 = asm volatile (
         \\mov %%cr2, %[result]
@@ -152,9 +166,13 @@ fn printRegisters(ctx: *cpu.Context) void {
         : [result] "=r" (-> u64),
     );
 
-    logger.err("rax={x:0>16} rbx={x:0>16} rcx={x:0>16} rdx={x:0>16}", .{ ctx.rax, ctx.rbx, ctx.rcx, ctx.rdx });
-    logger.err("rbp={x:0>16} rdi={x:0>16} rsi={x:0>16} rsp={x:0>16}", .{ ctx.rbp, ctx.rdi, ctx.rsi, ctx.rsp });
-    logger.err(" r8={x:0>16}  r9={x:0>16} r10={x:0>16} r11={x:0>16}", .{ ctx.r8, ctx.r9, ctx.r10, ctx.r11 });
-    logger.err("r12={x:0>16} r13={x:0>16} r14={x:0>16} r15={x:0>16}", .{ ctx.r12, ctx.r13, ctx.r14, ctx.r15 });
-    logger.err("rip={x:0>16} cr2={x:0>16} cr3={x:0>16} err={x:0>16}", .{ ctx.rip, cr2, cr3, ctx.error_code });
+    // Lock-free: we may already hold the debug lock, or be on the DF IST.
+    var buf: [512]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    writer.print("rax={x:0>16} rbx={x:0>16} rcx={x:0>16} rdx={x:0>16}\r\n", .{ ctx.rax, ctx.rbx, ctx.rcx, ctx.rdx }) catch {};
+    writer.print("rbp={x:0>16} rdi={x:0>16} rsi={x:0>16} rsp={x:0>16}\r\n", .{ ctx.rbp, ctx.rdi, ctx.rsi, ctx.rsp }) catch {};
+    writer.print(" r8={x:0>16}  r9={x:0>16} r10={x:0>16} r11={x:0>16}\r\n", .{ ctx.r8, ctx.r9, ctx.r10, ctx.r11 }) catch {};
+    writer.print("r12={x:0>16} r13={x:0>16} r14={x:0>16} r15={x:0>16}\r\n", .{ ctx.r12, ctx.r13, ctx.r14, ctx.r15 }) catch {};
+    writer.print("rip={x:0>16} cr2={x:0>16} cr3={x:0>16} vec={d} err={x:0>16}\r\n", .{ ctx.rip, cr2, cr3, ctx.vector, ctx.error_code }) catch {};
+    debug.printUnsafe(writer.buffered());
 }

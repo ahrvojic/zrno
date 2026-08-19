@@ -43,7 +43,8 @@ pub const IDT = struct {
         logger.info("Set interrupt handlers", .{});
         inline for (0..self.entries.len) |i| {
             const handler = ivt.makeHandler(i);
-            self.entries[i] = IDTEntry.make(@intFromPtr(handler), 0, interrupt_gate);
+            const ist: u8 = if (i == ivt.vec_double_fault) ivt.ist_double_fault else 0;
+            self.entries[i] = IDTEntry.make(@intFromPtr(handler), ist, interrupt_gate);
         }
 
         const idtr = IDTR{
