@@ -1,5 +1,6 @@
 iso_root/
 limine/
+limine-binary/
 ovmf/
 *.iso
 *.hdd
