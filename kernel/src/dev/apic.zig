@@ -12,7 +12,7 @@ const ioapic_ver = 0x01;
 const ioapic_redir_base = 0x10;
 const ioapic_redir_mask = @as(u64, 1) << 16;
 
-var io_apics: BoundedArray(IOApic, 8) = .{};
+var io_apics: BoundedArray(IOApic, madt.max_io_apics) = .{};
 var initialized = false;
 
 const IOApic = struct {

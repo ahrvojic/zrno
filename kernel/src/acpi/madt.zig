@@ -42,10 +42,19 @@ const IOApicISO = extern struct {
     flags: u16 align(1),
 };
 
-pub var lapics: BoundedArray(Lapic, 8) = .{};
-pub var lapic_nmis: BoundedArray(LapicNMI, 8) = .{};
-pub var io_apics: BoundedArray(IOApic, 8) = .{};
-pub var io_apic_isos: BoundedArray(IOApicISO, 8) = .{};
+// Processor table cap: large enough that MADT parse survives a
+// typical desktop/VM, small enough to stay a static array.
+pub const max_lapics = 64;
+// Each CPU has two LINT pins that can be NMI sources.
+pub const max_lapic_nmis = max_lapics * 2;
+pub const max_io_apics = 8;
+// One override per ISA IRQ (0-15).
+pub const max_io_apic_isos = 16;
+
+pub var lapics: BoundedArray(Lapic, max_lapics) = .{};
+pub var lapic_nmis: BoundedArray(LapicNMI, max_lapic_nmis) = .{};
+pub var io_apics: BoundedArray(IOApic, max_io_apics) = .{};
+pub var io_apic_isos: BoundedArray(IOApicISO, max_io_apic_isos) = .{};
 
 pub fn init(sdt: *align(1) const acpi.SDT) !void {
     const madt_data = sdt.getData();

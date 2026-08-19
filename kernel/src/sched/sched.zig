@@ -8,7 +8,7 @@ const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
 const virt = @import("../lib/virt.zig");
 
-const stack_size: u64 = 4096;
+const stack_size: u64 = pmm.page_size;
 
 var processes: std.DoublyLinkedList = .{};
 var threads: std.DoublyLinkedList = .{};

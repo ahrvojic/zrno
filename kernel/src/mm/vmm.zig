@@ -48,8 +48,13 @@ const PageTableEntry = extern struct {
     }
 };
 
+const page_table_entries = pmm.page_size / @sizeOf(PageTableEntry);
+const page_table_index_mask = page_table_entries - 1;
+// Canonical higher half: PML4 indices [256, 512).
+const kernel_pml4_start = page_table_entries / 2;
+
 const PageTable = extern struct {
-    entries: [512]PageTableEntry,
+    entries: [page_table_entries]PageTableEntry,
 
     pub fn mapPage(self: *@This(), virt_addr: u64, phys_addr: u64, flags: u64) !void {
         const entry = try self.virtToPTE(virt_addr, true);
@@ -91,10 +96,10 @@ const PageTable = extern struct {
 
     pub fn virtToPTE(self: *@This(), virt_addr: u64, allocate: bool) !*PageTableEntry {
         // Extract page table indexes from virtual address
-        const pml4_idx = @as(u64, virt_addr >> 39) & 0x1ff;
-        const pml3_idx = @as(u64, virt_addr >> 30) & 0x1ff;
-        const pml2_idx = @as(u64, virt_addr >> 21) & 0x1ff;
-        const pml1_idx = @as(u64, virt_addr >> 12) & 0x1ff;
+        const pml4_idx = @as(u64, virt_addr >> 39) & page_table_index_mask;
+        const pml3_idx = @as(u64, virt_addr >> 30) & page_table_index_mask;
+        const pml2_idx = @as(u64, virt_addr >> 21) & page_table_index_mask;
+        const pml1_idx = @as(u64, virt_addr >> 12) & page_table_index_mask;
 
         // Walk page table hierarchy to entry
         const pml3 = self.getNextLevel(pml4_idx, allocate) orelse return error.PTENotFound;
@@ -204,7 +209,7 @@ pub fn init() !void {
 
     // Pre-allocate higher half L3 tables to facilitate sharing kernel space
     // across user spaces
-    for (256..512) |i| {
+    for (kernel_pml4_start..page_table_entries) |i| {
         _ = kernel_vmm.pt.getNextLevel(i, true) orelse return error.OutOfMemory;
     }
 

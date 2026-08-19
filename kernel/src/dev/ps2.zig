@@ -54,11 +54,19 @@ const KeyboardState = struct {
     }
 };
 
-var code_buffer: BoundedArray(u8, 8) = .{};
+// Longest AT scan sequence is Pause (8 bytes in set 2).
+const max_scan_bytes = 8;
+var code_buffer: BoundedArray(u8, max_scan_bytes) = .{};
 
-var kb_buffer: [256]KeyEvent = undefined;
-var kb_head: u8 = 0;
-var kb_tail: u8 = 0;
+// Wrapping indices fill the ring iff maxInt(KbIndex)+1 == kb_capacity.
+const kb_capacity = 256;
+const KbIndex = std.math.IntFittingRange(0, kb_capacity - 1);
+comptime {
+    std.debug.assert(@as(usize, std.math.maxInt(KbIndex)) + 1 == kb_capacity);
+}
+var kb_buffer: [kb_capacity]KeyEvent = undefined;
+var kb_head: KbIndex = 0;
+var kb_tail: KbIndex = 0;
 
 var keyboard_state: KeyboardState = .{ .modifiers = std.StaticBitSet(4).initEmpty() };
 
