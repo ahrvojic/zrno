@@ -6,10 +6,10 @@ const ivt = @import("../sys/ivt.zig");
 const port = @import("../sys/port.zig");
 
 const pit_freq_hz = 1193182;
-const timer_freq_ms = 1000;
+const timer_freq_hz = 1000;
 
 pub fn init() !void {
-    try setFrequency(timer_freq_ms);
+    try setFrequency(timer_freq_hz);
     const lapic_id = cpu.bsp.lapicId();
     apic.io_apic.routeIrq(lapic_id, ivt.vec_pit, 0);
 }
