@@ -15,6 +15,7 @@ pub const Process = struct {
     heap: std.mem.Allocator,
     threads: std.DoublyLinkedList,
     node: std.DoublyLinkedList.Node,
+    on_proctable: bool,
     exit_code: u8,
 };
 

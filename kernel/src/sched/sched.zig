@@ -10,11 +10,12 @@ const proc = @import("proc.zig");
 const virt = @import("../lib/virt.zig");
 
 const stack_size: u64 = pmm.page_size;
+const kernel_pid: u64 = 0;
 
+// Live processes; not a runqueue. `schedule` walks `threads`.
 var processes: std.DoublyLinkedList = .{};
 var threads: std.DoublyLinkedList = .{};
 
-var kernel_process: *proc.Process = undefined;
 var idle_thread: *proc.Thread = undefined;
 
 var pid_next: u64 = 0;
@@ -34,7 +35,7 @@ fn expectUninit() void {
 pub fn init() !void {
     expectUninit();
     const allocator = heap.kernel_heap.allocator();
-    kernel_process = try startProcess(allocator, false);
+    const kernel_process = try startProcess(allocator, true);
     // Fallback only; never linked into `threads`.
     idle_thread = try startKernelThread(kernel_process, @intFromPtr(&idleThread), 0, false);
     initialized = true;
@@ -42,7 +43,8 @@ pub fn init() !void {
 
 pub fn spawnKernelThread(pc: u64, arg: u64) !*proc.Thread {
     expectInit();
-    return startKernelThread(kernel_process, pc, arg, true);
+    const parent = findProcess(kernel_pid) orelse @panic("kernel process missing");
+    return startKernelThread(parent, pc, arg, true);
 }
 
 pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process {
@@ -56,6 +58,7 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .heap = allocator,
         .threads = .{},
         .node = .{},
+        .on_proctable = false,
         .exit_code = 0,
     };
 
@@ -65,6 +68,20 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
     pid_next += 1;
     if (enqueue) enqueueProcess(process);
     return process;
+}
+
+pub fn findProcess(pid: u64) ?*proc.Process {
+    expectInit();
+    lock.lock();
+    defer lock.unlock();
+
+    var node = processes.first;
+    while (node) |n| {
+        const process: *proc.Process = @fieldParentPtr("node", n);
+        if (process.pid == pid) return process;
+        node = n.next;
+    }
+    return null;
 }
 
 pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool) !*proc.Thread {
@@ -136,6 +153,7 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
 
     process.exit_code = exit_code;
     process.status = .stopped;
+    dequeueProcess(process);
 
     var node = process.threads.first;
     while (node) |n| {
@@ -183,8 +201,15 @@ fn idleThread() callconv(.naked) noreturn {
 }
 
 fn enqueueProcess(process: *proc.Process) void {
-    process.status = .running;
+    if (process.on_proctable) return;
     processes.append(&process.node);
+    process.on_proctable = true;
+}
+
+fn dequeueProcess(process: *proc.Process) void {
+    if (!process.on_proctable) return;
+    processes.remove(&process.node);
+    process.on_proctable = false;
 }
 
 fn enqueueThread(thread: *proc.Thread) void {
