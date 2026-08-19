@@ -66,7 +66,9 @@ const FADT = extern struct {
 
 pub fn init(sdt: *align(1) const acpi.SDT) !void {
     const fadt: *align(1) const FADT = @ptrCast(sdt.getData().ptr);
-    if (fadt.flags & 0x80000 == 1) {
+    // ACPI spec: FADT Flags bit 20 = HW_REDUCED_ACPI
+    const hw_reduced_acpi: u32 = 1 << 20;
+    if (fadt.flags & hw_reduced_acpi != 0) {
         panic("Hardware-reduced ACPI not supported!");
     }
 }
