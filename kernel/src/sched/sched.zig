@@ -61,7 +61,7 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
 
     thread.ctx.rflags = 0x202;
     thread.ctx.cs = gdt.kernel_code_sel;
-    thread.ctx.ss = gdt.tss_sel;
+    thread.ctx.ss = gdt.kernel_data_sel;
     thread.ctx.rip = pc;
     thread.ctx.rdi = arg;
     thread.ctx.rsp = stack_virt + stack_size;
@@ -89,14 +89,10 @@ pub fn schedule(ctx: *cpu.Context) void {
         next_thread = if (threads.first) |first| @fieldParentPtr("node", first) else null;
     }
 
-    if (next_thread) |thread| {
-        thread.status = .running;
-        cpu.bsp.thread = thread;
-        ctx.* = thread.ctx; // context switch
-    } else {
-        idle_thread.status = .running;
-        cpu.bsp.thread = idle_thread;
-    }
+    const thread = next_thread orelse idle_thread;
+    thread.status = .running;
+    cpu.bsp.thread = thread;
+    ctx.* = thread.ctx;
 }
 
 pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
@@ -115,9 +111,11 @@ pub fn yield() void {
 }
 
 fn idleThread() callconv(.naked) noreturn {
-    while (true) {
-        asm volatile ("hlt");
-    }
+    asm volatile (
+        \\1:
+        \\hlt
+        \\jmp 1b
+    );
 }
 
 fn enqueueProcess(process: *proc.Process) void {
