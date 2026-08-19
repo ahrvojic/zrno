@@ -1,5 +1,3 @@
-const logger = std.log.scoped(.sched);
-
 const std = @import("std");
 
 const cpu = @import("../sys/cpu.zig");
@@ -46,7 +44,7 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
 }
 
 pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool) !*proc.Thread {
-    var thread = try parent.heap.create(proc.Thread);
+    const thread = try parent.heap.create(proc.Thread);
     errdefer parent.heap.destroy(thread);
 
     const stack_phys = pmm.alloc(stack_size / pmm.page_size) orelse return error.OutOfMemory;
@@ -56,7 +54,9 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
         .tid = @atomicRmw(u64, &tid_next, .Add, 1, .acq_rel),
         .status = .ready,
         .parent = parent,
-        .node = .{},
+        .proc_node = .{},
+        .sched_node = .{},
+        .on_runqueue = false,
     };
 
     thread.ctx.rflags = 0x202;
@@ -66,30 +66,26 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
     thread.ctx.rdi = arg;
     thread.ctx.rsp = stack_virt + stack_size;
 
-    parent.threads.append(&thread.node);
+    parent.threads.append(&thread.proc_node);
 
     if (enqueue) enqueueThread(thread);
     return thread;
 }
 
 pub fn schedule(ctx: *cpu.Context) void {
-    var next_thread: ?*proc.Thread = null;
+    var start: ?*std.DoublyLinkedList.Node = null;
 
     if (cpu.bsp.thread) |curr_thread| {
-        // Save the current context in the current thread
         curr_thread.ctx = ctx.*;
-        curr_thread.status = .sleeping;
-
-        if (curr_thread.node.next) |next| {
-            next_thread = @fieldParentPtr("node", next);
-        } else {
-            next_thread = if (threads.first) |first| @fieldParentPtr("node", first) else null;
+        if (curr_thread.status == .running) {
+            curr_thread.status = .ready;
         }
+        start = curr_thread.sched_node.next orelse threads.first;
     } else {
-        next_thread = if (threads.first) |first| @fieldParentPtr("node", first) else null;
+        start = threads.first;
     }
 
-    const thread = next_thread orelse idle_thread;
+    const thread = nextReadyThread(start) orelse idle_thread;
     thread.status = .running;
     cpu.bsp.thread = thread;
     ctx.* = thread.ctx;
@@ -97,10 +93,26 @@ pub fn schedule(ctx: *cpu.Context) void {
 
 pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
     process.exit_code = exit_code;
-    cpu.bsp.thread = null;
+    process.status = .stopped;
+
+    var node = process.threads.first;
+    while (node) |n| {
+        const thread: *proc.Thread = @fieldParentPtr("proc_node", n);
+        node = n.next;
+        stopThread(thread);
+    }
+
+    if (cpu.bsp.thread) |curr| {
+        if (curr.parent == process) {
+            cpu.bsp.thread = null;
+        }
+    }
 }
 
 pub fn exitThread() noreturn {
+    if (cpu.bsp.thread) |thread| {
+        stopThread(thread);
+    }
     cpu.bsp.thread = null;
     yield();
 }
@@ -124,5 +136,28 @@ fn enqueueProcess(process: *proc.Process) void {
 }
 
 fn enqueueThread(thread: *proc.Thread) void {
-    threads.append(&thread.node);
+    threads.append(&thread.sched_node);
+    thread.on_runqueue = true;
+}
+
+fn dequeueThread(thread: *proc.Thread) void {
+    if (!thread.on_runqueue) return;
+    threads.remove(&thread.sched_node);
+    thread.on_runqueue = false;
+}
+
+fn stopThread(thread: *proc.Thread) void {
+    thread.status = .stopped;
+    dequeueThread(thread);
+}
+
+fn nextReadyThread(start: ?*std.DoublyLinkedList.Node) ?*proc.Thread {
+    const first = start orelse return null;
+    var node: *std.DoublyLinkedList.Node = first;
+    while (true) {
+        const thread: *proc.Thread = @fieldParentPtr("sched_node", node);
+        if (thread.status == .ready) return thread;
+        node = node.next orelse threads.first orelse return null;
+        if (node == first) return null;
+    }
 }

@@ -63,10 +63,15 @@ pub fn init() !void {
 
     // Determine size of bitmap aligned to page size
     highest_page_index = highest_addr / page_size;
-    const bitmap_size = std.mem.alignForward(u64, highest_page_index / 8, page_size);
+    const bitmap_bytes = try std.math.divCeil(u64, highest_page_index, 8);
+    const bitmap_size = std.mem.alignForward(u64, bitmap_bytes, page_size);
     logger.info("Bitmap: highest_index={d} size={d}", .{ highest_page_index, bitmap_size });
 
-    // Find where the bitmap can fit in usable memeory
+    if (bitmap_size == 0) {
+        return error.BitmapTooBig;
+    }
+
+    // Find where the bitmap can fit in usable memory
     var bitmap_region: ?*limine.MemoryMapEntry = null;
 
     for (boot.info.memory_map.entries()) |entry| {
@@ -117,6 +122,7 @@ pub fn alloc(pages: u64) ?u64 {
 }
 
 pub fn allocNoZero(pages: u64) ?u64 {
+    if (pages == 0) return null;
     return allocInner(last_used_index, pages) orelse allocInner(0, pages);
 }
 

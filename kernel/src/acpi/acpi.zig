@@ -3,10 +3,8 @@ const logger = std.log.scoped(.acpi);
 const std = @import("std");
 
 const boot = @import("../sys/boot.zig");
-const debug = @import("../lib/debug.zig");
 const fadt = @import("fadt.zig");
 const madt = @import("madt.zig");
-const panic = @import("../lib/panic.zig").panic;
 const virt = @import("../lib/virt.zig");
 
 const RSDP = extern struct {

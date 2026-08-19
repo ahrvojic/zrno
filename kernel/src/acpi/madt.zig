@@ -4,7 +4,6 @@ const std = @import("std");
 
 const acpi = @import("acpi.zig");
 const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
-const debug = @import("../lib/debug.zig");
 const panic = @import("../lib/panic.zig").panic;
 
 const Fields = extern struct {
@@ -63,21 +62,28 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
     while (madt_entries.len - offset >= header_size) {
         const header_end = offset + header_size;
         const entry: *const Header = @ptrCast(madt_entries[offset..header_end]);
+        if (entry.length < header_size or entry.length > madt_entries.len - offset) {
+            logger.err("Truncated MADT entry at offset {d}", .{offset});
+            return error.InvalidMadt;
+        }
         const data = madt_entries[header_end..(offset + entry.length)];
 
         switch (entry.id) {
             0 => {
                 logger.info("Found local APIC", .{});
+                if (data.len < @sizeOf(Lapic)) return error.InvalidMadt;
                 const lapic = std.mem.bytesToValue(Lapic, data[0..@sizeOf(Lapic)]);
                 try lapics.append(lapic);
             },
             1 => {
                 logger.info("Found I/O APIC", .{});
+                if (data.len < @sizeOf(IOApic)) return error.InvalidMadt;
                 const io_apic = std.mem.bytesToValue(IOApic, data[0..@sizeOf(IOApic)]);
                 try io_apics.append(io_apic);
             },
             2 => {
                 logger.info("Found I/O APIC interrupt source override", .{});
+                if (data.len < @sizeOf(IOApicISO)) return error.InvalidMadt;
                 const io_apic_iso = std.mem.bytesToValue(IOApicISO, data[0..@sizeOf(IOApicISO)]);
                 try io_apic_isos.append(io_apic_iso);
             },
@@ -86,6 +92,7 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
             },
             4 => {
                 logger.info("Found local APIC NMIs", .{});
+                if (data.len < @sizeOf(LapicNMI)) return error.InvalidMadt;
                 const lapic_nmi = std.mem.bytesToValue(LapicNMI, data[0..@sizeOf(LapicNMI)]);
                 try lapic_nmis.append(lapic_nmi);
             },

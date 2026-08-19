@@ -1,5 +1,4 @@
 const acpi = @import("acpi.zig");
-const debug = @import("../lib/debug.zig");
 const panic = @import("../lib/panic.zig").panic;
 
 const GenericAddress = extern struct {
@@ -65,7 +64,12 @@ const FADT = extern struct {
 };
 
 pub fn init(sdt: *align(1) const acpi.SDT) !void {
-    const fadt: *align(1) const FADT = @ptrCast(sdt.getData().ptr);
+    const data = sdt.getData();
+    if (data.len < @offsetOf(FADT, "flags") + @sizeOf(u32)) {
+        return error.InvalidFadt;
+    }
+
+    const fadt: *align(1) const FADT = @ptrCast(data.ptr);
     // ACPI spec: FADT Flags bit 20 = HW_REDUCED_ACPI
     const hw_reduced_acpi: u32 = 1 << 20;
     if (fadt.flags & hw_reduced_acpi != 0) {

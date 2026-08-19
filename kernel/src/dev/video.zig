@@ -2,11 +2,11 @@ const std = @import("std");
 const limine = @import("limine");
 
 const boot = @import("../sys/boot.zig");
-const debug = @import("../lib/debug.zig");
 const font = @import("font.zig");
 const panic = @import("../lib/panic.zig").panic;
 
 pub var fb: Framebuffer = .{};
+var ready = false;
 
 const Framebuffer = struct {
     info: *limine.Framebuffer = undefined,
@@ -15,9 +15,13 @@ const Framebuffer = struct {
 
     pub fn init(self: *@This(), info: *limine.Framebuffer) void {
         self.info = info;
+        self.maxCol = info.width / font.builtin.width;
+        self.maxRow = info.height / font.builtin.height;
     }
 
     pub fn plotChar(self: *const @This(), ch: u8, row: u64, col: u64) void {
+        if (row >= self.maxRow or col >= self.maxCol) return;
+
         const glyph = font.builtin.glyph(ch);
 
         const rowOffsetStart = self.toRowOffset(row);
@@ -28,10 +32,8 @@ const Framebuffer = struct {
 
         for (glyph) |glyphRow| {
             for (0..font.builtin.width) |i| {
-                if (glyphRow & std.math.shr(u8, 0x80, i) != 0) {
-                    @as(*u32, @ptrCast(@alignCast(self.info.address + rowOffset + colOffset))).* = 0xffffffff;
-                }
-
+                const pixel: *u32 = @ptrCast(@alignCast(self.info.address + rowOffset + colOffset));
+                pixel.* = if (glyphRow & std.math.shr(u8, 0x80, i) != 0) 0xffffffff else 0x00000000;
                 colOffset += self.info.bpp / 8;
             }
 
@@ -59,10 +61,23 @@ const Framebuffer = struct {
     }
 };
 
+pub fn isReady() bool {
+    return ready;
+}
+
 pub fn init() !void {
     if (boot.info.framebuffers.framebuffer_count < 1) {
         panic("No framebuffer available!");
     }
 
-    fb.init(boot.info.framebuffers.framebuffers()[0]);
+    const info = boot.info.framebuffers.framebuffers()[0];
+    if (info.bpp != 32) {
+        panic("Only 32-bit framebuffers are supported!");
+    }
+    if (info.width < font.builtin.width or info.height < font.builtin.height) {
+        panic("Framebuffer too small for builtin font!");
+    }
+
+    fb.init(info);
+    ready = true;
 }

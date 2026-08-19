@@ -4,8 +4,8 @@ const std = @import("std");
 
 pub var kernel_heap: HeapAllocator = .{};
 
-const kernel_heap_base_addr = 0xffff_ffff_9000_0000;
-const kernel_heap_size = 1024 * 1024 * 1024;
+pub const kernel_heap_base_addr = 0xffff_ffff_9000_0000;
+pub const kernel_heap_size = 1024 * 1024 * 1024;
 
 pub const HeapAllocator = struct {
     heap_base_addr: u64 = undefined,

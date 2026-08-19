@@ -67,6 +67,9 @@ pub fn main() !void {
     logger.info("Init VMM", .{});
     try vmm.init();
 
+    logger.info("Init video", .{});
+    try video.init();
+
     logger.info("Init heap", .{});
     heap.init();
 
@@ -84,9 +87,6 @@ pub fn main() !void {
 
     logger.info("Init PS/2 keyboard", .{});
     try ps2.init();
-
-    logger.info("Init video", .{});
-    try video.init();
 
     logger.info("Done.", .{});
 

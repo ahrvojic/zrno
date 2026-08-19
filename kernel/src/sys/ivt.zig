@@ -3,7 +3,6 @@ const logger = std.log.scoped(.ivt);
 const std = @import("std");
 
 const cpu = @import("cpu.zig");
-const debug = @import("../lib/debug.zig");
 const panic = @import("../lib/panic.zig").panic;
 const ps2 = @import("../dev/ps2.zig");
 const sched = @import("../sched/sched.zig");
@@ -135,7 +134,7 @@ pub fn makeHandler(comptime vector: u8) InterruptHandler {
     }.handler;
 }
 
-pub fn interrupt(vector: u64) void {
+pub fn interrupt(comptime vector: u8) void {
     asm volatile (
         \\int %[vec]
         :

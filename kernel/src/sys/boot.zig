@@ -28,11 +28,11 @@ pub fn init() !void {
     }
 
     info = .{
-        .bootloader_info = bootloader_req.response.?,
-        .framebuffers = fb_req.response.?,
-        .higher_half = hhdm_req.response.?,
-        .kernel = kaddr_req.response.?,
-        .memory_map = mm_req.response.?,
-        .rsdp = rsdp_req.response.?,
+        .bootloader_info = bootloader_req.response orelse return error.NoBootloaderInfo,
+        .framebuffers = fb_req.response orelse return error.NoFramebuffer,
+        .higher_half = hhdm_req.response orelse return error.NoHhdm,
+        .kernel = kaddr_req.response orelse return error.NoKernelAddress,
+        .memory_map = mm_req.response orelse return error.NoMemoryMap,
+        .rsdp = rsdp_req.response orelse return error.NoRsdp,
     };
 }

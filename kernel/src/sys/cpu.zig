@@ -52,6 +52,10 @@ pub const CPU = struct {
     thread: ?*proc.Thread = null,
 
     pub fn init(self: *@This()) void {
+        // IOPB at the TSS limit means no I/O bitmap (offset 0 would
+        // interpret the TSS itself as permission bits).
+        self.tss.iopb_offset = @sizeOf(gdt.TSS);
+
         logger.info("Load GDT", .{});
         self.gdt.load(&self.tss);
 
@@ -68,7 +72,8 @@ pub const CPU = struct {
     }
 
     pub fn lapicId(self: *const @This()) u32 {
-        return self.lapicRead(lapic_reg_id);
+        // Local APIC ID register: APIC ID is in bits 24-31.
+        return self.lapicRead(lapic_reg_id) >> 24;
     }
 
     fn initLapic(self: *const @This()) void {

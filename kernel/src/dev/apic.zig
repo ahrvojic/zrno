@@ -12,7 +12,11 @@ const IOApic = struct {
     address: u64 = undefined,
     gsib: u32 = undefined,
 
-    pub fn init(self: *@This()) void {
+    pub fn init(self: *@This()) !void {
+        if (madt.io_apics.len == 0) {
+            return error.NoIoApic;
+        }
+
         // QEMU Q35 machine only has one I/O APIC
         const io_apic_entry = madt.io_apics.get(0);
         self.address = virt.toHH(u64, io_apic_entry.address);
@@ -33,6 +37,8 @@ const IOApic = struct {
     }
 
     fn route(self: *const @This(), lapic_id: u32, vector: u8, gsi: u32, flags: u16) void {
+        if (gsi < self.gsib) return;
+
         // Calculate offset to I/O redirection table entry:
         // - Table starts at 0x10
         // - Add entry distance from global system interrupt base
@@ -65,5 +71,5 @@ pub fn init() !void {
     port.outb(pic1_data, 0xff);
     port.outb(pic2_data, 0xff);
 
-    io_apic.init();
+    try io_apic.init();
 }

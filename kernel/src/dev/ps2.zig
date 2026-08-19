@@ -49,17 +49,18 @@ const KeyboardState = struct {
                 const idx = @intFromEnum(KeyModifier.super);
                 self.modifiers.setValue(idx, event.pressed);
             },
+            else => {},
         }
     }
 };
 
 var code_buffer: BoundedArray(u8, 8) = .{};
 
-var kb_buffer = [_]?KeyEvent{null} ** 256;
-var kb_buffer_read_pos: u8 = 0;
-var kb_buffer_write_pos: u8 = 0;
+var kb_buffer: [256]KeyEvent = undefined;
+var kb_head: u8 = 0;
+var kb_tail: u8 = 0;
 
-var keyboard_state: KeyboardState = .{ .modifiers = std.StaticBitSet(4) };
+var keyboard_state: KeyboardState = .{ .modifiers = std.StaticBitSet(4).initEmpty() };
 
 pub fn init() !void {
     const lapic_id = cpu.bsp.lapicId();
@@ -85,14 +86,10 @@ pub fn isPressed(modifier: KeyModifier) bool {
 }
 
 pub fn getKey() ?KeyEvent {
-    const keyOpt = kb_buffer[kb_buffer_read_pos];
-
-    if (keyOpt) |key| {
-        keyboard_state.notify(key);
-        kb_buffer_read_pos +%= 1;
-    }
-
-    return keyOpt;
+    if (kb_head == kb_tail) return null;
+    const event = kb_buffer[kb_head];
+    kb_head +%= 1;
+    return event;
 }
 
 fn putKey(code: u8, extended: bool) void {
@@ -109,8 +106,12 @@ fn putKey(code: u8, extended: bool) void {
         .pressed = code & 0x80 == 0,
     };
 
-    kb_buffer[kb_buffer_write_pos] = event;
-    kb_buffer_write_pos +%= 1;
+    keyboard_state.notify(event);
+
+    const next = kb_tail +% 1;
+    if (next == kb_head) return;
+    kb_buffer[kb_tail] = event;
+    kb_tail = next;
 }
 
 fn toKey(code: u8, extended: bool) ?Key {

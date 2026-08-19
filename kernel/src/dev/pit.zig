@@ -30,6 +30,8 @@ pub fn setCount(count: u16) void {
 }
 
 pub fn setFrequency(freq: u64) !void {
+    if (freq == 0) return error.InvalidFrequency;
     const count = try std.math.divCeil(u64, pit_freq_hz, freq);
+    if (count == 0 or count > std.math.maxInt(u16)) return error.InvalidFrequency;
     setCount(@intCast(count));
 }
