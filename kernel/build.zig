@@ -32,6 +32,8 @@ pub fn build(b: *std.Build) void {
         .code_model = .kernel,
         .pic = true,
         .red_zone = false,
+        // RBP walks in panicImpl. ReleaseSafe would otherwise omit them.
+        .omit_frame_pointer = false,
         .imports = &.{
             .{ .name = "limine", .module = limine },
             .{ .name = "build_options", .module = options.createModule() },
