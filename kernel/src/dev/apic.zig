@@ -23,7 +23,7 @@ const IOApic = struct {
     max_redir: u32,
 
     fn init(address: u32, gsi_base: u32) !@This() {
-        try vmm.mapMmio(address, pmm.page_size);
+        try vmm.kernel_vmm.mapMmio(address, pmm.page_size);
         var self: @This() = .{
             .address = virt.toHH(u64, address),
             .gsi_base = gsi_base,

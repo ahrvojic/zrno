@@ -68,7 +68,7 @@ pub fn main() !void {
     try vmm.init();
 
     logger.info("Init local APIC", .{});
-    try cpu.initLapic();
+    try cpu.bsp().initLapic();
 
     logger.info("Init video", .{});
     try video.init();

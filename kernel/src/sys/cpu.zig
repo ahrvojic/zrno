@@ -17,7 +17,7 @@ const lapic_reg_id = 0x20;
 const lapic_reg_eoi = 0xb0;
 const lapic_reg_spurious = 0xf0;
 
-pub var bsp: CPU = .{};
+var bsp_value: CPU = .{};
 
 // Layout matches interruptStub: last register pushed is first field,
 // then vector/error_code, then the CPU-pushed iretq frame.
@@ -79,7 +79,7 @@ pub const CPU = struct {
         self.expectLapicUninit();
         logger.info("Init local APIC", .{});
         const phys = readMSR(msr_lapic) & 0xfffff000;
-        try vmm.mapMmio(phys, pmm.page_size);
+        try vmm.kernel_vmm.mapMmio(phys, pmm.page_size);
         self.lapic_base = virt.toHH(u64, phys);
         self.enableLapic();
         self.lapic_initialized = true;
@@ -134,15 +134,16 @@ pub const CPU = struct {
 
 pub fn init() !void {
     logger.info("Init bootstrap processor", .{});
-    bsp.init();
+    bsp_value.init();
 }
 
-pub fn initLapic() !void {
-    try bsp.initLapic();
+pub fn bsp() *CPU {
+    return &bsp_value;
 }
 
+// BSP until per-CPU identity exists.
 pub fn current() *CPU {
-    return &bsp;
+    return &bsp_value;
 }
 
 pub inline fn interruptsOn() void {

@@ -183,6 +183,14 @@ pub const VMM = struct {
         }
     }
 
+    pub fn mapMmio(self: *@This(), phys_addr: u64, size: u64) !void {
+        self.expectInit();
+        std.debug.assert(size > 0);
+        self.lock.lock();
+        defer self.lock.unlock();
+        try mapHhdmRange(self.pt, phys_addr, phys_addr + size);
+    }
+
     pub fn virtToPhys(self: *@This(), virt_addr: u64) !u64 {
         self.expectInit();
         self.lock.lock();
@@ -200,6 +208,41 @@ pub const VMM = struct {
     pub fn switchTo(self: *@This()) void {
         self.expectInit();
         switchPageTable(self.pt_addr_phys);
+    }
+
+    pub fn handlePageFault(self: *@This(), fault_addr: u64, fault_reason: u64) !bool {
+        self.expectInit();
+        self.lock.lock();
+        defer self.lock.unlock();
+        const reason: FaultReason = @bitCast(fault_reason);
+
+        if (reason.protection) {
+            return false;
+        }
+
+        const user_space_end = 0x0000_8000_0000_0000;
+        const heap_start = heap.kernel_heap_base_addr;
+        const heap_end = heap.kernel_heap_base_addr + heap.kernel_heap_size;
+
+        // Demand-page user space only for user-mode faults, and never page 0.
+        if (reason.user and fault_addr >= pmm.page_size and fault_addr < user_space_end) {
+            const base_addr = std.mem.alignBackward(u64, fault_addr, pmm.page_size);
+            const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
+            const flags = Flags{ .present = true, .writable = true, .user = true };
+            try self.pt.mapPage(base_addr, phys_addr, @bitCast(flags));
+            return true;
+        }
+
+        // Kernel heap pages are committed on first access.
+        if (!reason.user and fault_addr >= heap_start and fault_addr < heap_end) {
+            const base_addr = std.mem.alignBackward(u64, fault_addr, pmm.page_size);
+            const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
+            const flags = Flags{ .present = true, .writable = true, .noexec = true };
+            try self.pt.mapPage(base_addr, phys_addr, @bitCast(flags));
+            return true;
+        }
+
+        return false;
     }
 
     fn expectInit(self: *const @This()) void {
@@ -244,14 +287,6 @@ pub fn init() !void {
     kernel_vmm.switchTo();
 }
 
-pub fn mapMmio(phys_addr: u64, size: u64) !void {
-    kernel_vmm.expectInit();
-    std.debug.assert(size > 0);
-    kernel_vmm.lock.lock();
-    defer kernel_vmm.lock.unlock();
-    try mapHhdmRange(kernel_vmm.pt, phys_addr, phys_addr + size);
-}
-
 fn mapHhdmRange(pt: *PageTable, base: u64, top: u64) !void {
     const flags: u64 = @bitCast(Flags{ .present = true, .writable = true, .noexec = true });
     var addr = std.mem.alignBackward(u64, base, pmm.page_size);
@@ -291,41 +326,6 @@ inline fn switchPageTable(phys_addr: u64) void {
         :
         : [phys_addr] "r" (phys_addr),
         : .{ .memory = true });
-}
-
-pub fn handlePageFault(fault_addr: u64, fault_reason: u64) !bool {
-    kernel_vmm.expectInit();
-    kernel_vmm.lock.lock();
-    defer kernel_vmm.lock.unlock();
-    const reason: FaultReason = @bitCast(fault_reason);
-
-    if (reason.protection) {
-        return false;
-    }
-
-    const user_space_end = 0x0000_8000_0000_0000;
-    const heap_start = heap.kernel_heap_base_addr;
-    const heap_end = heap.kernel_heap_base_addr + heap.kernel_heap_size;
-
-    // Demand-page user space only for user-mode faults, and never page 0.
-    if (reason.user and fault_addr >= pmm.page_size and fault_addr < user_space_end) {
-        const base_addr = std.mem.alignBackward(u64, fault_addr, pmm.page_size);
-        const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
-        const flags = Flags{ .present = true, .writable = true, .user = true };
-        try kernel_vmm.pt.mapPage(base_addr, phys_addr, @bitCast(flags));
-        return true;
-    }
-
-    // Kernel heap pages are committed on first access.
-    if (!reason.user and fault_addr >= heap_start and fault_addr < heap_end) {
-        const base_addr = std.mem.alignBackward(u64, fault_addr, pmm.page_size);
-        const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
-        const flags = Flags{ .present = true, .writable = true, .noexec = true };
-        try kernel_vmm.pt.mapPage(base_addr, phys_addr, @bitCast(flags));
-        return true;
-    }
-
-    return false;
 }
 
 test "Flags construction" {
