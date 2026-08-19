@@ -11,14 +11,18 @@ pub const HeapAllocator = struct {
     heap_base_addr: u64 = undefined,
     heap_end_addr: u64 = undefined,
     heap_curr_addr: u64 = undefined,
+    initialized: bool = false,
 
     pub fn init(self: *@This(), base_addr: u64, size: u64) void {
+        self.expectUninit();
         self.heap_base_addr = base_addr;
         self.heap_end_addr = base_addr + size;
         self.heap_curr_addr = base_addr;
+        self.initialized = true;
     }
 
     pub fn allocator(self: *@This()) std.mem.Allocator {
+        self.expectInit();
         return .{
             .ptr = self,
             .vtable = &.{
@@ -34,6 +38,7 @@ pub const HeapAllocator = struct {
         _ = ret_addr;
 
         const self: *HeapAllocator = @alignCast(@ptrCast(ctx));
+        self.expectInit();
         const aligned = std.mem.alignForward(u64, self.heap_curr_addr, alignment.toByteUnits());
 
         if (aligned + len > self.heap_end_addr) {
@@ -42,6 +47,14 @@ pub const HeapAllocator = struct {
 
         self.heap_curr_addr = aligned + len;
         return @ptrFromInt(aligned);
+    }
+
+    fn expectInit(self: *const @This()) void {
+        if (!self.initialized) @panic("heap used before init");
+    }
+
+    fn expectUninit(self: *const @This()) void {
+        if (self.initialized) @panic("heap already initialized");
     }
 };
 

@@ -50,7 +50,7 @@ const ACPI = struct {
     pub fn load(self: *@This()) void {
         // Base revision 6 returns a virtual (HHDM) pointer. Table
         // addresses inside RSDP/XSDP are still physical.
-        const rsdp: *align(1) const RSDP = @ptrCast(boot.info.rsdp.address);
+        const rsdp: *align(1) const RSDP = @ptrCast(boot.info().rsdp.address);
 
         if (rsdp.revision >= 2) {
             logger.info("Load XSDT (ACPI revision {d})", .{rsdp.revision});

@@ -125,8 +125,10 @@ const PageTable = extern struct {
 pub const VMM = struct {
     pt_addr_phys: u64 = undefined,
     pt: *PageTable = undefined,
+    initialized: bool = false,
 
     pub fn map(self: *@This(), virt_addr: u64, phys_addr: u64, size: u64, flags: u64) !void {
+        self.expectInit();
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(size, pmm.page_size));
@@ -140,6 +142,7 @@ pub const VMM = struct {
     }
 
     pub fn remap(self: *@This(), virt_addr: u64, phys_addr: u64, size: u64, flags: u64) !void {
+        self.expectInit();
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(size, pmm.page_size));
@@ -153,6 +156,7 @@ pub const VMM = struct {
     }
 
     pub fn unmap(self: *@This(), virt_addr: u64, size: u64) !void {
+        self.expectInit();
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(size, pmm.page_size));
 
@@ -164,6 +168,7 @@ pub const VMM = struct {
     }
 
     pub fn virtToPhys(self: *@This(), virt_addr: u64) !u64 {
+        self.expectInit();
         const entry = try self.pt.virtToPTE(virt_addr, false);
         const entry_flags: Flags = @bitCast(entry.getFlags());
 
@@ -175,16 +180,27 @@ pub const VMM = struct {
     }
 
     pub fn switchTo(self: *@This()) void {
+        self.expectInit();
         switchPageTable(self.pt_addr_phys);
+    }
+
+    fn expectInit(self: *const @This()) void {
+        if (!self.initialized) @panic("vmm used before init");
+    }
+
+    fn expectUninit(self: *const @This()) void {
+        if (self.initialized) @panic("vmm already initialized");
     }
 };
 
 pub fn init() !void {
+    kernel_vmm.expectUninit();
     logger.info("Init kernel VMM", .{});
 
     // Allocate L4 root page table
     kernel_vmm.pt_addr_phys = pmm.alloc(1) orelse return error.OutOfMemory;
     kernel_vmm.pt = virt.toHH(*PageTable, kernel_vmm.pt_addr_phys);
+    kernel_vmm.initialized = true;
 
     // Pre-allocate higher half L3 tables to facilitate sharing kernel space
     // across user spaces
@@ -194,7 +210,7 @@ pub fn init() !void {
 
     // Base revision 6 maps only selected memory-map types into the HHDM.
     logger.info("Mapping HHDM regions", .{});
-    for (boot.info.memory_map.entries()) |entry| {
+    for (boot.info().memory_map.entries()) |entry| {
         if (!entry.kind.inHhdm()) continue;
         try mapHhdmRange(kernel_vmm.pt, entry.base, entry.base + entry.length);
     }
@@ -211,6 +227,7 @@ pub fn init() !void {
 }
 
 pub fn mapMmio(phys_addr: u64, size: u64) !void {
+    kernel_vmm.expectInit();
     std.debug.assert(size > 0);
     try mapHhdmRange(kernel_vmm.pt, phys_addr, phys_addr + size);
 }
@@ -234,7 +251,7 @@ fn mapKernelSection(vmm: *VMM, comptime section_name: []const u8, flags: u64) !v
     const virt_start = std.mem.alignBackward(u64, section_start, pmm.page_size);
     const virt_end = std.mem.alignForward(u64, section_end, pmm.page_size);
 
-    const phys_start = virt_start - boot.info.kernel.virtual_base + boot.info.kernel.physical_base;
+    const phys_start = virt_start - boot.info().kernel.virtual_base + boot.info().kernel.physical_base;
     const size = virt_end - virt_start;
 
     try vmm.map(virt_start, phys_start, size, flags);
@@ -259,6 +276,7 @@ inline fn switchPageTable(phys_addr: u64) void {
 }
 
 pub fn handlePageFault(fault_addr: u64, fault_reason: u64) !bool {
+    kernel_vmm.expectInit();
     const reason: FaultReason = @bitCast(fault_reason);
 
     if (reason.protection) {

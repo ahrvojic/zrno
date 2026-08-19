@@ -17,6 +17,15 @@ var highest_page_index: u64 = 0;
 var last_used_index: u64 = 0;
 
 var bitmap: Bitmap = undefined;
+var initialized = false;
+
+fn expectInit() void {
+    if (!initialized) @panic("pmm used before init");
+}
+
+fn expectUninit() void {
+    if (initialized) @panic("pmm already initialized");
+}
 
 const Bitmap = struct {
     data: []u8,
@@ -39,10 +48,12 @@ const Bitmap = struct {
 };
 
 pub fn init() !void {
+    expectUninit();
+
     // Determine highest usable address
     var highest_addr: u64 = 0;
 
-    for (boot.info.memory_map.entries()) |entry| {
+    for (boot.info().memory_map.entries()) |entry| {
         logger.info("Entry: base=0x{X:0>16} length=0x{X:0>16} kind={}", .{ entry.base, entry.length, entry.kind });
 
         switch (entry.kind) {
@@ -74,7 +85,7 @@ pub fn init() !void {
     // Find where the bitmap can fit in usable memory
     var bitmap_region: ?*limine.MemoryMapEntry = null;
 
-    for (boot.info.memory_map.entries()) |entry| {
+    for (boot.info().memory_map.entries()) |entry| {
         if (entry.kind == .usable and entry.length >= bitmap_size) {
             bitmap_region = entry;
             break;
@@ -90,7 +101,7 @@ pub fn init() !void {
     @memset(bitmap.data, 0xff);
 
     // Clear free bits according to the memory map
-    for (boot.info.memory_map.entries()) |entry| {
+    for (boot.info().memory_map.entries()) |entry| {
         if (entry.kind == .usable) {
             var i: u64 = 0;
             while (i < entry.length) : (i += page_size) {
@@ -106,6 +117,7 @@ pub fn init() !void {
         bitmap.setBit(bitmap_page + i);
     }
     used_pages += bitmap_pages;
+    initialized = true;
 }
 
 pub fn alloc(pages: u64) ?u64 {
@@ -122,6 +134,7 @@ pub fn alloc(pages: u64) ?u64 {
 }
 
 pub fn allocNoZero(pages: u64) ?u64 {
+    expectInit();
     if (pages == 0) return null;
     return allocInner(last_used_index, pages) orelse allocInner(0, pages);
 }
@@ -156,6 +169,7 @@ fn allocInner(start: u64, pages: u64) ?u64 {
 }
 
 pub fn free(address: u64, pages: u64) void {
+    expectInit();
     const start = address / page_size;
     const end = start + pages;
 

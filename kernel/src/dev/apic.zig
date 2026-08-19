@@ -12,8 +12,10 @@ pub var io_apic: IOApic = .{};
 const IOApic = struct {
     address: u64 = undefined,
     gsi_base: u32 = undefined,
+    initialized: bool = false,
 
     pub fn init(self: *@This()) !void {
+        self.expectUninit();
         if (madt.io_apics.len == 0) {
             return error.NoIoApic;
         }
@@ -23,9 +25,11 @@ const IOApic = struct {
         try vmm.mapMmio(io_apic_entry.address, pmm.page_size);
         self.address = virt.toHH(u64, io_apic_entry.address);
         self.gsi_base = io_apic_entry.gsi_base;
+        self.initialized = true;
     }
 
     pub fn routeIrq(self: *const @This(), lapic_id: u32, vector: u8, irq: u8) void {
+        self.expectInit();
         // Use interrupt source override if exists
         for (madt.io_apic_isos.slice()) |iso| {
             if (iso.irq_source == irq) {
@@ -64,6 +68,14 @@ const IOApic = struct {
     fn write(self: *const @This(), offset: u32, value: u32) void {
         @as(*volatile u32, @ptrFromInt(self.address)).* = offset;
         @as(*volatile u32, @ptrFromInt(self.address + 0x10)).* = value;
+    }
+
+    fn expectInit(self: *const @This()) void {
+        if (!self.initialized) @panic("apic used before init");
+    }
+
+    fn expectUninit(self: *const @This()) void {
+        if (self.initialized) @panic("apic already initialized");
     }
 };
 

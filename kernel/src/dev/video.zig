@@ -6,20 +6,23 @@ const font = @import("font.zig");
 const panic = @import("../lib/panic.zig").panic;
 
 pub var fb: Framebuffer = .{};
-var ready = false;
 
 const Framebuffer = struct {
     info: *limine.Framebuffer = undefined,
     max_row: u64 = 25,
     max_col: u64 = 80,
+    initialized: bool = false,
 
     pub fn init(self: *@This(), info: *limine.Framebuffer) void {
+        self.expectUninit();
         self.info = info;
         self.max_col = info.width / font.builtin.width;
         self.max_row = info.height / font.builtin.height;
+        self.initialized = true;
     }
 
     pub fn plotChar(self: *const @This(), ch: u8, row: u64, col: u64) void {
+        self.expectInit();
         if (row >= self.max_row or col >= self.max_col) return;
 
         const glyph = font.builtin.glyph(ch);
@@ -43,6 +46,7 @@ const Framebuffer = struct {
     }
 
     pub fn scroll(self: *const @This()) void {
+        self.expectInit();
         // Shift framebuffer up one character row
         const new_top = self.toRowOffset(1);
         std.mem.copyForwards(u8, self.info.data(), self.info.data()[new_top..]);
@@ -59,18 +63,28 @@ const Framebuffer = struct {
     fn toColOffset(self: *const @This(), col: u64) u64 {
         return col * self.info.bpp / 8 * font.builtin.width;
     }
+
+    fn expectInit(self: *const @This()) void {
+        if (!self.initialized) @panic("video used before init");
+    }
+
+    fn expectUninit(self: *const @This()) void {
+        if (self.initialized) @panic("video already initialized");
+    }
 };
 
 pub fn isReady() bool {
-    return ready;
+    return fb.initialized;
 }
 
 pub fn init() !void {
-    if (boot.info.framebuffers.framebuffer_count < 1) {
+    if (fb.initialized) panic("video already initialized");
+
+    if (boot.info().framebuffers.framebuffer_count < 1) {
         panic("No framebuffer available!");
     }
 
-    const info = boot.info.framebuffers.framebuffers()[0];
+    const info = boot.info().framebuffers.framebuffers()[0];
     if (info.bpp != 32) {
         panic("Only 32-bit framebuffers are supported!");
     }
@@ -79,5 +93,4 @@ pub fn init() !void {
     }
 
     fb.init(info);
-    ready = true;
 }

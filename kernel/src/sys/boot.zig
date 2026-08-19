@@ -23,14 +23,22 @@ const Info = struct {
     rsdp: *limine.RsdpResponse,
 };
 
-pub var info: Info = undefined;
+var info_value: Info = undefined;
+var initialized = false;
+
+pub fn info() *const Info {
+    if (!initialized) panic("boot used before init");
+    return &info_value;
+}
 
 pub fn init() !void {
+    if (initialized) panic("boot already initialized");
+
     if (!base_revision.isSupported()) {
         panic("Limine base revision not supported!");
     }
 
-    info = .{
+    info_value = .{
         .bootloader_info = bootloader_req.response orelse return error.NoBootloaderInfo,
         .framebuffers = fb_req.response orelse return error.NoFramebuffer,
         .higher_half = hhdm_req.response orelse return error.NoHhdm,
@@ -38,4 +46,5 @@ pub fn init() !void {
         .memory_map = mm_req.response orelse return error.NoMemoryMap,
         .rsdp = rsdp_req.response orelse return error.NoRsdp,
     };
+    initialized = true;
 }

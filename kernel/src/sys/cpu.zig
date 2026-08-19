@@ -53,8 +53,12 @@ pub const CPU = struct {
     tss: gdt.TSS = std.mem.zeroes(gdt.TSS),
     lapic_base: u64 = undefined,
     thread: ?*proc.Thread = null,
+    initialized: bool = false,
+    lapic_initialized: bool = false,
 
     pub fn init(self: *@This()) void {
+        self.expectUninit();
+
         // IOPB at the TSS limit means no I/O bitmap (offset 0 would
         // interpret the TSS itself as permission bits).
         self.tss.iopb_offset = @sizeOf(gdt.TSS);
@@ -64,21 +68,27 @@ pub const CPU = struct {
 
         logger.info("Load IDT", .{});
         self.idt.load();
+        self.initialized = true;
     }
 
     pub fn initLapic(self: *@This()) !void {
+        self.expectInit();
+        self.expectLapicUninit();
         logger.info("Init local APIC", .{});
         const phys = readMSR(msr_lapic) & 0xfffff000;
         try vmm.mapMmio(phys, pmm.page_size);
         self.lapic_base = virt.toHH(u64, phys);
         self.enableLapic();
+        self.lapic_initialized = true;
     }
 
     pub fn eoi(self: *const @This()) void {
+        self.expectLapicInit();
         self.lapicWrite(lapic_reg_eoi, 0);
     }
 
     pub fn lapicId(self: *const @This()) u32 {
+        self.expectLapicInit();
         // Local APIC ID register: APIC ID is in bits 24-31.
         return self.lapicRead(lapic_reg_id) >> 24;
     }
@@ -100,6 +110,22 @@ pub const CPU = struct {
         const addr = self.lapic_base + reg;
         const ptr: *align(4) volatile u32 = @ptrFromInt(addr);
         ptr.* = value;
+    }
+
+    fn expectInit(self: *const @This()) void {
+        if (!self.initialized) @panic("cpu used before init");
+    }
+
+    fn expectUninit(self: *const @This()) void {
+        if (self.initialized) @panic("cpu already initialized");
+    }
+
+    fn expectLapicInit(self: *const @This()) void {
+        if (!self.lapic_initialized) @panic("cpu lapic used before init");
+    }
+
+    fn expectLapicUninit(self: *const @This()) void {
+        if (self.lapic_initialized) @panic("cpu lapic already initialized");
     }
 };
 

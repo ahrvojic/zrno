@@ -19,11 +19,23 @@ var idle_thread: *proc.Thread = undefined;
 var pid_next: u64 = 0;
 var tid_next: u64 = 0;
 
+var initialized = false;
+
+fn expectInit() void {
+    if (!initialized) @panic("sched used before init");
+}
+
+fn expectUninit() void {
+    if (initialized) @panic("sched already initialized");
+}
+
 pub fn init() !void {
+    expectUninit();
     const allocator = heap.kernel_heap.allocator();
     kernel_process = try startProcess(allocator, false);
     // Fallback only; never linked into `threads`.
     idle_thread = try startKernelThread(kernel_process, @intFromPtr(&idleThread), 0, false);
+    initialized = true;
 }
 
 pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process {
@@ -76,6 +88,7 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
 }
 
 pub fn schedule(ctx: *cpu.Context) void {
+    expectInit();
     var start: ?*std.DoublyLinkedList.Node = null;
 
     if (cpu.bsp.thread) |curr_thread| {
@@ -95,6 +108,7 @@ pub fn schedule(ctx: *cpu.Context) void {
 }
 
 pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
+    expectInit();
     process.exit_code = exit_code;
     process.status = .stopped;
 
@@ -113,6 +127,7 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
 }
 
 pub fn exitThread() noreturn {
+    expectInit();
     if (cpu.bsp.thread) |thread| {
         stopThread(thread);
     }
@@ -121,6 +136,7 @@ pub fn exitThread() noreturn {
 }
 
 pub fn yield() void {
+    expectInit();
     // Timer interrupt to reschedule
     ivt.interrupt(ivt.vec_pit);
 }
