@@ -65,11 +65,11 @@ const ACPI = struct {
         }
     }
 
-    pub fn findSDT(self: *const @This(), signature: []const u8, index: u64) !*align(1) const SDT {
+    pub fn findSDT(self: *const @This(), signature: *const [4]u8, index: u64) !*align(1) const SDT {
         return if (self.use_xsdt) self.findSDTAt(u64, signature, index) else self.findSDTAt(u32, signature, index);
     }
 
-    fn findSDTAt(self: *const @This(), comptime T: type, signature: []const u8, index: u64) !*align(1) const SDT {
+    fn findSDTAt(self: *const @This(), comptime T: type, signature: *const [4]u8, index: u64) !*align(1) const SDT {
         const data = self.rsdt.getData();
         const entry_size = @sizeOf(T);
         var offset: usize = 0;
@@ -80,7 +80,7 @@ const ACPI = struct {
             const entry = std.mem.readInt(T, data[offset..][0..entry_size], .little);
             const sdt = virt.toHH(*align(1) const SDT, entry);
 
-            if (!std.mem.eql(u8, &sdt.signature, std.mem.sliceTo(signature, 3))) {
+            if (!std.mem.eql(u8, &sdt.signature, signature)) {
                 continue;
             }
 
