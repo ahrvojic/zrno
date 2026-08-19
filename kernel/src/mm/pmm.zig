@@ -4,6 +4,7 @@ const std = @import("std");
 const limine = @import("limine");
 
 const boot = @import("../sys/boot.zig");
+const Lock = @import("../lib/lock.zig");
 const virt = @import("../lib/virt.zig");
 
 pub const page_size: u64 = 4096;
@@ -17,6 +18,7 @@ var highest_page_index: u64 = 0;
 var last_used_index: u64 = 0;
 
 var bitmap: Bitmap = undefined;
+var lock: Lock.SpinLock = .{};
 var initialized = false;
 
 fn expectInit() void {
@@ -136,6 +138,8 @@ pub fn alloc(pages: u64) ?u64 {
 pub fn allocNoZero(pages: u64) ?u64 {
     expectInit();
     if (pages == 0) return null;
+    lock.lock();
+    defer lock.unlock();
     return allocInner(last_used_index, pages) orelse allocInner(0, pages);
 }
 
@@ -170,6 +174,9 @@ fn allocInner(start: u64, pages: u64) ?u64 {
 
 pub fn free(address: u64, pages: u64) void {
     expectInit();
+    lock.lock();
+    defer lock.unlock();
+
     const start = address / page_size;
     const end = start + pages;
 

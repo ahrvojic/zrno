@@ -6,17 +6,85 @@ const apic = @import("apic.zig");
 const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
 const cpu = @import("../sys/cpu.zig");
 const ivt = @import("../sys/ivt.zig");
+const Lock = @import("../lib/lock.zig");
 const port = @import("../sys/port.zig");
 
 const ps2_data_port = 0x60;
 
 pub const Key = enum {
-    esc, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12,
-    backtick, n1, n2, n3, n4, n5, n6, n7, n8, n9, n0, minus, equals, backspace,
-    tab, q, w, e, r, t, y, u, i, o, p, lbracket, rbracket, backslash,
-    caps, a, s, d, f, g, h, j, k, l, semicolon, apostrophe, enter,
-    lshift, z, x, c, v, b, n, m, comma, period, slash, rshift,
-    lctrl, lsuper, lalt, spacebar, ralt, rsuper, rctrl,
+    esc,
+    f1,
+    f2,
+    f3,
+    f4,
+    f5,
+    f6,
+    f7,
+    f8,
+    f9,
+    f10,
+    f11,
+    f12,
+    backtick,
+    n1,
+    n2,
+    n3,
+    n4,
+    n5,
+    n6,
+    n7,
+    n8,
+    n9,
+    n0,
+    minus,
+    equals,
+    backspace,
+    tab,
+    q,
+    w,
+    e,
+    r,
+    t,
+    y,
+    u,
+    i,
+    o,
+    p,
+    lbracket,
+    rbracket,
+    backslash,
+    caps,
+    a,
+    s,
+    d,
+    f,
+    g,
+    h,
+    j,
+    k,
+    l,
+    semicolon,
+    apostrophe,
+    enter,
+    lshift,
+    z,
+    x,
+    c,
+    v,
+    b,
+    n,
+    m,
+    comma,
+    period,
+    slash,
+    rshift,
+    lctrl,
+    lsuper,
+    lalt,
+    spacebar,
+    ralt,
+    rsuper,
+    rctrl,
 };
 
 pub const KeyEvent = struct {
@@ -25,7 +93,10 @@ pub const KeyEvent = struct {
 };
 
 pub const KeyModifier = enum(u2) {
-    alt, ctrl, shift, super,
+    alt,
+    ctrl,
+    shift,
+    super,
 };
 
 const KeyboardState = struct {
@@ -69,6 +140,7 @@ var kb_head: KbIndex = 0;
 var kb_tail: KbIndex = 0;
 
 var keyboard_state: KeyboardState = .{ .modifiers = std.StaticBitSet(4).initEmpty() };
+var lock: Lock.SpinLock = .{};
 
 pub fn init() !void {
     const lapic_id = cpu.bsp.lapicId();
@@ -79,34 +151,96 @@ pub fn init() !void {
 pub fn handleInterrupt() void {
     const code = port.inb(ps2_data_port);
 
+    lock.lock();
     code_buffer.append(code) catch {};
 
     const buffer = code_buffer.slice();
-    switch (buffer[0]) {
-        0xe0 => if (buffer.len >= 2) putKey(buffer[1], true),
+    const unknown: ?u8 = switch (buffer[0]) {
+        0xe0 => if (buffer.len >= 2) putKey(buffer[1], true) else null,
         else => |c| putKey(c, false),
-    }
+    };
+    lock.unlock();
+
+    if (unknown) |c| logger.err("Unknown scan code: {d}", .{c});
 }
 
 pub fn isPressed(modifier: KeyModifier) bool {
+    lock.lock();
+    defer lock.unlock();
     return keyboard_state.modifiers.isSet(@intFromEnum(modifier));
 }
 
 pub fn getKey() ?KeyEvent {
+    lock.lock();
+    defer lock.unlock();
     if (kb_head == kb_tail) return null;
     const event = kb_buffer[kb_head];
     kb_head +%= 1;
     return event;
 }
 
-fn putKey(code: u8, extended: bool) void {
+pub fn toAscii(key: Key, shift: bool) ?u8 {
+    return switch (key) {
+        .enter => '\n',
+        .backspace => '\x08',
+        .tab => '\t',
+        .spacebar => ' ',
+        .a => if (shift) 'A' else 'a',
+        .b => if (shift) 'B' else 'b',
+        .c => if (shift) 'C' else 'c',
+        .d => if (shift) 'D' else 'd',
+        .e => if (shift) 'E' else 'e',
+        .f => if (shift) 'F' else 'f',
+        .g => if (shift) 'G' else 'g',
+        .h => if (shift) 'H' else 'h',
+        .i => if (shift) 'I' else 'i',
+        .j => if (shift) 'J' else 'j',
+        .k => if (shift) 'K' else 'k',
+        .l => if (shift) 'L' else 'l',
+        .m => if (shift) 'M' else 'm',
+        .n => if (shift) 'N' else 'n',
+        .o => if (shift) 'O' else 'o',
+        .p => if (shift) 'P' else 'p',
+        .q => if (shift) 'Q' else 'q',
+        .r => if (shift) 'R' else 'r',
+        .s => if (shift) 'S' else 's',
+        .t => if (shift) 'T' else 't',
+        .u => if (shift) 'U' else 'u',
+        .v => if (shift) 'V' else 'v',
+        .w => if (shift) 'W' else 'w',
+        .x => if (shift) 'X' else 'x',
+        .y => if (shift) 'Y' else 'y',
+        .z => if (shift) 'Z' else 'z',
+        .n1 => if (shift) '!' else '1',
+        .n2 => if (shift) '@' else '2',
+        .n3 => if (shift) '#' else '3',
+        .n4 => if (shift) '$' else '4',
+        .n5 => if (shift) '%' else '5',
+        .n6 => if (shift) '^' else '6',
+        .n7 => if (shift) '&' else '7',
+        .n8 => if (shift) '*' else '8',
+        .n9 => if (shift) '(' else '9',
+        .n0 => if (shift) ')' else '0',
+        .minus => if (shift) '_' else '-',
+        .equals => if (shift) '+' else '=',
+        .lbracket => if (shift) '{' else '[',
+        .rbracket => if (shift) '}' else ']',
+        .backslash => if (shift) '|' else '\\',
+        .semicolon => if (shift) ':' else ';',
+        .apostrophe => if (shift) '"' else '\'',
+        .backtick => if (shift) '~' else '`',
+        .comma => if (shift) '<' else ',',
+        .period => if (shift) '>' else '.',
+        .slash => if (shift) '?' else '/',
+        else => null,
+    };
+}
+
+fn putKey(code: u8, extended: bool) ?u8 {
     defer code_buffer.resize(0) catch unreachable;
 
     // Remove MSB make/break from scan code before translation
-    const key = toKey(code & 0x7f, extended) orelse {
-        logger.err("Unknown scan code: {d}", .{code});
-        return;
-    };
+    const key = toKey(code & 0x7f, extended) orelse return code;
 
     const event: KeyEvent = .{
         .key = key,
@@ -116,9 +250,10 @@ fn putKey(code: u8, extended: bool) void {
     keyboard_state.notify(event);
 
     const next = kb_tail +% 1;
-    if (next == kb_head) return;
+    if (next == kb_head) return null;
     kb_buffer[kb_tail] = event;
     kb_tail = next;
+    return null;
 }
 
 fn toKey(code: u8, extended: bool) ?Key {

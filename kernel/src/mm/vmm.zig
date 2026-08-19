@@ -4,6 +4,7 @@ const std = @import("std");
 
 const boot = @import("../sys/boot.zig");
 const heap = @import("heap.zig");
+const Lock = @import("../lib/lock.zig");
 const pmm = @import("pmm.zig");
 const virt = @import("../lib/virt.zig");
 
@@ -130,6 +131,7 @@ const PageTable = extern struct {
 pub const VMM = struct {
     pt_addr_phys: u64 = undefined,
     pt: *PageTable = undefined,
+    lock: Lock.SpinLock = .{},
     initialized: bool = false,
 
     pub fn map(self: *@This(), virt_addr: u64, phys_addr: u64, size: u64, flags: u64) !void {
@@ -137,6 +139,9 @@ pub const VMM = struct {
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(size, pmm.page_size));
+
+        self.lock.lock();
+        defer self.lock.unlock();
 
         var i: u64 = 0;
         while (i < size) : (i += pmm.page_size) {
@@ -152,6 +157,9 @@ pub const VMM = struct {
         std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(size, pmm.page_size));
 
+        self.lock.lock();
+        defer self.lock.unlock();
+
         var i: u64 = 0;
         while (i < size) : (i += pmm.page_size) {
             const new_virt_addr = virt_addr + i;
@@ -165,6 +173,9 @@ pub const VMM = struct {
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(size, pmm.page_size));
 
+        self.lock.lock();
+        defer self.lock.unlock();
+
         var i: u64 = 0;
         while (i < size) : (i += pmm.page_size) {
             const new_virt_addr = virt_addr + i;
@@ -174,6 +185,8 @@ pub const VMM = struct {
 
     pub fn virtToPhys(self: *@This(), virt_addr: u64) !u64 {
         self.expectInit();
+        self.lock.lock();
+        defer self.lock.unlock();
         const entry = try self.pt.virtToPTE(virt_addr, false);
         const entry_flags: Flags = @bitCast(entry.getFlags());
 
@@ -234,6 +247,8 @@ pub fn init() !void {
 pub fn mapMmio(phys_addr: u64, size: u64) !void {
     kernel_vmm.expectInit();
     std.debug.assert(size > 0);
+    kernel_vmm.lock.lock();
+    defer kernel_vmm.lock.unlock();
     try mapHhdmRange(kernel_vmm.pt, phys_addr, phys_addr + size);
 }
 
@@ -267,8 +282,7 @@ inline fn flushTLB(virt_addr: u64) void {
         \\invlpg %[virt_addr]
         :
         : [virt_addr] "r" (virt_addr),
-        : .{ .memory = true }
-    );
+        : .{ .memory = true });
 }
 
 inline fn switchPageTable(phys_addr: u64) void {
@@ -276,12 +290,13 @@ inline fn switchPageTable(phys_addr: u64) void {
         \\movq %[phys_addr], %cr3
         :
         : [phys_addr] "r" (phys_addr),
-        : .{ .memory = true }
-    );
+        : .{ .memory = true });
 }
 
 pub fn handlePageFault(fault_addr: u64, fault_reason: u64) !bool {
     kernel_vmm.expectInit();
+    kernel_vmm.lock.lock();
+    defer kernel_vmm.lock.unlock();
     const reason: FaultReason = @bitCast(fault_reason);
 
     if (reason.protection) {

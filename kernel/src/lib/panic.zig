@@ -1,23 +1,22 @@
-const logger = std.log.scoped(.panic);
-
 const std = @import("std");
 
 const cpu = @import("../sys/cpu.zig");
+const debug = @import("debug.zig");
 const tty = @import("../dev/tty.zig");
 
-var panicking = false;
+var panicking: std.atomic.Value(bool) = .init(false);
 
 pub fn panicImpl(message: []const u8, first_trace_addr: ?usize) noreturn {
     _ = first_trace_addr;
     cpu.interruptsOff();
-    if (panicking) cpu.halt();
-    panicking = true;
+    if (panicking.swap(true, .acq_rel)) cpu.halt();
 
-    const msg = "KERNEL PANIC: {s}\n";
-    const args = .{message};
-
-    logger.err(msg, args);
-    tty.print(msg, args);
+    // Skip spinlocks: we may already hold one, and IRQs are off.
+    var buf: [1024]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    writer.print("[panic] (err) KERNEL PANIC: {s}\r\n", .{message}) catch {};
+    debug.printUnsafe(writer.buffered());
+    tty.printUnsafe("KERNEL PANIC: {s}\n", .{message});
 
     cpu.halt();
 }

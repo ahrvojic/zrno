@@ -91,8 +91,24 @@ pub fn main() !void {
     logger.info("Init PS/2 keyboard", .{});
     try ps2.init();
 
+    _ = try sched.spawnKernelThread(@intFromPtr(&keyboardThread), 0);
+
     logger.info("Done.", .{});
 
     tty.print("ZRNO kernel 1.0\n", .{});
     tty.print("READY.\n", .{});
+}
+
+fn keyboardThread(_: u64) callconv(.c) noreturn {
+    while (true) {
+        if (ps2.getKey()) |event| {
+            if (event.pressed) {
+                if (ps2.toAscii(event.key, ps2.isPressed(.shift))) |ch| {
+                    tty.putChar(ch);
+                }
+            }
+        } else {
+            cpu.idle();
+        }
+    }
 }

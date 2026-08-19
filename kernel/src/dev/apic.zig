@@ -1,5 +1,6 @@
 const madt = @import("../acpi/madt.zig");
 const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
+const Lock = @import("../lib/lock.zig");
 const pmm = @import("../mm/pmm.zig");
 const port = @import("../sys/port.zig");
 const virt = @import("../lib/virt.zig");
@@ -13,6 +14,7 @@ const ioapic_redir_base = 0x10;
 const ioapic_redir_mask = @as(u64, 1) << 16;
 
 var io_apics: BoundedArray(IOApic, madt.max_io_apics) = .{};
+var lock: Lock.SpinLock = .{};
 var initialized = false;
 
 const IOApic = struct {
@@ -117,6 +119,8 @@ pub fn routeIrq(lapic_id: u32, vector: u8, irq: u8) void {
 
 pub fn routeGsi(lapic_id: u32, vector: u8, gsi: u32, flags: u16) void {
     expectInit();
+    lock.lock();
+    defer lock.unlock();
     const io_apic = findForGsi(gsi) orelse @panic("GSI not owned by any I/O APIC");
     io_apic.route(lapic_id, vector, gsi, flags);
 }

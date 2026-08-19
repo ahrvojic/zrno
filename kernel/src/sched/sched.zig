@@ -4,6 +4,7 @@ const cpu = @import("../sys/cpu.zig");
 const gdt = @import("../sys/gdt.zig");
 const heap = @import("../mm/heap.zig");
 const ivt = @import("../sys/ivt.zig");
+const Lock = @import("../lib/lock.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
 const virt = @import("../lib/virt.zig");
@@ -19,6 +20,7 @@ var idle_thread: *proc.Thread = undefined;
 var pid_next: u64 = 0;
 var tid_next: u64 = 0;
 
+var lock: Lock.SpinLock = .{};
 var initialized = false;
 
 fn expectInit() void {
@@ -38,12 +40,17 @@ pub fn init() !void {
     initialized = true;
 }
 
+pub fn spawnKernelThread(pc: u64, arg: u64) !*proc.Thread {
+    expectInit();
+    return startKernelThread(kernel_process, pc, arg, true);
+}
+
 pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process {
     const process = try allocator.create(proc.Process);
     errdefer allocator.destroy(process);
 
     process.* = .{
-        .pid = pid_next,
+        .pid = 0,
         .parent = 0,
         .status = .ready,
         .heap = allocator,
@@ -51,8 +58,11 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .node = .{},
         .exit_code = 0,
     };
-    pid_next += 1;
 
+    lock.lock();
+    defer lock.unlock();
+    process.pid = pid_next;
+    pid_next += 1;
     if (enqueue) enqueueProcess(process);
     return process;
 }
@@ -65,30 +75,41 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
     const stack_virt = virt.toHH(u64, stack_phys);
 
     thread.* = .{
-        .tid = tid_next,
+        .tid = 0,
         .status = .ready,
         .parent = parent,
         .proc_node = .{},
         .sched_node = .{},
         .on_runqueue = false,
     };
-    tid_next += 1;
+
+    // Fake a `call` so a `ret` panics instead of running off the stack, and so
+    // SysV entry alignment is rsp ≡ 8 (mod 16).
+    const stack: [*]u64 = @ptrFromInt(stack_virt);
+    const slots = stack_size / @sizeOf(u64);
+    stack[slots - 1] = @intFromPtr(&kernelThreadReturned);
 
     thread.ctx.rflags = 0x202;
     thread.ctx.cs = gdt.kernel_code_sel;
     thread.ctx.ss = gdt.kernel_data_sel;
     thread.ctx.rip = pc;
     thread.ctx.rdi = arg;
-    thread.ctx.rsp = stack_virt + stack_size;
+    thread.ctx.rsp = stack_virt + stack_size - @sizeOf(u64);
 
+    lock.lock();
+    defer lock.unlock();
+    thread.tid = tid_next;
+    tid_next += 1;
     parent.threads.append(&thread.proc_node);
-
     if (enqueue) enqueueThread(thread);
     return thread;
 }
 
 pub fn schedule(ctx: *cpu.Context) void {
     expectInit();
+    lock.lock();
+    defer lock.unlock();
+
     const this_cpu = cpu.current();
     var start: ?*std.DoublyLinkedList.Node = null;
 
@@ -110,6 +131,9 @@ pub fn schedule(ctx: *cpu.Context) void {
 
 pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
     expectInit();
+    lock.lock();
+    defer lock.unlock();
+
     process.exit_code = exit_code;
     process.status = .stopped;
 
@@ -131,10 +155,12 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
 pub fn exitThread() noreturn {
     expectInit();
     const this_cpu = cpu.current();
+    lock.lock();
     if (this_cpu.thread) |thread| {
         stopThread(thread);
     }
     this_cpu.thread = null;
+    lock.unlock();
     yield();
 }
 
@@ -142,6 +168,10 @@ pub fn yield() void {
     expectInit();
     // Timer interrupt to reschedule
     ivt.interrupt(ivt.vec_pit);
+}
+
+fn kernelThreadReturned() callconv(.c) noreturn {
+    @panic("kernel thread returned");
 }
 
 fn idleThread() callconv(.naked) noreturn {

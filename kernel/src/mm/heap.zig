@@ -2,6 +2,8 @@ const logger = std.log.scoped(.heap);
 
 const std = @import("std");
 
+const Lock = @import("../lib/lock.zig");
+
 pub var kernel_heap: HeapAllocator = .{};
 
 pub const kernel_heap_base_addr = 0xffff_ffff_9000_0000;
@@ -11,6 +13,7 @@ pub const HeapAllocator = struct {
     heap_base_addr: u64 = undefined,
     heap_end_addr: u64 = undefined,
     heap_curr_addr: u64 = undefined,
+    lock: Lock.SpinLock = .{},
     initialized: bool = false,
 
     pub fn init(self: *@This(), base_addr: u64, size: u64) void {
@@ -37,8 +40,10 @@ pub const HeapAllocator = struct {
     pub fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
         _ = ret_addr;
 
-        const self: *HeapAllocator = @alignCast(@ptrCast(ctx));
+        const self: *HeapAllocator = @ptrCast(@alignCast(ctx));
         self.expectInit();
+        self.lock.lock();
+        defer self.lock.unlock();
         const aligned = std.mem.alignForward(u64, self.heap_curr_addr, alignment.toByteUnits());
 
         if (aligned + len > self.heap_end_addr) {

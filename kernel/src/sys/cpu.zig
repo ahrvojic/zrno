@@ -11,6 +11,7 @@ const virt = @import("../lib/virt.zig");
 const vmm = @import("../mm/vmm.zig");
 
 const msr_lapic = 0x1b;
+const rflags_if: u64 = 1 << 9;
 
 const lapic_reg_id = 0x20;
 const lapic_reg_eoi = 0xb0;
@@ -53,6 +54,8 @@ pub const CPU = struct {
     tss: gdt.TSS = std.mem.zeroes(gdt.TSS),
     lapic_base: u64 = undefined,
     thread: ?*proc.Thread = null,
+    ncli: u32 = 0,
+    intena: bool = false,
     initialized: bool = false,
     lapic_initialized: bool = false,
 
@@ -150,10 +153,51 @@ pub inline fn interruptsOff() void {
     asm volatile ("cli");
 }
 
+pub inline fn pause() void {
+    asm volatile ("pause");
+}
+
+pub inline fn idle() void {
+    asm volatile ("hlt");
+}
+
 pub inline fn halt() noreturn {
     while (true) {
-        asm volatile ("hlt");
+        idle();
     }
+}
+
+pub fn pushCli() void {
+    const flags = readFlags();
+    interruptsOff();
+    const this_cpu = current();
+    if (this_cpu.ncli == 0) {
+        this_cpu.intena = flags & rflags_if != 0;
+    }
+    this_cpu.ncli += 1;
+}
+
+pub fn popCli() void {
+    const this_cpu = current();
+    if (readFlags() & rflags_if != 0) {
+        @panic("popCli with interrupts enabled");
+    }
+    if (this_cpu.ncli == 0) {
+        @panic("popCli underflow");
+    }
+    this_cpu.ncli -= 1;
+    if (this_cpu.ncli == 0 and this_cpu.intena) {
+        interruptsOn();
+    }
+}
+
+inline fn readFlags() u64 {
+    return asm volatile (
+        \\pushfq
+        \\popq %[flags]
+        : [flags] "=r" (-> u64),
+        :
+        : .{ .memory = true });
 }
 
 inline fn readMSR(msr: u32) u64 {
