@@ -47,7 +47,9 @@ export fn _start() callconv(.c) noreturn {
         writer.print("kernel init failed: {s}", .{@errorName(err)}) catch {};
         @panic(writer.buffered());
     };
-    cpu.halt();
+    // Not a scheduled thread: yield discards this context and never returns.
+    sched.yield();
+    unreachable;
 }
 
 pub fn main() !void {
