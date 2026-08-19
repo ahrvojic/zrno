@@ -93,6 +93,14 @@ pub fn init() !void {
             }
         }
     }
+
+    // The bitmap itself sits in a usable region and was just marked free.
+    const bitmap_page = bitmap_region.?.base / page_size;
+    const bitmap_pages = bitmap_size / page_size;
+    for (0..bitmap_pages) |i| {
+        bitmap.setBit(bitmap_page + i);
+    }
+    used_pages += bitmap_pages;
 }
 
 pub fn alloc(pages: u64) ?u64 {
@@ -129,16 +137,16 @@ fn allocInner(start: u64, pages: u64) ?u64 {
         return null;
     }
 
-    // Mark found pages as used and return the address
-    var i = p_idx - pages + 1;
-    while (i <= p_idx) : (i += 1) {
+    // p_idx sits one past the last free page of the run
+    const first = p_idx - pages;
+    for (first..p_idx) |i| {
         bitmap.setBit(i);
     }
 
     last_used_index = p_idx;
     used_pages += pages;
 
-    return i * page_size;
+    return first * page_size;
 }
 
 pub fn free(address: u64, pages: u64) void {
