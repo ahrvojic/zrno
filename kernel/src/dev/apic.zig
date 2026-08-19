@@ -1,4 +1,5 @@
 const madt = @import("../acpi/madt.zig");
+const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
 const pmm = @import("../mm/pmm.zig");
 const port = @import("../sys/port.zig");
 const virt = @import("../lib/virt.zig");
@@ -7,57 +8,63 @@ const vmm = @import("../mm/vmm.zig");
 const pic1_data = 0x21;
 const pic2_data = 0xa1;
 
-pub var io_apic: IOApic = .{};
+const ioapic_ver = 0x01;
+const ioapic_redir_base = 0x10;
+const ioapic_redir_mask = @as(u64, 1) << 16;
+
+var io_apics: BoundedArray(IOApic, 8) = .{};
+var initialized = false;
 
 const IOApic = struct {
-    address: u64 = undefined,
-    gsi_base: u32 = undefined,
-    initialized: bool = false,
+    address: u64,
+    gsi_base: u32,
+    max_redir: u32,
 
-    pub fn init(self: *@This()) !void {
-        self.expectUninit();
-        if (madt.io_apics.len == 0) {
-            return error.NoIoApic;
-        }
-
-        // QEMU Q35 machine only has one I/O APIC
-        const io_apic_entry = madt.io_apics.get(0);
-        try vmm.mapMmio(io_apic_entry.address, pmm.page_size);
-        self.address = virt.toHH(u64, io_apic_entry.address);
-        self.gsi_base = io_apic_entry.gsi_base;
-        self.initialized = true;
+    fn init(address: u32, gsi_base: u32) !@This() {
+        try vmm.mapMmio(address, pmm.page_size);
+        var self: @This() = .{
+            .address = virt.toHH(u64, address),
+            .gsi_base = gsi_base,
+            .max_redir = 0,
+        };
+        // IOAPICVER bits 16-23: highest redirection-table index
+        self.max_redir = (self.read(ioapic_ver) >> 16) & 0xff;
+        self.maskAll();
+        return self;
     }
 
-    pub fn routeIrq(self: *const @This(), lapic_id: u32, vector: u8, irq: u8) void {
-        self.expectInit();
-        // Use interrupt source override if exists
-        for (madt.io_apic_isos.slice()) |iso| {
-            if (iso.irq_source == irq) {
-                self.route(lapic_id, vector, iso.gsi, iso.flags);
-                return;
-            }
-        }
+    fn ownsGsi(self: *const @This(), gsi: u32) bool {
+        return gsi >= self.gsi_base and (gsi - self.gsi_base) <= self.max_redir;
+    }
 
-        // Otherwise route IRQ directly
-        self.route(lapic_id, vector, irq, 0);
+    fn gsiMax(self: *const @This()) u32 {
+        return self.gsi_base + self.max_redir;
+    }
+
+    fn overlaps(self: *const @This(), other: *const @This()) bool {
+        return self.gsi_base <= other.gsiMax() and other.gsi_base <= self.gsiMax();
+    }
+
+    fn maskAll(self: *const @This()) void {
+        var i: u32 = 0;
+        while (i <= self.max_redir) : (i += 1) {
+            self.writeRedir(i, ioapic_redir_mask);
+        }
     }
 
     fn route(self: *const @This(), lapic_id: u32, vector: u8, gsi: u32, flags: u16) void {
-        if (gsi < self.gsi_base) return;
-
-        // Calculate offset to I/O redirection table entry:
-        // - Table starts at 0x10
-        // - Add entry distance from global system interrupt base
-        // - Two registers per entry
-        const offset = 0x10 + (gsi - self.gsi_base) * 2;
-
-        // Construct redirection entry value
+        const index = gsi - self.gsi_base;
         // Flags: level-triggered (bit 15), active-low (bit 13)
         // N.B. APIC will be unmasked
-        const value = @as(u64, @intCast(vector)) | @as(u64, @intCast(flags & 0b1010)) << 12 | @as(u64, @intCast(lapic_id)) << 56;
+        const value = @as(u64, vector) | @as(u64, flags & 0b1010) << 12 | @as(u64, lapic_id) << 56;
+        self.writeRedir(index, value);
+    }
 
-        self.write(offset + 0, @truncate(value));
+    fn writeRedir(self: *const @This(), index: u32, value: u64) void {
+        const offset = ioapic_redir_base + index * 2;
+        // High dword first so the entry is not live with a stale destination
         self.write(offset + 1, @truncate(value >> 32));
+        self.write(offset + 0, @truncate(value));
     }
 
     fn read(self: *const @This(), offset: u32) u32 {
@@ -69,21 +76,62 @@ const IOApic = struct {
         @as(*volatile u32, @ptrFromInt(self.address)).* = offset;
         @as(*volatile u32, @ptrFromInt(self.address + 0x10)).* = value;
     }
-
-    fn expectInit(self: *const @This()) void {
-        if (!self.initialized) @panic("apic used before init");
-    }
-
-    fn expectUninit(self: *const @This()) void {
-        if (self.initialized) @panic("apic already initialized");
-    }
 };
 
 pub fn init() !void {
+    expectUninit();
+
     // Dual 8259 is still live (MADT PC-AT flag). Mask it so IRQs
     // only arrive through the I/O APIC.
     port.outb(pic1_data, 0xff);
     port.outb(pic2_data, 0xff);
 
-    try io_apic.init();
+    if (madt.io_apics.len == 0) {
+        return error.NoIoApic;
+    }
+
+    for (madt.io_apics.slice()) |entry| {
+        const io_apic = try IOApic.init(entry.address, entry.gsi_base);
+        for (io_apics.slice()) |*existing| {
+            if (io_apic.overlaps(existing)) return error.OverlappingIoApic;
+        }
+        try io_apics.append(io_apic);
+    }
+
+    initialized = true;
+}
+
+pub fn routeIrq(lapic_id: u32, vector: u8, irq: u8) void {
+    expectInit();
+    var gsi: u32 = irq;
+    var flags: u16 = 0;
+    for (madt.io_apic_isos.slice()) |iso| {
+        if (iso.irq_source == irq) {
+            gsi = iso.gsi;
+            flags = iso.flags;
+            break;
+        }
+    }
+    routeGsi(lapic_id, vector, gsi, flags);
+}
+
+pub fn routeGsi(lapic_id: u32, vector: u8, gsi: u32, flags: u16) void {
+    expectInit();
+    const io_apic = findForGsi(gsi) orelse @panic("GSI not owned by any I/O APIC");
+    io_apic.route(lapic_id, vector, gsi, flags);
+}
+
+fn findForGsi(gsi: u32) ?*const IOApic {
+    for (io_apics.slice()) |*io_apic| {
+        if (io_apic.ownsGsi(gsi)) return io_apic;
+    }
+    return null;
+}
+
+fn expectInit() void {
+    if (!initialized) @panic("apic used before init");
+}
+
+fn expectUninit() void {
+    if (initialized) @panic("apic already initialized");
 }
