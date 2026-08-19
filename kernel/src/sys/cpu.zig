@@ -138,6 +138,10 @@ pub fn initLapic() !void {
     try bsp.initLapic();
 }
 
+pub fn current() *CPU {
+    return &bsp;
+}
+
 pub inline fn interruptsOn() void {
     asm volatile ("sti");
 }

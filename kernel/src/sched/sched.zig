@@ -89,9 +89,10 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
 
 pub fn schedule(ctx: *cpu.Context) void {
     expectInit();
+    const this_cpu = cpu.current();
     var start: ?*std.DoublyLinkedList.Node = null;
 
-    if (cpu.bsp.thread) |curr_thread| {
+    if (this_cpu.thread) |curr_thread| {
         curr_thread.ctx = ctx.*;
         if (curr_thread.status == .running) {
             curr_thread.status = .ready;
@@ -103,7 +104,7 @@ pub fn schedule(ctx: *cpu.Context) void {
 
     const thread = nextReadyThread(start) orelse idle_thread;
     thread.status = .running;
-    cpu.bsp.thread = thread;
+    this_cpu.thread = thread;
     ctx.* = thread.ctx;
 }
 
@@ -119,19 +120,21 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
         stopThread(thread);
     }
 
-    if (cpu.bsp.thread) |curr| {
+    const this_cpu = cpu.current();
+    if (this_cpu.thread) |curr| {
         if (curr.parent == process) {
-            cpu.bsp.thread = null;
+            this_cpu.thread = null;
         }
     }
 }
 
 pub fn exitThread() noreturn {
     expectInit();
-    if (cpu.bsp.thread) |thread| {
+    const this_cpu = cpu.current();
+    if (this_cpu.thread) |thread| {
         stopThread(thread);
     }
-    cpu.bsp.thread = null;
+    this_cpu.thread = null;
     yield();
 }
 

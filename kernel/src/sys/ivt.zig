@@ -38,11 +38,11 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
         },
         vec_pit => {
             sched.schedule(ctx);
-            cpu.bsp.eoi();
+            cpu.current().eoi();
         },
         vec_keyboard => {
             ps2.handleInterrupt();
-            cpu.bsp.eoi();
+            cpu.current().eoi();
         },
         vec_apic_spurious => {
             logger.info("APIC spurious interrupt", .{});
