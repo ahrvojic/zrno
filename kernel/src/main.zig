@@ -68,7 +68,7 @@ pub fn main() !void {
     try vmm.init();
 
     logger.info("Init heap", .{});
-    try heap.init();
+    heap.init();
 
     logger.info("Init ACPI", .{});
     try acpi.init();
