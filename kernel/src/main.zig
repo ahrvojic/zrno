@@ -19,11 +19,11 @@ const tty = @import("dev/tty.zig");
 const video = @import("dev/video.zig");
 const vmm = @import("mm/vmm.zig");
 
+pub const panic = std.debug.FullPanic(lib_panic.panicImpl);
+
 pub const std_options: std.Options = .{
     .logFn = log,
 };
-
-pub const panic = std.debug.FullPanic(lib_panic.panicImpl);
 
 fn log(
     comptime level: std.log.Level,
@@ -44,7 +44,7 @@ export fn _start() callconv(.c) noreturn {
     main() catch |err| {
         var buf: [64]u8 = undefined;
         var writer: std.Io.Writer = .fixed(&buf);
-        writer.print("kernel init failed: {s}", .{@errorName(err)}) catch {};
+        writer.print("Kernel init failed: {s}", .{@errorName(err)}) catch {};
         @panic(writer.buffered());
     };
     // Not a scheduled thread: yield discards this context and never returns.
