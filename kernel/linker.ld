@@ -1,28 +1,30 @@
-/* Tell the linker that we want an x86_64 ELF64 output file */
+/* ELF64 / x86-64; Limine loads ELF. */
 OUTPUT_FORMAT(elf64-x86-64)
 OUTPUT_ARCH(i386:x86-64)
 
-/* We want the symbol _start to be our entry point */
+/* Kernel entry; exported from main.zig. */
 ENTRY(_start)
 
-/* Define the program headers we want so the bootloader gives us the right */
-/* MMU permissions */
+/* PT_LOAD p_flags are the MMU permissions Limine installs (PF_X=1, PF_W=2, PF_R=4). */
 PHDRS
 {
-    text     PT_LOAD    FLAGS(0x05); /* Execute + Read */
-    rodata   PT_LOAD    FLAGS(0x04); /* Read only */
-    data     PT_LOAD    FLAGS(0x06); /* Write + Read */
-    dynamic  PT_DYNAMIC FLAGS(0x06); /* Dynamic PHDR for relocations */
+    text     PT_LOAD    FLAGS(0x05); /* PF_X | PF_R */
+    rodata   PT_LOAD    FLAGS(0x04); /* PF_R */
+    data     PT_LOAD    FLAGS(0x06); /* PF_W | PF_R */
+    dynamic  PT_DYNAMIC FLAGS(0x06); /* PIE relocations (pic = true in build.zig) */
 }
 
 SECTIONS
 {
-    /* We wanna be placed in the topmost 2GiB of the address space, for optimisations */
-    /* and because that is what the Limine spec mandates. */
-    /* Any address in this region will do, but often 0xffffffff80000000 is chosen as */
-    /* that is the beginning of the region. */
+    /*
+     * Higher half, at the start of the top 2GiB.
+     * Limine requires load addresses >= 0xffffffff80000000, and Zig's
+     * code_model=.kernel (signed 32-bit immediates) needs the whole image
+     * inside that 2GiB window.
+     */
     . = 0xffffffff80000000;
 
+    /* Bounds used by vmm.mapKernelSection and panic stack traces. */
     text_start_addr = .;
 
     .text : {
@@ -31,7 +33,7 @@ SECTIONS
 
     text_end_addr = .;
 
-    /* Move to the next memory page for .rodata */
+    /* Page-align so RX and R segments never share a mapping. */
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
     rodata_start_addr = .;
@@ -42,7 +44,7 @@ SECTIONS
 
     rodata_end_addr = .;
 
-    /* Move to the next memory page for .data */
+    /* Page-align so R and RW segments never share a mapping. */
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
     data_start_addr = .;
@@ -50,22 +52,19 @@ SECTIONS
     .data : {
         *(.data .data.*)
 
-        /* Place the sections that contain the Limine requests as part of the .data */
-        /* output section. Requests must be writable so Limine can fill responses. */
+        /* Limine scans these for request magics and writes response pointers.
+         * KEEP so section GC cannot drop the markers. */
         KEEP(*(.limine_requests_start))
         KEEP(*(.limine_requests))
         KEEP(*(.limine_requests_end))
     } :data
 
-    /* Dynamic section for relocations, both in its own PHDR and inside data PHDR */
+    /* PT_DYNAMIC for Limine's PIE relocator; also part of the RW load segment. */
     .dynamic : {
         *(.dynamic)
     } :data :dynamic
 
-    /* NOTE: .bss needs to be the last thing mapped to :data, otherwise lots of */
-    /* unnecessary zeros will be written to the binary. */
-    /* If you need, for example, .init_array and .fini_array, those should be placed */
-    /* above this. */
+    /* Last in :data so the file is not padded with BSS zeros (memsz > filesz). */
     .bss : {
         *(.bss .bss.*)
         *(COMMON)
@@ -73,10 +72,7 @@ SECTIONS
 
     data_end_addr = .;
 
-    /* Discard .note.* and .eh_frame* since they may cause issues on some hosts. */
-    /* Also discard the program interpreter section since we do not need one. This is */
-    /* more or less equivalent to the --no-dynamic-linker linker flag, except that it */
-    /* works with ld.gold. */
+    /* Freestanding: no unwind tables, ELF notes, or PT_INTERP dynamic linker. */
     /DISCARD/ : {
         *(.eh_frame*)
         *(.note .note.*)
