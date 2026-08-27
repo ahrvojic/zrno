@@ -18,6 +18,8 @@ pub const vec_gpf = 13;
 pub const vec_page_fault = 14;
 pub const vec_pit = 32;
 pub const vec_keyboard = 33;
+// Software only: must not overlap IOAPIC GSIs (32 + pin) or APIC spurious.
+pub const vec_yield = 0x90;
 pub const vec_apic_spurious = 255;
 
 // IDT IST index (1-7). TSS.ist[index - 1] is the stack pointer.
@@ -50,13 +52,16 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
             fatalException(ctx, "Unhandled page fault");
         },
         vec_pit => {
-            sched.schedule(ctx);
+            sched.tick(ctx);
             cpu.current().eoi();
         },
         vec_keyboard => {
             ps2.handleInterrupt();
             sched.schedule(ctx);
             cpu.current().eoi();
+        },
+        vec_yield => {
+            sched.schedule(ctx);
         },
         vec_apic_spurious => {
             logger.info("APIC spurious interrupt", .{});
@@ -123,12 +128,16 @@ pub fn makeHandler(comptime vector: u8) InterruptHandler {
                 else => false,
             };
 
+            // `push imm8` sign-extends, so vectors >= 128 become 0xff..xx.
+            // Force a 32-bit immediate (bit 31 clear) to zero-extend into the u64 slot.
+            const vector64: u64 = vector;
+
             if (comptime has_error_code) {
                 asm volatile (
                     \\pushq %[vector]
                     \\jmp interruptStub
                     :
-                    : [vector] "i" (vector),
+                    : [vector] "i" (vector64),
                 );
             } else {
                 asm volatile (
@@ -136,7 +145,7 @@ pub fn makeHandler(comptime vector: u8) InterruptHandler {
                     \\pushq %[vector]
                     \\jmp interruptStub
                     :
-                    : [vector] "i" (vector),
+                    : [vector] "i" (vector64),
                 );
             }
         }

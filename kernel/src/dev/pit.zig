@@ -6,7 +6,8 @@ const ivt = @import("../sys/ivt.zig");
 const port = @import("../sys/port.zig");
 
 const pit_freq_hz = 1193182;
-const timer_freq_hz = 1000;
+// 1 kHz: one interrupt per millisecond. `sched.sleep` counts these ticks.
+pub const timer_freq_hz = 1000;
 
 pub fn init() !void {
     try setFrequency(timer_freq_hz);

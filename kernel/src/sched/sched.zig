@@ -24,6 +24,9 @@ var tid_next: u64 = 0;
 var lock: Lock.SpinLock = .{};
 var initialized = false;
 
+// PIT ticks. 1 kHz so 1 tick = 1 ms (`pit.timer_freq_hz`).
+var ticks: u64 = 0;
+
 fn expectInit() void {
     if (!initialized) @panic("sched used before init");
 }
@@ -126,24 +129,16 @@ pub fn schedule(ctx: *cpu.Context) void {
     expectInit();
     lock.lock();
     defer lock.unlock();
+    switchLocked(ctx);
+}
 
-    const this_cpu = cpu.current();
-    var start: ?*std.DoublyLinkedList.Node = null;
-
-    if (this_cpu.thread) |curr_thread| {
-        curr_thread.ctx = ctx.*;
-        if (curr_thread.status == .running) {
-            curr_thread.status = .ready;
-        }
-        start = curr_thread.sched_node.next orelse threads.first;
-    } else {
-        start = threads.first;
-    }
-
-    const thread = nextReadyThread(start) orelse idle_thread;
-    thread.status = .running;
-    this_cpu.thread = thread;
-    ctx.* = thread.ctx;
+pub fn tick(ctx: *cpu.Context) void {
+    expectInit();
+    lock.lock();
+    defer lock.unlock();
+    ticks +%= 1;
+    wakeSleepers();
+    switchLocked(ctx);
 }
 
 pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
@@ -180,12 +175,25 @@ pub fn exitThread() noreturn {
     this_cpu.thread = null;
     lock.unlock();
     yield();
+    unreachable;
 }
 
 pub fn yield() void {
     expectInit();
-    // Timer interrupt to reschedule
-    ivt.interrupt(ivt.vec_pit);
+    ivt.interrupt(ivt.vec_yield);
+}
+
+// Park the current thread for `ms` milliseconds. PIT is 1 kHz, so 1 ms = 1 tick.
+pub fn sleep(ms: u64) void {
+    expectInit();
+    if (ms == 0) return;
+    const thread = cpu.current().thread orelse @panic("sleep with no thread");
+
+    lock.lock();
+    thread.status = .sleeping;
+    thread.wake_tick = ticks +| ms;
+    lock.unlock();
+    yield();
 }
 
 // Drop `held`, park as `.waiting` on `chan`, reacquire `held` on resume.
@@ -216,6 +224,37 @@ pub fn wakeup(chan: *const anyopaque) void {
         const thread: *proc.Thread = @fieldParentPtr("sched_node", n);
         if (thread.status == .waiting and thread.wait_chan == chan) {
             thread.wait_chan = null;
+            thread.status = .ready;
+        }
+        node = n.next;
+    }
+}
+
+fn switchLocked(ctx: *cpu.Context) void {
+    const this_cpu = cpu.current();
+    var start: ?*std.DoublyLinkedList.Node = null;
+
+    if (this_cpu.thread) |curr_thread| {
+        curr_thread.ctx = ctx.*;
+        if (curr_thread.status == .running) {
+            curr_thread.status = .ready;
+        }
+        start = curr_thread.sched_node.next orelse threads.first;
+    } else {
+        start = threads.first;
+    }
+
+    const thread = nextReadyThread(start) orelse idle_thread;
+    thread.status = .running;
+    this_cpu.thread = thread;
+    ctx.* = thread.ctx;
+}
+
+fn wakeSleepers() void {
+    var node = threads.first;
+    while (node) |n| {
+        const thread: *proc.Thread = @fieldParentPtr("sched_node", n);
+        if (thread.status == .sleeping and ticks >= thread.wake_tick) {
             thread.status = .ready;
         }
         node = n.next;
