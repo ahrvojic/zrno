@@ -1,11 +1,22 @@
 const std = @import("std");
 
 const Lock = @import("../lib/lock.zig");
+const sched = @import("../sched/sched.zig");
 const video = @import("video.zig");
 
 var row: u64 = 0;
 var col: u64 = 0;
 var lock: Lock.SpinLock = .{};
+
+// Wrapping indices fill the ring iff maxInt(InIndex)+1 == in_capacity.
+const in_capacity = 256;
+const InIndex = std.math.IntFittingRange(0, in_capacity - 1);
+comptime {
+    std.debug.assert(@as(usize, std.math.maxInt(InIndex)) + 1 == in_capacity);
+}
+var in_buf: [in_capacity]u8 = undefined;
+var in_head: InIndex = 0;
+var in_tail: InIndex = 0;
 
 pub fn print(comptime fmt: []const u8, args: anytype) void {
     var print_buffer: [1024]u8 = undefined;
@@ -30,6 +41,59 @@ pub fn putChar(ch: u8) void {
     lock.lock();
     defer lock.unlock();
     putCharUnlocked(ch);
+}
+
+// IRQ-safe: enqueue only. Echo is `putChar` from thread context.
+pub fn enqueue(ch: u8) void {
+    if (!isInputChar(ch)) return;
+    lock.lock();
+    defer lock.unlock();
+    const next = in_tail +% 1;
+    if (next == in_head) return;
+    in_buf[in_tail] = ch;
+    in_tail = next;
+    sched.wakeup(&in_buf);
+}
+
+pub fn getChar() u8 {
+    lock.lock();
+    defer lock.unlock();
+    while (in_head == in_tail) {
+        sched.wait(&in_buf, &lock);
+    }
+    const ch = in_buf[in_head];
+    in_head +%= 1;
+    return ch;
+}
+
+pub fn readLine(out: []u8) []u8 {
+    var n: usize = 0;
+    while (true) {
+        const ch = getChar();
+        switch (ch) {
+            '\n' => {
+                putChar('\n');
+                return out[0..n];
+            },
+            '\x08' => {
+                if (n > 0) {
+                    n -= 1;
+                    putChar('\x08');
+                }
+            },
+            else => {
+                if (n < out.len) {
+                    out[n] = ch;
+                    n += 1;
+                    putChar(ch);
+                }
+            },
+        }
+    }
+}
+
+fn isInputChar(ch: u8) bool {
+    return ch == '\n' or ch == '\x08' or (ch >= 0x20 and ch <= 0x7e);
 }
 
 fn write(string: []const u8) void {

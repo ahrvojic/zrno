@@ -87,6 +87,32 @@ pub fn findProcess(pid: u64) ?*proc.Process {
     return null;
 }
 
+pub const ThreadInfo = struct {
+    tid: u64,
+    pid: u64,
+    status: proc.ThreadStatus,
+};
+
+pub fn copyThreads(out: []ThreadInfo) usize {
+    expectInit();
+    lock.lock();
+    defer lock.unlock();
+
+    var n: usize = 0;
+    var node = threads.first;
+    while (node) |nd| : (node = nd.next) {
+        if (n == out.len) break;
+        const thread: *proc.Thread = @fieldParentPtr("sched_node", nd);
+        out[n] = .{
+            .tid = thread.tid,
+            .pid = thread.parent.pid,
+            .status = thread.status,
+        };
+        n += 1;
+    }
+    return n;
+}
+
 pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool) !*proc.Thread {
     const thread = try parent.heap.create(proc.Thread);
     errdefer parent.heap.destroy(thread);

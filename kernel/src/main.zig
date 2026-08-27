@@ -15,6 +15,7 @@ const pit = @import("dev/pit.zig");
 const pmm = @import("mm/pmm.zig");
 const ps2 = @import("dev/ps2.zig");
 const sched = @import("sched/sched.zig");
+const shell = @import("shell.zig");
 const tty = @import("dev/tty.zig");
 const video = @import("dev/video.zig");
 const vmm = @import("mm/vmm.zig");
@@ -99,7 +100,7 @@ pub fn main() !void {
     logger.info("Init PS/2 keyboard", .{});
     try ps2.init();
 
-    _ = try sched.spawnKernelThread(@intFromPtr(&keyboardThread), 0);
+    _ = try sched.spawnKernelThread(@intFromPtr(&shell.thread), 0);
 
     // IRQs still off; next pmm.alloc is after yield leaves the boot stack.
     logger.info("Reclaim bootloader memory", .{});
@@ -109,15 +110,4 @@ pub fn main() !void {
 
     tty.print("Zrno kernel {s}\n", .{build_options.version});
     tty.print("READY.\n", .{});
-}
-
-fn keyboardThread(_: u64) callconv(.c) noreturn {
-    while (true) {
-        const event = ps2.getKey();
-        if (event.pressed) {
-            if (ps2.toAscii(event.key, ps2.isPressed(.shift))) |ch| {
-                tty.putChar(ch);
-            }
-        }
-    }
 }

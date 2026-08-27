@@ -9,6 +9,12 @@ const ivt = @import("../sys/ivt.zig");
 const Lock = @import("../lib/lock.zig");
 const port = @import("../sys/port.zig");
 const sched = @import("../sched/sched.zig");
+const tty = @import("tty.zig");
+
+const Decode = struct {
+    unknown: ?u8 = null,
+    ascii: ?u8 = null,
+};
 
 const ps2_data_port = 0x60;
 
@@ -156,13 +162,15 @@ pub fn handleInterrupt() void {
     code_buffer.append(code) catch {};
 
     const buffer = code_buffer.slice();
-    const unknown: ?u8 = switch (buffer[0]) {
-        0xe0 => if (buffer.len >= 2) putKey(buffer[1], true) else null,
+    const result: Decode = switch (buffer[0]) {
+        0xe0 => if (buffer.len >= 2) putKey(buffer[1], true) else .{},
         else => |c| putKey(c, false),
     };
     lock.unlock();
 
-    if (unknown) |c| logger.err("Unknown scan code: {d}", .{c});
+    // Drop the PS/2 lock before taking tty (sched → tty → … → ps2).
+    if (result.ascii) |ch| tty.enqueue(ch);
+    if (result.unknown) |c| logger.err("Unknown scan code: {d}", .{c});
 }
 
 pub fn isPressed(modifier: KeyModifier) bool {
@@ -239,11 +247,11 @@ pub fn toAscii(key: Key, shift: bool) ?u8 {
     };
 }
 
-fn putKey(code: u8, extended: bool) ?u8 {
+fn putKey(code: u8, extended: bool) Decode {
     defer code_buffer.resize(0) catch unreachable;
 
     // Remove MSB make/break from scan code before translation
-    const key = toKey(code & 0x7f, extended) orelse return code;
+    const key = toKey(code & 0x7f, extended) orelse return .{ .unknown = code };
 
     const event: KeyEvent = .{
         .key = key,
@@ -253,11 +261,15 @@ fn putKey(code: u8, extended: bool) ?u8 {
     keyboard_state.notify(event);
 
     const next = kb_tail +% 1;
-    if (next == kb_head) return null;
-    kb_buffer[kb_tail] = event;
-    kb_tail = next;
-    sched.wakeup(&kb_buffer);
-    return null;
+    if (next != kb_head) {
+        kb_buffer[kb_tail] = event;
+        kb_tail = next;
+        sched.wakeup(&kb_buffer);
+    }
+
+    if (!event.pressed) return .{};
+    const shift = keyboard_state.modifiers.isSet(@intFromEnum(KeyModifier.shift));
+    return .{ .ascii = toAscii(event.key, shift) };
 }
 
 fn toKey(code: u8, extended: bool) ?Key {
