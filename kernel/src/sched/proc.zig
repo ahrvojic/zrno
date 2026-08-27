@@ -32,6 +32,7 @@ pub const Thread = struct {
     status: ThreadStatus,
     parent: *Process,
     ctx: cpu.Context = std.mem.zeroes(cpu.Context),
+    wait_chan: ?*const anyopaque = null,
     proc_node: std.DoublyLinkedList.Node,
     sched_node: std.DoublyLinkedList.Node,
     on_runqueue: bool,

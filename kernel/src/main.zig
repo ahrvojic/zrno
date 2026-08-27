@@ -113,14 +113,11 @@ pub fn main() !void {
 
 fn keyboardThread(_: u64) callconv(.c) noreturn {
     while (true) {
-        if (ps2.getKey()) |event| {
-            if (event.pressed) {
-                if (ps2.toAscii(event.key, ps2.isPressed(.shift))) |ch| {
-                    tty.putChar(ch);
-                }
+        const event = ps2.getKey();
+        if (event.pressed) {
+            if (ps2.toAscii(event.key, ps2.isPressed(.shift))) |ch| {
+                tty.putChar(ch);
             }
-        } else {
-            cpu.idle();
         }
     }
 }

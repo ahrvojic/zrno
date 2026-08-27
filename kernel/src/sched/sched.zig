@@ -188,6 +188,40 @@ pub fn yield() void {
     ivt.interrupt(ivt.vec_pit);
 }
 
+// Drop `held`, park as `.waiting` on `chan`, reacquire `held` on resume.
+// Recheck the wait condition after return; wakeup is a broadcast.
+pub fn wait(chan: *const anyopaque, held: *Lock.SpinLock) void {
+    expectInit();
+    if (held == &lock) @panic("wait with sched lock");
+    const thread = cpu.current().thread orelse @panic("wait with no thread");
+
+    // Take sched while `held` is already held (see lock.zig). IRQs stay
+    // off across the handoff so wakeup cannot miss this waiter.
+    lock.lock();
+    held.unlock();
+    thread.wait_chan = chan;
+    thread.status = .waiting;
+    lock.unlock();
+    yield();
+    held.lock();
+}
+
+pub fn wakeup(chan: *const anyopaque) void {
+    expectInit();
+    lock.lock();
+    defer lock.unlock();
+
+    var node = threads.first;
+    while (node) |n| {
+        const thread: *proc.Thread = @fieldParentPtr("sched_node", n);
+        if (thread.status == .waiting and thread.wait_chan == chan) {
+            thread.wait_chan = null;
+            thread.status = .ready;
+        }
+        node = n.next;
+    }
+}
+
 fn kernelThreadReturned() callconv(.c) noreturn {
     @panic("kernel thread returned");
 }
@@ -225,6 +259,7 @@ fn dequeueThread(thread: *proc.Thread) void {
 
 fn stopThread(thread: *proc.Thread) void {
     thread.status = .stopped;
+    thread.wait_chan = null;
     dequeueThread(thread);
 }
 

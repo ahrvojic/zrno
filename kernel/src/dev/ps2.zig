@@ -8,6 +8,7 @@ const cpu = @import("../sys/cpu.zig");
 const ivt = @import("../sys/ivt.zig");
 const Lock = @import("../lib/lock.zig");
 const port = @import("../sys/port.zig");
+const sched = @import("../sched/sched.zig");
 
 const ps2_data_port = 0x60;
 
@@ -170,10 +171,12 @@ pub fn isPressed(modifier: KeyModifier) bool {
     return keyboard_state.modifiers.isSet(@intFromEnum(modifier));
 }
 
-pub fn getKey() ?KeyEvent {
+pub fn getKey() KeyEvent {
     lock.lock();
     defer lock.unlock();
-    if (kb_head == kb_tail) return null;
+    while (kb_head == kb_tail) {
+        sched.wait(&kb_buffer, &lock);
+    }
     const event = kb_buffer[kb_head];
     kb_head +%= 1;
     return event;
@@ -253,6 +256,7 @@ fn putKey(code: u8, extended: bool) ?u8 {
     if (next == kb_head) return null;
     kb_buffer[kb_tail] = event;
     kb_tail = next;
+    sched.wakeup(&kb_buffer);
     return null;
 }
 

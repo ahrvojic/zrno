@@ -55,6 +55,7 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
         },
         vec_keyboard => {
             ps2.handleInterrupt();
+            sched.schedule(ctx);
             cpu.current().eoi();
         },
         vec_apic_spurious => {

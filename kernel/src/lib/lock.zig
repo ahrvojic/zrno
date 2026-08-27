@@ -10,6 +10,10 @@
 //! sched → tty or debug → vmm → heap → pmm → apic or ps2.
 //! tty and debug are the same rank (do not nest them); same for apic and ps2.
 //!
+//! `sched.wait` / `sched.wakeup` are the exception: they take sched while a
+//! lower-rank lock (`held`) is already held. Never take a lower-rank lock
+//! while already holding sched.
+//!
 //! `#PF` takes vmm then pmm, and the kernel heap is demand-paged. Touching a
 //! not-yet-mapped heap page — including the first store to a new allocation —
 //! while holding vmm or pmm deadlocks this CPU. Allocate from the heap before
