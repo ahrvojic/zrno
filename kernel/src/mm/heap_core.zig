@@ -12,66 +12,70 @@ pub const FreeNode = struct {
     next: ?*FreeNode,
 };
 
-pub const PageAllocator = struct {
-    ctx: *anyopaque,
-    alloc: *const fn (ctx: *anyopaque, pages: usize) ?[*]u8,
-    free: *const fn (ctx: *anyopaque, ptr: [*]u8, pages: usize) void,
-};
-
 /// Power-of-two size-class heap. Classes up to a page are carved from
 /// page-sized slabs; larger requests are a contiguous run of pages.
-/// The page source must return already-mapped memory.
-pub const Heap = struct {
-    pages: PageAllocator,
-    classes: [slab_class_count]?*FreeNode = @splat(null),
+///
+/// `Pages` must provide:
+///   alloc(self: Pages, n: usize) ?[*]u8
+///   free(self: Pages, ptr: [*]u8, n: usize) void
+/// and must return already-mapped memory. Store a pointer when the page
+/// source has identity (tests, per-process accounting); a zero-size
+/// struct when it is global (kernel PMM).
+pub fn Heap(comptime Pages: type) type {
+    return struct {
+        const Self = @This();
 
-    pub fn init(pages: PageAllocator) Heap {
-        return .{ .pages = pages };
-    }
+        pages: Pages,
+        classes: [slab_class_count]?*FreeNode = @splat(null),
 
-    pub fn alloc(self: *Heap, len: usize, alignment: std.mem.Alignment) ?[*]u8 {
-        const class = classSize(len, alignment) orelse return null;
-        if (class <= page_size) {
-            const i = classIndex(class);
-            if (self.classes[i]) |node| {
-                self.classes[i] = node.next;
-                return @ptrCast(node);
+        pub fn init(pages: Pages) Self {
+            return .{ .pages = pages };
+        }
+
+        pub fn alloc(self: *Self, len: usize, alignment: std.mem.Alignment) ?[*]u8 {
+            const class = classSize(len, alignment) orelse return null;
+            if (class <= page_size) {
+                const i = classIndex(class);
+                if (self.classes[i]) |node| {
+                    self.classes[i] = node.next;
+                    return @ptrCast(node);
+                }
+                return self.refill(class);
             }
-            return self.refill(class);
-        }
-        return self.pages.alloc(self.pages.ctx, class / page_size);
-    }
-
-    pub fn free(self: *Heap, buf: []u8, alignment: std.mem.Alignment) void {
-        const class = classSize(buf.len, alignment) orelse @panic("heap free of invalid size");
-        const addr = @intFromPtr(buf.ptr);
-        if (!std.mem.isAligned(addr, class)) {
-            @panic("heap free of misaligned pointer");
+            return self.pages.alloc(class / page_size);
         }
 
-        if (class <= page_size) {
-            const node: *FreeNode = @ptrCast(@alignCast(buf.ptr));
+        pub fn free(self: *Self, buf: []u8, alignment: std.mem.Alignment) void {
+            const class = classSize(buf.len, alignment) orelse @panic("heap free of invalid size");
+            const addr = @intFromPtr(buf.ptr);
+            if (!std.mem.isAligned(addr, class)) {
+                @panic("heap free of misaligned pointer");
+            }
+
+            if (class <= page_size) {
+                const node: *FreeNode = @ptrCast(@alignCast(buf.ptr));
+                const i = classIndex(class);
+                node.next = self.classes[i];
+                self.classes[i] = node;
+                return;
+            }
+
+            self.pages.free(buf.ptr, class / page_size);
+        }
+
+        fn refill(self: *Self, class: usize) ?[*]u8 {
+            const slab = self.pages.alloc(1) orelse return null;
             const i = classIndex(class);
-            node.next = self.classes[i];
-            self.classes[i] = node;
-            return;
+            var off: usize = class;
+            while (off < page_size) : (off += class) {
+                const node: *FreeNode = @ptrFromInt(@intFromPtr(slab) + off);
+                node.next = self.classes[i];
+                self.classes[i] = node;
+            }
+            return slab;
         }
-
-        self.pages.free(self.pages.ctx, buf.ptr, class / page_size);
-    }
-
-    fn refill(self: *Heap, class: usize) ?[*]u8 {
-        const slab = self.pages.alloc(self.pages.ctx, 1) orelse return null;
-        const i = classIndex(class);
-        var off: usize = class;
-        while (off < page_size) : (off += class) {
-            const node: *FreeNode = @ptrFromInt(@intFromPtr(slab) + off);
-            node.next = self.classes[i];
-            self.classes[i] = node;
-        }
-        return slab;
-    }
-};
+    };
+}
 
 /// Round `len`/`alignment` up to a power-of-two size class, or null if it
 /// exceeds `max_size`.
@@ -82,6 +86,9 @@ pub fn classSize(len: usize, alignment: std.mem.Alignment) ?usize {
     return class;
 }
 
+/// Map a slab size class (power of two in [min_size, page_size]) to `classes[]`.
+/// `@ctz(class)` is `log2(class)` for a power of two; subtracting `min_log2`
+/// shifts 16 → 0, 32 → 1, …, 4096 → `slab_class_count - 1`.
 pub fn classIndex(class: usize) usize {
     return @ctz(class) - min_log2;
 }
@@ -92,8 +99,7 @@ const TestPages = struct {
     allocs: usize = 0,
     frees: usize = 0,
 
-    fn alloc(ctx: *anyopaque, pages: usize) ?[*]u8 {
-        const self: *TestPages = @ptrCast(@alignCast(ctx));
+    fn alloc(self: *TestPages, pages: usize) ?[*]u8 {
         const n = pages * page_size;
         if (self.used + n > self.buf.len) return null;
         const p = self.buf[self.used..].ptr;
@@ -102,21 +108,14 @@ const TestPages = struct {
         return p;
     }
 
-    fn free(ctx: *anyopaque, ptr: [*]u8, pages: usize) void {
+    fn free(self: *TestPages, ptr: [*]u8, pages: usize) void {
         _ = ptr;
-        const self: *TestPages = @ptrCast(@alignCast(ctx));
         self.used -= pages * page_size;
         self.frees += 1;
     }
-
-    fn source(self: *TestPages) PageAllocator {
-        return .{
-            .ctx = @ptrCast(self),
-            .alloc = alloc,
-            .free = free,
-        };
-    }
 };
+
+const TestHeap = Heap(*TestPages);
 
 test "classSize rounds to power of two" {
     try std.testing.expectEqual(@as(usize, 16), classSize(1, .@"1").?);
@@ -138,7 +137,7 @@ test "classIndex matches slab size class" {
 test "free reuses the same size class without a new slab" {
     var backing: [page_size]u8 align(page_size) = undefined;
     var pages: TestPages = .{ .buf = &backing };
-    var h = Heap.init(pages.source());
+    var h = TestHeap.init(&pages);
 
     const p1 = h.alloc(17, .@"1") orelse return error.TestUnexpectedResult;
     const addr1 = @intFromPtr(p1);
@@ -153,7 +152,7 @@ test "free reuses the same size class without a new slab" {
 test "distinct size classes do not share freelists" {
     var backing: [page_size * 2]u8 align(page_size) = undefined;
     var pages: TestPages = .{ .buf = &backing };
-    var h = Heap.init(pages.source());
+    var h = TestHeap.init(&pages);
 
     const small = h.alloc(16, .@"1") orelse return error.TestUnexpectedResult;
     const large = h.alloc(64, .@"1") orelse return error.TestUnexpectedResult;
@@ -169,7 +168,7 @@ test "distinct size classes do not share freelists" {
 test "free of never-touched object" {
     var backing: [page_size]u8 align(page_size) = undefined;
     var pages: TestPages = .{ .buf = &backing };
-    var h = Heap.init(pages.source());
+    var h = TestHeap.init(&pages);
 
     const Dummy = struct { x: u64, y: u64, z: u64 };
     const p = h.alloc(@sizeOf(Dummy), .fromByteUnits(@alignOf(Dummy))) orelse return error.TestUnexpectedResult;
@@ -181,7 +180,7 @@ test "free of never-touched object" {
 test "slab exhausts after objects-per-page plus one without a second page" {
     var backing: [page_size]u8 align(page_size) = undefined;
     var pages: TestPages = .{ .buf = &backing };
-    var h = Heap.init(pages.source());
+    var h = TestHeap.init(&pages);
 
     const class: usize = 32;
     const per_page = page_size / class;
@@ -194,9 +193,9 @@ test "slab exhausts after objects-per-page plus one without a second page" {
 }
 
 test "large allocation is a page run and free returns it" {
-    var backing: [page_size * 4]u8 align(page_size) = undefined;
+    var backing: [page_size * 4]u8 align(page_size * 2) = undefined;
     var pages: TestPages = .{ .buf = &backing };
-    var h = Heap.init(pages.source());
+    var h = TestHeap.init(&pages);
 
     const p = h.alloc(page_size + 1, .@"1") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), pages.allocs);

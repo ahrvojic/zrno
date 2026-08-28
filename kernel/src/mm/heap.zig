@@ -11,22 +11,27 @@ comptime {
     std.debug.assert(pmm.page_size == core.page_size);
 }
 
+const KernelPages = struct {
+    pub fn alloc(_: @This(), pages: usize) ?[*]u8 {
+        const phys = pmm.alloc(@intCast(pages)) orelse return null;
+        return virt.toHH([*]u8, phys);
+    }
+
+    pub fn free(_: @This(), ptr: [*]u8, pages: usize) void {
+        pmm.free(virt.fromHH(@intFromPtr(ptr)), @intCast(pages));
+    }
+};
+
 pub var kernel_heap: HeapAllocator = .{};
 
-var page_ctx: u8 = 0;
-
 pub const HeapAllocator = struct {
-    inner: core.Heap = undefined,
+    inner: core.Heap(KernelPages) = undefined,
     lock: Lock.SpinLock = .{},
     initialized: bool = false,
 
     pub fn init(self: *@This()) void {
         self.expectUninit();
-        self.inner = .init(.{
-            .ctx = @ptrCast(&page_ctx),
-            .alloc = allocKernelPages,
-            .free = freeKernelPages,
-        });
+        self.inner = .init(.{});
         self.initialized = true;
     }
 
@@ -71,15 +76,6 @@ pub const HeapAllocator = struct {
         if (self.initialized) @panic("heap already initialized");
     }
 };
-
-fn allocKernelPages(_: *anyopaque, pages: usize) ?[*]u8 {
-    const phys = pmm.alloc(@intCast(pages)) orelse return null;
-    return virt.toHH([*]u8, phys);
-}
-
-fn freeKernelPages(_: *anyopaque, ptr: [*]u8, pages: usize) void {
-    pmm.free(virt.fromHH(@intFromPtr(ptr)), @intCast(pages));
-}
 
 pub fn init() void {
     logger.info("Init kernel heap", .{});
