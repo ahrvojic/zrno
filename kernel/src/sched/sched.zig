@@ -10,6 +10,7 @@ const proc = @import("proc.zig");
 const virt = @import("../lib/virt.zig");
 
 const stack_size: u64 = pmm.page_size;
+const stack_pages: u64 = stack_size / pmm.page_size;
 const kernel_pid: u64 = 0;
 
 // Live processes; not a runqueue. `schedule` walks `threads`.
@@ -23,6 +24,10 @@ var tid_next: u64 = 0;
 
 var lock: Lock.SpinLock = .{};
 var initialized = false;
+
+// Kernel stack of a thread that died while running on it. Freed on the
+// next `switchLocked` that is no longer executing on that stack.
+var doomed_stack_phys: ?u64 = null;
 
 // PIT ticks. 1 kHz so 1 tick = 1 ms (`pit.timer_freq_hz`).
 var ticks: u64 = 0;
@@ -117,13 +122,15 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
     const thread = try parent.heap.create(proc.Thread);
     errdefer parent.heap.destroy(thread);
 
-    const stack_phys = pmm.alloc(stack_size / pmm.page_size) orelse return error.OutOfMemory;
+    const stack_phys = pmm.alloc(stack_pages) orelse return error.OutOfMemory;
+    errdefer pmm.free(stack_phys, stack_pages);
     const stack_virt = virt.toHH(u64, stack_phys);
 
     thread.* = .{
         .tid = 0,
         .status = .ready,
         .parent = parent,
+        .stack_phys = stack_phys,
         .proc_node = .{},
         .sched_node = .{},
         .on_runqueue = false,
@@ -183,12 +190,7 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
         stopThread(thread);
     }
 
-    const this_cpu = cpu.current();
-    if (this_cpu.thread) |curr| {
-        if (curr.parent == process) {
-            this_cpu.thread = null;
-        }
-    }
+    process.heap.destroy(process);
 }
 
 pub fn exitThread() noreturn {
@@ -257,6 +259,7 @@ pub fn wakeup(chan: *const anyopaque) void {
 }
 
 fn switchLocked(ctx: *cpu.Context) void {
+    reapDoomedStack();
     const this_cpu = cpu.current();
     var start: ?*std.DoublyLinkedList.Node = null;
 
@@ -326,6 +329,44 @@ fn stopThread(thread: *proc.Thread) void {
     thread.status = .stopped;
     thread.wait_chan = null;
     dequeueThread(thread);
+    thread.parent.threads.remove(&thread.proc_node);
+
+    const stack_phys = thread.stack_phys;
+    const parent_heap = thread.parent.heap;
+    const this_cpu = cpu.current();
+    const is_current = this_cpu.thread == thread;
+    if (is_current) this_cpu.thread = null;
+
+    parent_heap.destroy(thread);
+
+    if (is_current) {
+        deferStackFree(stack_phys);
+    } else {
+        pmm.free(stack_phys, stack_pages);
+    }
+}
+
+fn deferStackFree(stack_phys: u64) void {
+    if (doomed_stack_phys) |old| {
+        pmm.free(old, stack_pages);
+    }
+    doomed_stack_phys = stack_phys;
+}
+
+fn reapDoomedStack() void {
+    const phys = doomed_stack_phys orelse return;
+    if (rspInStack(phys)) return;
+    doomed_stack_phys = null;
+    pmm.free(phys, stack_pages);
+}
+
+fn rspInStack(stack_phys: u64) bool {
+    const rsp = asm volatile (
+        \\movq %%rsp, %[rsp]
+        : [rsp] "=r" (-> u64),
+    );
+    const base = virt.toHH(u64, stack_phys);
+    return rsp >= base and rsp < base + stack_size;
 }
 
 fn nextReadyThread(start: ?*std.DoublyLinkedList.Node) ?*proc.Thread {

@@ -34,6 +34,7 @@ pub const Thread = struct {
     ctx: cpu.Context = std.mem.zeroes(cpu.Context),
     wait_chan: ?*const anyopaque = null,
     wake_tick: u64 = 0,
+    stack_phys: u64,
     proc_node: std.DoublyLinkedList.Node,
     sched_node: std.DoublyLinkedList.Node,
     on_runqueue: bool,

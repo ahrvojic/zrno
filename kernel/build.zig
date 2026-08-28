@@ -53,4 +53,15 @@ pub fn build(b: *std.Build) void {
     kernel.lto = .none;
 
     b.installArtifact(kernel);
+
+    const heap_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/mm/heap_core.zig"),
+            .target = b.graph.host,
+            .optimize = optimize,
+        }),
+    });
+    const run_heap_tests = b.addRunArtifact(heap_tests);
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_heap_tests.step);
 }
