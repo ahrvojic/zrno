@@ -15,3 +15,8 @@ pub fn toHH(comptime T: type, address: u64) T {
         else => @as(T, res),
     };
 }
+
+pub fn fromHH(address: u64) u64 {
+    if (!initialized) @panic("virt used before init");
+    return address - hhdm_offset;
+}

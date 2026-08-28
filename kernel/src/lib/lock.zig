@@ -14,11 +14,9 @@
 //! lower-rank lock (`held`) is already held. Never take a lower-rank lock
 //! while already holding sched.
 //!
-//! `#PF` takes vmm then pmm, and the kernel heap is demand-paged. Touching a
-//! not-yet-mapped heap page — including the first store to a new allocation —
-//! while holding vmm or pmm deadlocks this CPU. Allocate from the heap before
-//! taking sched/vmm/pmm, not while holding them. `heap.free` prefaults the
-//! block before taking the heap lock for the same reason.
+//! `#PF` takes vmm then pmm (user demand paging). The kernel heap is HHDM
+//! slabs and does not fault; it may take pmm. Touching a not-yet-mapped
+//! user page while holding vmm or pmm deadlocks this CPU.
 
 const std = @import("std");
 

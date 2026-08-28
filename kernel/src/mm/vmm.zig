@@ -3,7 +3,6 @@ const logger = std.log.scoped(.vmm);
 const std = @import("std");
 
 const boot = @import("../sys/boot.zig");
-const heap = @import("heap.zig");
 const Lock = @import("../lib/lock.zig");
 const pmm = @import("pmm.zig");
 const virt = @import("../lib/virt.zig");
@@ -221,23 +220,12 @@ pub const VMM = struct {
         }
 
         const user_space_end = 0x0000_8000_0000_0000;
-        const heap_start = heap.kernel_heap_base_addr;
-        const heap_end = heap.kernel_heap_base_addr + heap.kernel_heap_size;
 
         // Demand-page user space only for user-mode faults, and never page 0.
         if (reason.user and fault_addr >= pmm.page_size and fault_addr < user_space_end) {
             const base_addr = std.mem.alignBackward(u64, fault_addr, pmm.page_size);
             const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
             const flags = Flags{ .present = true, .writable = true, .user = true };
-            try self.pt.mapPage(base_addr, phys_addr, @bitCast(flags));
-            return true;
-        }
-
-        // Kernel heap pages are committed on first access.
-        if (!reason.user and fault_addr >= heap_start and fault_addr < heap_end) {
-            const base_addr = std.mem.alignBackward(u64, fault_addr, pmm.page_size);
-            const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
-            const flags = Flags{ .present = true, .writable = true, .noexec = true };
             try self.pt.mapPage(base_addr, phys_addr, @bitCast(flags));
             return true;
         }
