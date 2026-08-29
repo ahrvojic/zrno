@@ -17,7 +17,6 @@ const ps2 = @import("dev/ps2.zig");
 const sched = @import("sched/sched.zig");
 const shell = @import("shell.zig");
 const tty = @import("dev/tty.zig");
-const user = @import("user.zig");
 const video = @import("dev/video.zig");
 const vmm = @import("mm/vmm.zig");
 
@@ -101,15 +100,15 @@ pub fn main() !void {
     logger.info("Init PS/2 keyboard", .{});
     try ps2.init();
 
-    _ = try sched.spawnKernelThread(@intFromPtr(&shell.thread), 0);
-    try user.spawnHello();
-
-    // IRQs still off; next pmm.alloc is after yield leaves the boot stack.
-    logger.info("Reclaim bootloader memory", .{});
-    pmm.reclaimBootloader();
-
     logger.info("Done.", .{});
 
     tty.print("Zrno kernel {s}\n", .{build_options.version});
     tty.print("READY.\n", .{});
+
+    _ = try sched.spawnKernelThread(@intFromPtr(&shell.thread), 0);
+
+    // Reclaim frees the Limine boot stack we are still on; do not pmm.alloc
+    // again until yield has left it.
+    logger.info("Reclaim bootloader memory", .{});
+    pmm.reclaimBootloader();
 }

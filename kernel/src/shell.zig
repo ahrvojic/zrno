@@ -2,6 +2,7 @@ const std = @import("std");
 
 const sched = @import("sched/sched.zig");
 const tty = @import("dev/tty.zig");
+const user = @import("user.zig");
 
 pub fn thread(_: u64) callconv(.c) noreturn {
     tty.print("type 'help'\n", .{});
@@ -25,6 +26,8 @@ fn run(line: []const u8) void {
         sleep(it.next());
     } else if (std.mem.eql(u8, cmd, "echo")) {
         tty.print("{s}\n", .{it.rest()});
+    } else if (std.mem.eql(u8, cmd, "hello")) {
+        hello();
     } else {
         tty.print("unknown command: {s}\n", .{cmd});
     }
@@ -36,6 +39,15 @@ fn help() void {
     tty.print("yield         yield the CPU\n", .{});
     tty.print("sleep [ms]    sleep (default 1000)\n", .{});
     tty.print("echo [text]   print arguments\n", .{});
+    tty.print("hello         userspace hello\n", .{});
+}
+
+fn hello() void {
+    const pid = user.spawnHello() catch |err| {
+        tty.print("hello: {s}\n", .{@errorName(err)});
+        return;
+    };
+    sched.waitProcess(pid);
 }
 
 fn ps() void {

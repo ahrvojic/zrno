@@ -11,7 +11,7 @@ const text_base: u64 = 0x400000;
 const msg_off: u64 = 0x40;
 const msg = "Hello from userspace!\n";
 
-pub fn spawnHello() !void {
+pub fn spawnHello() !u64 {
     const process = try sched.startProcess(heap.kernel_heap.allocator(), true);
     errdefer sched.exitProcess(process, 1);
 
@@ -30,6 +30,7 @@ pub fn spawnHello() !void {
     };
 
     _ = try sched.startUserThread(process, text_base, 0, true);
+    return process.pid;
 }
 
 fn loadImage(page: []u8) void {

@@ -112,6 +112,15 @@ pub fn findProcess(pid: u64) ?*proc.Process {
     return null;
 }
 
+// Park until `pid` is gone. Pid 0 is the kernel process and never exits.
+pub fn waitProcess(pid: u64) void {
+    expectInit();
+    if (pid == kernel_pid) @panic("waitProcess kernel process");
+    while (findProcess(pid) != null) {
+        yield();
+    }
+}
+
 pub const ThreadInfo = struct {
     tid: u64,
     pid: u64,
