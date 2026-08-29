@@ -37,6 +37,10 @@ var initialized = false;
 // next `switchLocked` that is no longer executing on that stack.
 var doomed_stack_phys: ?u64 = null;
 
+// Unique PML4 of a process that died while CR3 still pointed at it.
+// Freed on the next `switchLocked` that is no longer using that root.
+var doomed_pt_phys: ?u64 = null;
+
 // PIT ticks. 1 kHz so 1 tick = 1 ms (`pit.timer_freq_hz`).
 var ticks: u64 = 0;
 
@@ -249,6 +253,7 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
         stopThread(thread);
     }
 
+    dropAddressSpace(&process.vmm);
     process.heap.destroy(process);
 }
 
@@ -319,6 +324,7 @@ pub fn wakeup(chan: *const anyopaque) void {
 
 fn switchLocked(ctx: *cpu.Context) void {
     reapDoomedStack();
+    reapDoomedPt();
     const this_cpu = cpu.current();
     var start: ?*std.DoublyLinkedList.Node = null;
 
@@ -336,6 +342,7 @@ fn switchLocked(ctx: *cpu.Context) void {
     thread.status = .running;
     this_cpu.thread = thread;
     thread.parent.vmm.switchTo();
+    reapDoomedPt();
     // CPL 3 → 0 loads RSP from here. Absolute top; ctx.rsp is the thread's SP.
     this_cpu.tss.rsp[0] = virt.toHH(u64, thread.stack_phys) + stack_size;
     ctx.* = thread.ctx;
@@ -408,6 +415,14 @@ fn stopThread(thread: *proc.Thread) void {
     }
 }
 
+fn dropAddressSpace(space: *vmm.VMM) void {
+    if (space.isCurrent()) {
+        deferPtFree(space.pt_addr_phys);
+    } else {
+        space.destroy();
+    }
+}
+
 fn deferStackFree(stack_phys: u64) void {
     if (doomed_stack_phys) |old| {
         pmm.free(old, stack_pages);
@@ -420,6 +435,20 @@ fn reapDoomedStack() void {
     if (rspInStack(phys)) return;
     doomed_stack_phys = null;
     pmm.free(phys, stack_pages);
+}
+
+fn deferPtFree(pt_phys: u64) void {
+    if (doomed_pt_phys) |old| {
+        vmm.destroyPhys(old);
+    }
+    doomed_pt_phys = pt_phys;
+}
+
+fn reapDoomedPt() void {
+    const phys = doomed_pt_phys orelse return;
+    if (vmm.readCR3() == phys) return;
+    doomed_pt_phys = null;
+    vmm.destroyPhys(phys);
 }
 
 fn rspInStack(stack_phys: u64) bool {

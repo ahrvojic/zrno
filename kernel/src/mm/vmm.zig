@@ -134,6 +134,30 @@ const PageTable = extern struct {
 
         return null;
     }
+
+    // `level` 3 = PDPT, 2 = PD, 1 = PT. Present leaves are mapped pages.
+    fn freeLevel(self: *@This(), level: u8) void {
+        for (&self.entries) |*entry| {
+            const entry_flags: Flags = @bitCast(entry.getFlags());
+            if (!entry_flags.present) continue;
+            const phys = entry.getAddress();
+            if (level > 1) {
+                virt.toHH(*PageTable, phys).freeLevel(level - 1);
+            }
+            pmm.free(phys, 1);
+        }
+    }
+
+    fn freeLowerHalf(self: *@This()) void {
+        for (0..kernel_pml4_start) |i| {
+            const entry = &self.entries[i];
+            const entry_flags: Flags = @bitCast(entry.getFlags());
+            if (!entry_flags.present) continue;
+            const phys = entry.getAddress();
+            virt.toHH(*PageTable, phys).freeLevel(3);
+            pmm.free(phys, 1);
+        }
+    }
 };
 
 pub const VMM = struct {
@@ -219,6 +243,11 @@ pub const VMM = struct {
         switchPageTable(self.pt_addr_phys);
     }
 
+    pub fn isCurrent(self: *const @This()) bool {
+        self.expectInit();
+        return readCR3() == self.pt_addr_phys;
+    }
+
     // Empty lower half; higher-half L3 pointers are shared with kernel_vmm.
     pub fn cloneKernel() !VMM {
         kernel_vmm.expectInit();
@@ -236,6 +265,18 @@ pub const VMM = struct {
             .pt = pt,
             .initialized = true,
         };
+    }
+
+    // Free only the lower half and the unique PML4; never the cloned kernel L3s.
+    pub fn destroy(self: *@This()) void {
+        self.expectInit();
+        if (self == &kernel_vmm) @panic("destroy kernel vmm");
+        if (self.isCurrent()) @panic("destroy current address space");
+        self.lock.lock();
+        const phys = self.pt_addr_phys;
+        self.initialized = false;
+        destroyPhys(phys);
+        self.lock.unlock();
     }
 
     pub fn handlePageFault(self: *@This(), fault_addr: u64, fault_reason: u64) !bool {
@@ -268,6 +309,14 @@ pub const VMM = struct {
         if (self.initialized) @panic("vmm already initialized");
     }
 };
+
+// Walk a cloned PML4. Caller must not be executing on this root.
+pub fn destroyPhys(pt_addr_phys: u64) void {
+    if (pt_addr_phys == kernel_vmm.pt_addr_phys) @panic("destroy kernel vmm");
+    if (readCR3() == pt_addr_phys) @panic("destroy current address space");
+    virt.toHH(*PageTable, pt_addr_phys).freeLowerHalf();
+    pmm.free(pt_addr_phys, 1);
+}
 
 pub fn init() !void {
     kernel_vmm.expectUninit();
@@ -335,7 +384,7 @@ inline fn flushTLB(virt_addr: u64) void {
         : .{ .memory = true });
 }
 
-inline fn readCR3() u64 {
+pub fn readCR3() u64 {
     return asm volatile (
         \\movq %%cr3, %[cr3]
         : [cr3] "=r" (-> u64),
