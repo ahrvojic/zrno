@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const cpu = @import("../sys/cpu.zig");
+const vmm = @import("../mm/vmm.zig");
 
 pub const ProcessStatus = enum {
     ready,
@@ -13,6 +14,7 @@ pub const Process = struct {
     parent: u64,
     status: ProcessStatus,
     heap: std.mem.Allocator,
+    vmm: vmm.VMM,
     threads: std.DoublyLinkedList,
     node: std.DoublyLinkedList.Node,
     on_proctable: bool,

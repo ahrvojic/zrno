@@ -206,7 +206,27 @@ pub const VMM = struct {
 
     pub fn switchTo(self: *@This()) void {
         self.expectInit();
+        if (readCR3() == self.pt_addr_phys) return;
         switchPageTable(self.pt_addr_phys);
+    }
+
+    // Empty lower half; higher-half L3 pointers are shared with kernel_vmm.
+    pub fn cloneKernel() !VMM {
+        kernel_vmm.expectInit();
+        const pt_addr_phys = pmm.alloc(1) orelse return error.OutOfMemory;
+        const pt = virt.toHH(*PageTable, pt_addr_phys);
+
+        kernel_vmm.lock.lock();
+        defer kernel_vmm.lock.unlock();
+        for (kernel_pml4_start..page_table_entries) |i| {
+            pt.entries[i] = kernel_vmm.pt.entries[i];
+        }
+
+        return .{
+            .pt_addr_phys = pt_addr_phys,
+            .pt = pt,
+            .initialized = true,
+        };
     }
 
     pub fn handlePageFault(self: *@This(), fault_addr: u64, fault_reason: u64) !bool {
@@ -306,6 +326,13 @@ inline fn flushTLB(virt_addr: u64) void {
         :
         : [virt_addr] "r" (virt_addr),
         : .{ .memory = true });
+}
+
+inline fn readCR3() u64 {
+    return asm volatile (
+        \\movq %%cr3, %[cr3]
+        : [cr3] "=r" (-> u64),
+    );
 }
 
 inline fn switchPageTable(phys_addr: u64) void {

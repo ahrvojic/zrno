@@ -8,6 +8,7 @@ const Lock = @import("../lib/lock.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
 const virt = @import("../lib/virt.zig");
+const vmm = @import("../mm/vmm.zig");
 
 const stack_size: u64 = pmm.page_size;
 const stack_pages: u64 = stack_size / pmm.page_size;
@@ -64,6 +65,7 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .parent = 0,
         .status = .ready,
         .heap = allocator,
+        .vmm = try vmm.VMM.cloneKernel(),
         .threads = .{},
         .node = .{},
         .on_proctable = false,
@@ -276,6 +278,7 @@ fn switchLocked(ctx: *cpu.Context) void {
     const thread = nextReadyThread(start) orelse idle_thread;
     thread.status = .running;
     this_cpu.thread = thread;
+    thread.parent.vmm.switchTo();
     ctx.* = thread.ctx;
 }
 

@@ -42,7 +42,8 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
                 : [result] "=r" (-> u64),
             );
 
-            const handled = vmm.kernel_vmm.handlePageFault(fault_addr, ctx.error_code) catch |err| blk: {
+            const space = if (cpu.current().thread) |thread| &thread.parent.vmm else &vmm.kernel_vmm;
+            const handled = space.handlePageFault(fault_addr, ctx.error_code) catch |err| blk: {
                 logger.err("Error handling page fault: {s}", .{@errorName(err)});
                 break :blk false;
             };
