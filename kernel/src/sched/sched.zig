@@ -13,6 +13,13 @@ const vmm = @import("../mm/vmm.zig");
 const stack_size: u64 = pmm.page_size;
 const stack_pages: u64 = stack_size / pmm.page_size;
 const kernel_pid: u64 = 0;
+// Exclusive top of the one-page user stack. Canonical low half (2 GiB).
+const user_stack_top: u64 = 0x0000_0000_8000_0000;
+
+comptime {
+    std.debug.assert(user_stack_top % pmm.page_size == 0);
+    std.debug.assert(user_stack_top < 0x0000_8000_0000_0000);
+}
 
 // Live processes; not a runqueue. `schedule` walks `threads`.
 var processes: std.DoublyLinkedList = .{};
@@ -54,6 +61,13 @@ pub fn spawnKernelThread(pc: u64, arg: u64) !*proc.Thread {
     expectInit();
     const parent = findProcess(kernel_pid) orelse @panic("kernel process missing");
     return startKernelThread(parent, pc, arg, true);
+}
+
+pub fn spawnUserThread(pc: u64, arg: u64) !*proc.Thread {
+    expectInit();
+    const process = try startProcess(heap.kernel_heap.allocator(), true);
+    errdefer exitProcess(process, 1);
+    return startUserThread(process, pc, arg, true);
 }
 
 pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process {
@@ -150,6 +164,49 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
     thread.ctx.rip = pc;
     thread.ctx.rdi = arg;
     thread.ctx.rsp = stack_virt + stack_size - @sizeOf(u64);
+
+    lock.lock();
+    defer lock.unlock();
+    thread.tid = tid_next;
+    tid_next += 1;
+    parent.threads.append(&thread.proc_node);
+    if (enqueue) enqueueThread(thread);
+    return thread;
+}
+
+pub fn startUserThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool) !*proc.Thread {
+    const thread = try parent.heap.create(proc.Thread);
+    errdefer parent.heap.destroy(thread);
+
+    const stack_phys = pmm.alloc(stack_pages) orelse return error.OutOfMemory;
+    errdefer pmm.free(stack_phys, stack_pages);
+
+    const user_stack_phys = pmm.alloc(stack_pages) orelse return error.OutOfMemory;
+    errdefer pmm.free(user_stack_phys, stack_pages);
+    const user_stack_base = user_stack_top - stack_size;
+    try parent.vmm.map(
+        user_stack_base,
+        user_stack_phys,
+        stack_size,
+        @bitCast(vmm.Flags{ .present = true, .writable = true, .user = true, .noexec = true }),
+    );
+
+    thread.* = .{
+        .tid = 0,
+        .status = .ready,
+        .parent = parent,
+        .stack_phys = stack_phys,
+        .proc_node = .{},
+        .sched_node = .{},
+        .on_runqueue = false,
+    };
+
+    thread.ctx.rflags = 0x202;
+    thread.ctx.cs = gdt.user_code_sel | 3;
+    thread.ctx.ss = gdt.user_data_sel | 3;
+    thread.ctx.rip = pc;
+    thread.ctx.rdi = arg;
+    thread.ctx.rsp = user_stack_top;
 
     lock.lock();
     defer lock.unlock();
@@ -279,6 +336,8 @@ fn switchLocked(ctx: *cpu.Context) void {
     thread.status = .running;
     this_cpu.thread = thread;
     thread.parent.vmm.switchTo();
+    // CPL 3 → 0 loads RSP from here. Absolute top; ctx.rsp is the thread's SP.
+    this_cpu.tss.rsp[0] = virt.toHH(u64, thread.stack_phys) + stack_size;
     ctx.* = thread.ctx;
 }
 
