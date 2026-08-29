@@ -53,6 +53,15 @@ const page_table_index_mask = page_table_entries - 1;
 // Canonical higher half: PML4 indices [256, 512).
 const kernel_pml4_start = page_table_entries / 2;
 
+pub const user_space_end: u64 = 0x0000_8000_0000_0000;
+
+pub fn userRange(addr: u64, len: u64) bool {
+    if (len == 0) return true;
+    if (addr < pmm.page_size) return false;
+    if (addr >= user_space_end) return false;
+    return len <= user_space_end - addr;
+}
+
 const PageTable = extern struct {
     entries: [page_table_entries]PageTableEntry,
 
@@ -238,8 +247,6 @@ pub const VMM = struct {
         if (reason.protection) {
             return false;
         }
-
-        const user_space_end = 0x0000_8000_0000_0000;
 
         // Demand-page user space only for user-mode faults, and never page 0.
         if (reason.user and fault_addr >= pmm.page_size and fault_addr < user_space_end) {

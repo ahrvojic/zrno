@@ -18,6 +18,28 @@ var in_buf: [in_capacity]u8 = undefined;
 var in_head: InIndex = 0;
 var in_tail: InIndex = 0;
 
+pub fn writeBytes(string: []const u8) void {
+    lock.lock();
+    defer lock.unlock();
+    write(string);
+}
+
+pub fn read(out: []u8) usize {
+    if (out.len == 0) return 0;
+    lock.lock();
+    defer lock.unlock();
+    while (in_head == in_tail) {
+        sched.wait(&in_buf, &lock);
+    }
+    var n: usize = 0;
+    while (n < out.len and in_head != in_tail) {
+        out[n] = in_buf[in_head];
+        in_head +%= 1;
+        n += 1;
+    }
+    return n;
+}
+
 pub fn print(comptime fmt: []const u8, args: anytype) void {
     var print_buffer: [1024]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&print_buffer);

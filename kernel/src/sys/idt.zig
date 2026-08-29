@@ -8,6 +8,7 @@ const ivt = @import("ivt.zig");
 // Flags byte:
 // | P | DPL(2) | R | Type(4) |
 const interrupt_gate = 0b10001110;
+const interrupt_gate_user = 0b11101110;
 
 const IDTR = packed struct(u80) {
     limit: u16,
@@ -44,7 +45,8 @@ pub const IDT = struct {
         inline for (0..self.entries.len) |i| {
             const handler = ivt.makeHandler(i);
             const ist: u8 = if (i == ivt.vec_double_fault) ivt.ist_double_fault else 0;
-            self.entries[i] = IDTEntry.make(@intFromPtr(handler), ist, interrupt_gate);
+            const flags: u8 = if (i == ivt.vec_syscall) interrupt_gate_user else interrupt_gate;
+            self.entries[i] = IDTEntry.make(@intFromPtr(handler), ist, flags);
         }
 
         const idtr = IDTR{

@@ -7,6 +7,7 @@ const debug = @import("../lib/debug.zig");
 const panic = @import("../lib/panic.zig").panic;
 const ps2 = @import("../dev/ps2.zig");
 const sched = @import("../sched/sched.zig");
+const syscall = @import("syscall.zig");
 const vmm = @import("../mm/vmm.zig");
 
 pub const vec_div_error = 0;
@@ -19,6 +20,7 @@ pub const vec_page_fault = 14;
 pub const vec_pit = 32;
 pub const vec_keyboard = 33;
 // Software only: must not overlap IOAPIC GSIs (32 + pin) or APIC spurious.
+pub const vec_syscall = 0x80;
 pub const vec_yield = 0x90;
 pub const vec_apic_spurious = 255;
 
@@ -60,6 +62,9 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
             ps2.handleInterrupt();
             sched.schedule(ctx);
             cpu.current().eoi();
+        },
+        vec_syscall => {
+            syscall.handle(ctx);
         },
         vec_yield => {
             sched.schedule(ctx);
