@@ -5,7 +5,7 @@ override IMAGE_NAME := zrno
 
 # Pin the bootloader release. Limine does not guarantee protocol or config
 # compatibility across versions; /releases/latest can break a working kernel.
-LIMINE_VERSION := 12.6.0
+LIMINE_VERSION := 12.6.1
 
 # Host toolchain for building the Limine install helper.
 HOST_CC := cc

@@ -6,8 +6,32 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 
 ## Requirements
 
+Host tools that need to be installed locally. Limine (and OVMF, for UEFI QEMU targets) are fetched by the makefile.
+
+To build the ISO and run it (`make run`):
+
+- [GNU make](https://www.gnu.org/software/make/)
 - [Zig](https://ziglang.org) 0.16.0
-- [QEMU](https://www.qemu.org)
+- [QEMU](https://www.qemu.org) (`qemu-system-x86_64`)
+- [xorriso](https://www.gnu.org/software/xorriso/)
+- A C compiler (`cc`), used to build Limine's `bios-install` helper
+- `curl` and `tar`, used to fetch Limine if it is not already present
+
+HDD images (`make all-hdd` / `make run-hdd`) also need:
+
+- `sgdisk` (package `gdisk` or `gptfdisk`)
+- [mtools](https://www.gnu.org/software/mtools/) (`mformat`, `mmd`, `mcopy`)
+
+## Kernel features
+
+- Single-CPU for now
+- GDT, IDT, exceptions, and local APIC
+- ACPI tables (FADT and MADT)
+- I/O APIC, PIT, PS/2 keyboard, and framebuffer TTY
+- Physical and virtual memory, plus a kernel heap
+- Processes, threads, and a scheduler
+- Userspace with a handful of syscalls
+- A tiny shell
 
 ## References
 
