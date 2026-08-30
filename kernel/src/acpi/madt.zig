@@ -55,6 +55,8 @@ const IOApicISO = extern struct {
 
 // MADT flags bit 0: dual 8259 PICs are present (PC-AT compatible).
 const pcat_compat_flag: u32 = 1 << 0;
+// Local APIC / x2APIC flags bit 0: processor is enabled and usable.
+const lapic_enabled_flag: u32 = 1 << 0;
 
 // Processor table cap: large enough that MADT parse survives a
 // typical desktop/VM, small enough to stay a static array.
@@ -70,6 +72,10 @@ pub const Lapic = struct {
     apic_id: u32,
     flags: u32,
     x2apic: bool,
+
+    pub fn enabled(self: @This()) bool {
+        return self.flags & lapic_enabled_flag != 0;
+    }
 };
 
 var lapics_value: BoundedArray(Lapic, max_lapics) = .{};
@@ -108,6 +114,23 @@ pub fn pcatCompat() bool {
 pub fn lapicAddress() u64 {
     expectInit();
     return lapic_address_value;
+}
+
+// Enabled processors only. Prefers an entry whose x2apic flag matches
+// the CPU mode (firmware often lists both type 0 and type 9).
+pub fn find(apic_id: u32, x2apic: bool) ?Lapic {
+    return findEnabled(lapics(), apic_id, x2apic);
+}
+
+fn findEnabled(entries: []const Lapic, apic_id: u32, x2apic: bool) ?Lapic {
+    var fallback: ?Lapic = null;
+    for (entries) |entry| {
+        if (!entry.enabled()) continue;
+        if (entry.apic_id != apic_id) continue;
+        if (entry.x2apic == x2apic) return entry;
+        if (fallback == null) fallback = entry;
+    }
+    return fallback;
 }
 
 pub fn init(sdt: *align(1) const acpi.SDT) !void {
@@ -209,4 +232,22 @@ fn expectInit() void {
 
 fn expectUninit() void {
     if (initialized) @panic("madt already initialized");
+}
+
+test "findEnabled skips disabled and prefers matching mode" {
+    const entries = [_]Lapic{
+        .{ .processor_id = 0, .apic_id = 1, .flags = 0, .x2apic = false },
+        .{ .processor_id = 1, .apic_id = 0, .flags = 1, .x2apic = false },
+        .{ .processor_id = 2, .apic_id = 0, .flags = 1, .x2apic = true },
+    };
+    const x2 = findEnabled(&entries, 0, true).?;
+    try std.testing.expectEqual(@as(u32, 2), x2.processor_id);
+    const xapic = findEnabled(&entries, 0, false).?;
+    try std.testing.expectEqual(@as(u32, 1), xapic.processor_id);
+    try std.testing.expect(findEnabled(&entries, 1, false) == null);
+    const only_x2 = [_]Lapic{
+        .{ .processor_id = 9, .apic_id = 5, .flags = 1, .x2apic = true },
+    };
+    const fallback = findEnabled(&only_x2, 5, false).?;
+    try std.testing.expectEqual(@as(u32, 9), fallback.processor_id);
 }

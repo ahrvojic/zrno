@@ -59,6 +59,8 @@ const IOApic = struct {
     }
 
     fn route(self: *const @This(), lapic_id: u32, vector: u8, gsi: u32, flags: u16) void {
+        // Physical destination is 8 bits; IDs >= 256 need interrupt remapping.
+        if (lapic_id > 0xff) @panic("I/O APIC physical dest > 255");
         const index = gsi - self.gsi_base;
         // Flags: level-triggered (bit 15), active-low (bit 13)
         // N.B. APIC will be unmasked

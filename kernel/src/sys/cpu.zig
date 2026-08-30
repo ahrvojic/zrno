@@ -13,13 +13,21 @@ const vmm = @import("../mm/vmm.zig");
 
 const msr_lapic = 0x1b;
 const rflags_if: u64 = 1 << 9;
+const apic_base_x2apic: u64 = 1 << 10;
 const apic_base_enable: u64 = 1 << 11;
 const apic_base_addr_mask: u64 = ~@as(u64, 0xfff);
 const tsc_feature: u32 = 1 << 4;
+// x2APIC MSR = 0x800 + (MMIO offset >> 4).
+const x2apic_msr_base: u32 = 0x800;
 
 const lapic_reg_id = 0x20;
 const lapic_reg_eoi = 0xb0;
 const lapic_reg_spurious = 0xf0;
+comptime {
+    std.debug.assert(x2apic_msr_base + (lapic_reg_id >> 4) == 0x802);
+    std.debug.assert(x2apic_msr_base + (lapic_reg_eoi >> 4) == 0x80b);
+    std.debug.assert(x2apic_msr_base + (lapic_reg_spurious >> 4) == 0x80f);
+}
 
 var bsp_value: CPU = .{};
 
@@ -74,7 +82,9 @@ pub const CPU = struct {
     tss: gdt.TSS = std.mem.zeroes(gdt.TSS),
     // Dedicated stack for #DF (IST). Lives in BSS so it is valid before PMM.
     df_stack: [df_stack_size]u8 align(16) = undefined,
-    lapic_base: u64 = undefined,
+    // HH-mapped MMIO; unused when x2apic is set.
+    lapic_base: u64 = 0,
+    x2apic: bool = false,
     thread: ?*proc.Thread = null,
     ncli: u32 = 0,
     intena: bool = false,
@@ -102,18 +112,45 @@ pub const CPU = struct {
         self.expectInit();
         self.expectLapicUninit();
 
-        const phys = madt.lapicAddress();
-        if (phys == 0 or phys & ~apic_base_addr_mask != 0) return error.InvalidLapicAddress;
-
-        // MADT (header or type 5 override) is the firmware LAPIC address.
         const msr = readMSR(msr_lapic);
-        writeMSR(msr_lapic, (msr & ~apic_base_addr_mask) | phys | apic_base_enable);
+        self.x2apic = msr & apic_base_x2apic != 0;
 
-        try vmm.kernel_vmm.mapMmio(phys, pmm.page_size);
-        self.lapic_base = virt.toHH(u64, phys);
+        if (self.x2apic) {
+            // MMIO is dead. Address field is ignored. Do not clear bit 10.
+            if (msr & apic_base_enable == 0) {
+                writeMSR(msr_lapic, msr | apic_base_enable);
+            }
+        } else {
+            const phys = madt.lapicAddress();
+            if (phys == 0 or phys & ~apic_base_addr_mask != 0) return error.InvalidLapicAddress;
+            writeMSR(msr_lapic, (msr & ~apic_base_addr_mask) | phys | apic_base_enable);
+            try vmm.kernel_vmm.mapMmio(phys, pmm.page_size);
+            self.lapic_base = virt.toHH(u64, phys);
+        }
+
         self.enableLapic();
+
+        const id = self.decodeLapicId(self.lapicRead(lapic_reg_id));
+        if (id > 0xff) {
+            logger.err("apic_id={d} not routable via I/O APIC", .{id});
+            return error.LapicIdNotRoutable;
+        }
+        const entry = madt.find(id, self.x2apic) orelse {
+            logger.err("bsp apic_id={d} not in madt", .{id});
+            return error.BspNotInMadt;
+        };
+
+        var skipped: usize = 0;
+        for (madt.lapics()) |lapic| {
+            if (!lapic.enabled()) skipped += 1;
+        }
+
         self.lapic_initialized = true;
-        logger.info("lapic 0x{x} id={d}", .{ phys, self.lapicId() });
+        if (self.x2apic) {
+            logger.info("lapic x2apic id={d} cpu={d} skipped={d}", .{ id, entry.processor_id, skipped });
+        } else {
+            logger.info("lapic 0x{x} id={d} cpu={d} skipped={d}", .{ madt.lapicAddress(), id, entry.processor_id, skipped });
+        }
     }
 
     pub fn eoi(self: *const @This()) void {
@@ -123,8 +160,12 @@ pub const CPU = struct {
 
     pub fn lapicId(self: *const @This()) u32 {
         self.expectLapicInit();
-        // Local APIC ID register: APIC ID is in bits 24-31.
-        return self.lapicRead(lapic_reg_id) >> 24;
+        return self.decodeLapicId(self.lapicRead(lapic_reg_id));
+    }
+
+    fn decodeLapicId(self: *const @This(), raw: u32) u32 {
+        // xAPIC ID is bits 24-31; x2APIC ID is the full 32-bit value.
+        return if (self.x2apic) raw else raw >> 24;
     }
 
     fn enableLapic(self: *const @This()) void {
@@ -135,12 +176,19 @@ pub const CPU = struct {
     }
 
     fn lapicRead(self: *const @This(), reg: u32) u32 {
+        if (self.x2apic) {
+            return @truncate(readMSR(x2apic_msr_base + (reg >> 4)));
+        }
         const addr = self.lapic_base + reg;
         const ptr: *align(4) volatile u32 = @ptrFromInt(addr);
         return ptr.*;
     }
 
     fn lapicWrite(self: *const @This(), reg: u32, value: u32) void {
+        if (self.x2apic) {
+            writeMSR(x2apic_msr_base + (reg >> 4), value);
+            return;
+        }
         const addr = self.lapic_base + reg;
         const ptr: *align(4) volatile u32 = @ptrFromInt(addr);
         ptr.* = value;
