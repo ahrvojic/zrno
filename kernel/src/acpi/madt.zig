@@ -82,7 +82,7 @@ var lapics_value: BoundedArray(Lapic, max_lapics) = .{};
 var lapic_nmis_value: BoundedArray(LapicNMI, max_lapic_nmis) = .{};
 var io_apics_value: BoundedArray(IOApic, max_io_apics) = .{};
 var io_apic_isos_value: BoundedArray(IOApicISO, max_io_apic_isos) = .{};
-var lapic_address_value: u64 = 0;
+var lapic_address_value: usize = 0;
 var pcat_compat_value: bool = false;
 var initialized = false;
 
@@ -111,7 +111,7 @@ pub fn pcatCompat() bool {
     return pcat_compat_value;
 }
 
-pub fn lapicAddress() u64 {
+pub fn lapicAddress() usize {
     expectInit();
     return lapic_address_value;
 }
@@ -145,7 +145,7 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
     const madt_entries = madt_data[@sizeOf(Fields)..];
     const header_size = @sizeOf(Header);
 
-    var offset: u64 = 0;
+    var offset: usize = 0;
     var have_lapic_override = false;
 
     while (madt_entries.len - offset >= header_size) {
@@ -195,7 +195,7 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
                 if (have_lapic_override) return error.InvalidMadt;
                 const override = std.mem.bytesToValue(Type5Override, data[0..@sizeOf(Type5Override)]);
                 logger.info("lapic address override 0x{x}", .{override.address});
-                lapic_address_value = override.address;
+                lapic_address_value = @intCast(override.address);
                 have_lapic_override = true;
             },
             9 => {

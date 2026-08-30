@@ -15,7 +15,7 @@ pub const nr_exit: u64 = 2;
 pub const nr_yield: u64 = 3;
 pub const nr_sleep: u64 = 4;
 
-const max_io: u64 = pmm.page_size;
+const max_io: usize = pmm.page_size;
 const io_chunk: usize = 256;
 
 const EBADF: i64 = 9;
@@ -41,8 +41,8 @@ fn dispatch(ctx: *cpu.Context) u64 {
 
 fn sys_read(ctx: *cpu.Context) u64 {
     const fd = ctx.rdi;
-    const addr = ctx.rsi;
-    const len = ctx.rdx;
+    const addr: usize = @intCast(ctx.rsi);
+    const len: usize = @intCast(ctx.rdx);
     if (fd != 0) return errval(EBADF);
     if (len == 0) return 0;
     if (len > max_io) return errval(EINVAL);
@@ -57,18 +57,18 @@ fn sys_read(ctx: *cpu.Context) u64 {
 
 fn sys_write(ctx: *cpu.Context) u64 {
     const fd = ctx.rdi;
-    const addr = ctx.rsi;
-    const len = ctx.rdx;
+    const addr: usize = @intCast(ctx.rsi);
+    const len: usize = @intCast(ctx.rdx);
     if (fd != 1 and fd != 2) return errval(EBADF);
     if (len == 0) return 0;
     if (len > max_io) return errval(EINVAL);
     if (!vmm.userRange(addr, len)) return errval(EFAULT);
 
     var tmp: [io_chunk]u8 = undefined;
-    var copied: u64 = 0;
+    var copied: usize = 0;
     const space = userSpace();
     while (copied < len) {
-        const n: usize = @intCast(@min(tmp.len, len - copied));
+        const n = @min(tmp.len, len - copied);
         space.copyFromUser(tmp[0..n], addr + copied) catch |err| {
             if (copied == 0) return copyErr(err);
             return copied;

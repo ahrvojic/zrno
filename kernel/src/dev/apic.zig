@@ -22,14 +22,15 @@ var lock: Lock.SpinLock = .{};
 var initialized = false;
 
 const IOApic = struct {
-    address: u64,
+    address: usize,
     gsi_base: u32,
     max_redir: u32,
 
     fn init(address: u32, gsi_base: u32) !@This() {
-        try vmm.kernel_vmm.mapMmio(address, pmm.page_size);
+        const phys: usize = address;
+        try vmm.kernel_vmm.mapMmio(phys, pmm.page_size);
         var self: @This() = .{
-            .address = virt.toHH(u64, address),
+            .address = virt.toHH(usize, phys),
             .gsi_base = gsi_base,
             .max_redir = 0,
         };

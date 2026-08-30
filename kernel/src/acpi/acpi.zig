@@ -56,19 +56,19 @@ const ACPI = struct {
         if (rsdp.revision >= 2) {
             logger.info("XSDT rev={d} oem={s}", .{ rsdp.revision, oem });
             const xsdp: *align(1) const XSDP = @ptrCast(rsdp);
-            self.rsdt = virt.toHH(*align(1) const SDT, xsdp.xsdt_addr);
+            self.rsdt = virt.toHH(*align(1) const SDT, @intCast(xsdp.xsdt_addr));
             self.use_xsdt = true;
         } else {
             logger.info("RSDT rev={d} oem={s}", .{ rsdp.revision, oem });
-            self.rsdt = virt.toHH(*align(1) const SDT, rsdp.rsdt_addr);
+            self.rsdt = virt.toHH(*align(1) const SDT, @intCast(rsdp.rsdt_addr));
         }
     }
 
-    pub fn findSDT(self: *const @This(), signature: *const [4]u8, index: u64) !*align(1) const SDT {
+    pub fn findSDT(self: *const @This(), signature: *const [4]u8, index: usize) !*align(1) const SDT {
         return if (self.use_xsdt) self.findSDTAt(u64, signature, index) else self.findSDTAt(u32, signature, index);
     }
 
-    fn findSDTAt(self: *const @This(), comptime T: type, signature: *const [4]u8, index: u64) !*align(1) const SDT {
+    fn findSDTAt(self: *const @This(), comptime T: type, signature: *const [4]u8, index: usize) !*align(1) const SDT {
         const data = self.rsdt.getData();
         const entry_size = @sizeOf(T);
         var offset: usize = 0;
@@ -77,7 +77,7 @@ const ACPI = struct {
         // XSDT entries sit at SDT+36 (4-aligned, not 8). Read them unaligned.
         while (offset + entry_size <= data.len) : (offset += entry_size) {
             const entry = std.mem.readInt(T, data[offset..][0..entry_size], .little);
-            const sdt = virt.toHH(*align(1) const SDT, entry);
+            const sdt = virt.toHH(*align(1) const SDT, @intCast(entry));
 
             if (!std.mem.eql(u8, &sdt.signature, signature)) {
                 continue;

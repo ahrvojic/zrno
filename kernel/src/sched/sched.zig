@@ -12,11 +12,11 @@ const proc = @import("proc.zig");
 const virt = @import("../lib/virt.zig");
 const vmm = @import("../mm/vmm.zig");
 
-const stack_size: u64 = pmm.page_size;
-const stack_pages: u64 = stack_size / pmm.page_size;
+const stack_size: usize = pmm.page_size;
+const stack_pages: usize = stack_size / pmm.page_size;
 const kernel_pid: u64 = 0;
 // Exclusive top of the one-page user stack. Canonical low half (2 GiB).
-const user_stack_top: u64 = 0x0000_0000_8000_0000;
+const user_stack_top: usize = 0x0000_0000_8000_0000;
 
 comptime {
     std.debug.assert(user_stack_top % pmm.page_size == 0);
@@ -37,11 +37,11 @@ var initialized = false;
 
 // Kernel stack of a thread that died while running on it. Freed on the
 // next `switchLocked` that is no longer executing on that stack.
-var doomed_stack_phys: ?u64 = null;
+var doomed_stack_phys: ?usize = null;
 
 // Unique PML4 of a process that died while CR3 still pointed at it.
 // Freed on the next `switchLocked` that is no longer using that root.
-var doomed_pt_phys: ?u64 = null;
+var doomed_pt_phys: ?usize = null;
 
 // PIT ticks. 1 kHz so 1 tick = 1 ms (`pit.timer_freq_hz`).
 var ticks: u64 = 0;
@@ -64,13 +64,13 @@ pub fn init() !void {
     logger.info("kernel pid={d} idle tid={d}", .{ kernel_process.pid, idle_thread.tid });
 }
 
-pub fn spawnKernelThread(pc: u64, arg: u64) !*proc.Thread {
+pub fn spawnKernelThread(pc: usize, arg: usize) !*proc.Thread {
     expectInit();
     const parent = findProcess(kernel_pid) orelse @panic("kernel process missing");
     return startKernelThread(parent, pc, arg, true);
 }
 
-pub fn spawnUserThread(pc: u64, arg: u64) !*proc.Thread {
+pub fn spawnUserThread(pc: usize, arg: usize) !*proc.Thread {
     expectInit();
     const process = try startProcess(heap.kernel_heap.allocator(), true);
     errdefer exitProcess(process, 1);
@@ -150,13 +150,13 @@ pub fn copyThreads(out: []ThreadInfo) usize {
     return n;
 }
 
-pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool) !*proc.Thread {
+pub fn startKernelThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bool) !*proc.Thread {
     const thread = try parent.heap.create(proc.Thread);
     errdefer parent.heap.destroy(thread);
 
     const stack_phys = pmm.alloc(stack_pages) orelse return error.OutOfMemory;
     errdefer pmm.free(stack_phys, stack_pages);
-    const stack_virt = virt.toHH(u64, stack_phys);
+    const stack_virt = virt.toHH(usize, stack_phys);
 
     thread.* = .{
         .tid = 0,
@@ -177,9 +177,9 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
     thread.ctx.rflags = 0x202;
     thread.ctx.cs = gdt.kernel_code_sel;
     thread.ctx.ss = gdt.kernel_data_sel;
-    thread.ctx.rip = pc;
-    thread.ctx.rdi = arg;
-    thread.ctx.rsp = stack_virt + stack_size - @sizeOf(u64);
+    thread.ctx.rip = @intCast(pc);
+    thread.ctx.rdi = @intCast(arg);
+    thread.ctx.rsp = @intCast(stack_virt + stack_size - @sizeOf(u64));
 
     lock.lock();
     defer lock.unlock();
@@ -190,7 +190,7 @@ pub fn startKernelThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool
     return thread;
 }
 
-pub fn startUserThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool) !*proc.Thread {
+pub fn startUserThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bool) !*proc.Thread {
     const thread = try parent.heap.create(proc.Thread);
     errdefer parent.heap.destroy(thread);
 
@@ -220,9 +220,9 @@ pub fn startUserThread(parent: *proc.Process, pc: u64, arg: u64, enqueue: bool) 
     thread.ctx.rflags = 0x202;
     thread.ctx.cs = gdt.user_code_sel | 3;
     thread.ctx.ss = gdt.user_data_sel | 3;
-    thread.ctx.rip = pc;
-    thread.ctx.rdi = arg;
-    thread.ctx.rsp = user_stack_top;
+    thread.ctx.rip = @intCast(pc);
+    thread.ctx.rdi = @intCast(arg);
+    thread.ctx.rsp = @intCast(user_stack_top);
 
     lock.lock();
     defer lock.unlock();
@@ -356,7 +356,7 @@ fn switchLocked(ctx: *cpu.Context) void {
     thread.parent.vmm.switchTo();
     reapDoomedPt();
     // CPL 3 → 0 loads RSP from here. Absolute top; ctx.rsp is the thread's SP.
-    this_cpu.tss.rsp[0] = virt.toHH(u64, thread.stack_phys) + stack_size;
+    this_cpu.tss.rsp[0] = @intCast(virt.toHH(usize, thread.stack_phys) + stack_size);
     ctx.* = thread.ctx;
 }
 
@@ -435,7 +435,7 @@ fn dropAddressSpace(space: *vmm.VMM) void {
     }
 }
 
-fn deferStackFree(stack_phys: u64) void {
+fn deferStackFree(stack_phys: usize) void {
     if (doomed_stack_phys) |old| {
         pmm.free(old, stack_pages);
     }
@@ -449,7 +449,7 @@ fn reapDoomedStack() void {
     pmm.free(phys, stack_pages);
 }
 
-fn deferPtFree(pt_phys: u64) void {
+fn deferPtFree(pt_phys: usize) void {
     if (doomed_pt_phys) |old| {
         vmm.destroyPhys(old);
     }
@@ -463,12 +463,12 @@ fn reapDoomedPt() void {
     vmm.destroyPhys(phys);
 }
 
-fn rspInStack(stack_phys: u64) bool {
+fn rspInStack(stack_phys: usize) bool {
     const rsp = asm volatile (
         \\movq %%rsp, %[rsp]
-        : [rsp] "=r" (-> u64),
+        : [rsp] "=r" (-> usize),
     );
-    const base = virt.toHH(u64, stack_phys);
+    const base = virt.toHH(usize, stack_phys);
     return rsp >= base and rsp < base + stack_size;
 }
 

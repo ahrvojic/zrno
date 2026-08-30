@@ -8,9 +8,9 @@ const panic = @import("../lib/panic.zig").panic;
 
 const Captured = struct {
     address: [*]u8,
-    width: u64,
-    height: u64,
-    pitch: u64,
+    width: usize,
+    height: usize,
+    pitch: usize,
     bpp: u16,
 };
 
@@ -20,12 +20,12 @@ var fb: Framebuffer = .{};
 
 const Framebuffer = struct {
     address: [*]u8 = undefined,
-    width: u64 = 0,
-    height: u64 = 0,
-    pitch: u64 = 0,
+    width: usize = 0,
+    height: usize = 0,
+    pitch: usize = 0,
     bpp: u16 = 0,
-    max_row: u64 = 25,
-    max_col: u64 = 80,
+    max_row: usize = 25,
+    max_col: usize = 80,
     initialized: bool = false,
 
     fn init(self: *@This(), src: Captured) void {
@@ -44,7 +44,7 @@ const Framebuffer = struct {
         return self.address[0 .. self.pitch * self.height];
     }
 
-    fn plotChar(self: *const @This(), ch: u8, row: u64, col: u64) void {
+    fn plotChar(self: *const @This(), ch: u8, row: usize, col: usize) void {
         self.expectInit();
         if (row >= self.max_row or col >= self.max_col) return;
 
@@ -79,11 +79,11 @@ const Framebuffer = struct {
         }
     }
 
-    fn toRowOffset(self: *const @This(), row: u64) u64 {
+    fn toRowOffset(self: *const @This(), row: usize) usize {
         return row * self.pitch * font.builtin.height;
     }
 
-    fn toColOffset(self: *const @This(), col: u64) u64 {
+    fn toColOffset(self: *const @This(), col: usize) usize {
         return col * self.bpp / 8 * font.builtin.width;
     }
 
@@ -100,7 +100,7 @@ pub fn isReady() bool {
     return fb.initialized;
 }
 
-pub fn plotChar(ch: u8, row: u64, col: u64) void {
+pub fn plotChar(ch: u8, row: usize, col: usize) void {
     fb.plotChar(ch, row, col);
 }
 
@@ -108,11 +108,11 @@ pub fn scroll() void {
     fb.scroll();
 }
 
-pub fn maxRow() u64 {
+pub fn maxRow() usize {
     return fb.max_row;
 }
 
-pub fn maxCol() u64 {
+pub fn maxCol() usize {
     return fb.max_col;
 }
 
@@ -123,9 +123,9 @@ pub fn capture() void {
     const src = fbs.framebuffers()[0];
     captured = .{
         .address = src.address,
-        .width = src.width,
-        .height = src.height,
-        .pitch = src.pitch,
+        .width = @intCast(src.width),
+        .height = @intCast(src.height),
+        .pitch = @intCast(src.pitch),
         .bpp = src.bpp,
     };
 }

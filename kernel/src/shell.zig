@@ -4,7 +4,7 @@ const sched = @import("sched/sched.zig");
 const tty = @import("dev/tty.zig");
 const user = @import("user.zig");
 
-pub fn thread(_: u64) callconv(.c) noreturn {
+pub fn thread(_: usize) callconv(.c) noreturn {
     tty.print("type 'help'\n", .{});
     var buf: [128]u8 = undefined;
     while (true) {

@@ -83,7 +83,7 @@ pub const CPU = struct {
     // Dedicated stack for #DF (IST). Lives in BSS so it is valid before PMM.
     df_stack: [df_stack_size]u8 align(16) = undefined,
     // HH-mapped MMIO; unused when x2apic is set.
-    lapic_base: u64 = 0,
+    lapic_base: usize = 0,
     x2apic: bool = false,
     thread: ?*proc.Thread = null,
     ncli: u32 = 0,
@@ -122,10 +122,11 @@ pub const CPU = struct {
             }
         } else {
             const phys = madt.lapicAddress();
-            if (phys == 0 or phys & ~apic_base_addr_mask != 0) return error.InvalidLapicAddress;
-            writeMSR(msr_lapic, (msr & ~apic_base_addr_mask) | phys | apic_base_enable);
+            const phys64: u64 = @intCast(phys);
+            if (phys == 0 or phys64 & ~apic_base_addr_mask != 0) return error.InvalidLapicAddress;
+            writeMSR(msr_lapic, (msr & ~apic_base_addr_mask) | phys64 | apic_base_enable);
             try vmm.kernel_vmm.mapMmio(phys, pmm.page_size);
-            self.lapic_base = virt.toHH(u64, phys);
+            self.lapic_base = virt.toHH(usize, phys);
         }
 
         self.enableLapic();

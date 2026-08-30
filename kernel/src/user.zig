@@ -7,8 +7,8 @@ const syscall = @import("sys/syscall.zig");
 const virt = @import("lib/virt.zig");
 const vmm = @import("mm/vmm.zig");
 
-const text_base: u64 = 0x400000;
-const heap_base: u64 = 0x500000;
+const text_base: usize = 0x400000;
+const heap_base: usize = 0x500000;
 const msg = "Hello from userspace!\n";
 
 pub fn spawnHello() !u64 {
@@ -60,10 +60,10 @@ fn movImm(page: []u8, o: usize, reg: Reg, value: u64) usize {
     return o + 7;
 }
 
-fn movAbs(page: []u8, o: usize, reg: Reg, value: u64) usize {
+fn movAbs(page: []u8, o: usize, reg: Reg, value: usize) usize {
     page[o] = 0x48;
     page[o + 1] = 0xb8 | @intFromEnum(reg);
-    std.mem.writeInt(u64, page[o + 2 ..][0..8], value, .little);
+    std.mem.writeInt(u64, page[o + 2 ..][0..8], @intCast(value), .little);
     return o + 10;
 }
 

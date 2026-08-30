@@ -11,12 +11,12 @@ comptime {
 
 const KernelPages = struct {
     pub fn alloc(_: @This(), pages: usize) ?[*]u8 {
-        const phys = pmm.alloc(@intCast(pages)) orelse return null;
+        const phys = pmm.alloc(pages) orelse return null;
         return virt.toHH([*]u8, phys);
     }
 
     pub fn free(_: @This(), ptr: [*]u8, pages: usize) void {
-        pmm.free(virt.fromHH(@intFromPtr(ptr)), @intCast(pages));
+        pmm.free(virt.fromHH(@intFromPtr(ptr)), pages);
     }
 };
 

@@ -8,23 +8,23 @@ const boot = @import("../sys/boot.zig");
 const Lock = @import("../lib/lock.zig");
 const virt = @import("../lib/virt.zig");
 
-pub const page_size: u64 = 4096;
+pub const page_size: usize = 4096;
 
 const ReclaimRange = struct {
-    base: u64,
-    length: u64,
+    base: usize,
+    length: usize,
 };
 
 // Typical Limine maps have a handful of bootloader_reclaimable entries.
 const max_reclaim_ranges = 64;
 
-var usable_pages: u64 = 0;
-var used_pages: u64 = 0;
-var reserved_pages: u64 = 0;
-var bad_pages: u64 = 0;
+var usable_pages: usize = 0;
+var used_pages: usize = 0;
+var reserved_pages: usize = 0;
+var bad_pages: usize = 0;
 
-var highest_page_index: u64 = 0;
-var last_used_index: u64 = 0;
+var highest_page_index: usize = 0;
+var last_used_index: usize = 0;
 
 var bitmap: Bitmap = undefined;
 var lock: Lock.SpinLock = .{};
@@ -47,15 +47,15 @@ const Bitmap = struct {
         return .{ .data = data };
     }
 
-    pub fn testBit(self: *const @This(), bit: u64) bool {
+    pub fn testBit(self: *const @This(), bit: usize) bool {
         return self.data[bit / 8] & (@as(u8, 1) << @as(u3, @intCast(bit % 8))) != 0;
     }
 
-    pub fn setBit(self: *@This(), bit: u64) void {
+    pub fn setBit(self: *@This(), bit: usize) void {
         self.data[bit / 8] |= (@as(u8, 1) << @as(u3, @intCast(bit % 8)));
     }
 
-    pub fn clearBit(self: *@This(), bit: u64) void {
+    pub fn clearBit(self: *@This(), bit: usize) void {
         self.data[bit / 8] &= ~(@as(u8, 1) << @as(u3, @intCast(bit % 8)));
     }
 };
@@ -64,34 +64,36 @@ pub fn init() !void {
     expectUninit();
 
     // Bitmap must cover usable RAM and bootloader_reclaimable (freed later).
-    var highest_addr: u64 = 0;
+    var highest_addr: usize = 0;
 
     for (boot.info().memory_map.entries()) |entry| {
-        logger.debug("{s}: base=0x{X:0>16} length=0x{X:0>16}", .{ @tagName(entry.kind), entry.base, entry.length });
+        const base: usize = @intCast(entry.base);
+        const length: usize = @intCast(entry.length);
+        logger.debug("{s}: base=0x{X:0>16} length=0x{X:0>16}", .{ @tagName(entry.kind), base, length });
 
         switch (entry.kind) {
             .usable => {
-                usable_pages += try std.math.divCeil(u64, entry.length, page_size);
-                highest_addr = @max(highest_addr, entry.base + entry.length);
+                usable_pages += try std.math.divCeil(usize, length, page_size);
+                highest_addr = @max(highest_addr, base + length);
             },
             .bootloader_reclaimable => {
-                reserved_pages += try std.math.divCeil(u64, entry.length, page_size);
-                highest_addr = @max(highest_addr, entry.base + entry.length);
-                try reclaim_ranges.append(.{ .base = entry.base, .length = entry.length });
+                reserved_pages += try std.math.divCeil(usize, length, page_size);
+                highest_addr = @max(highest_addr, base + length);
+                try reclaim_ranges.append(.{ .base = base, .length = length });
             },
             .reserved, .acpi_reclaimable, .acpi_nvs, .executable_and_modules, .framebuffer, .reserved_mapped => {
-                reserved_pages += try std.math.divCeil(u64, entry.length, page_size);
+                reserved_pages += try std.math.divCeil(usize, length, page_size);
             },
             .bad_memory => {
-                bad_pages += try std.math.divCeil(u64, entry.length, page_size);
+                bad_pages += try std.math.divCeil(usize, length, page_size);
             },
         }
     }
 
     // Determine size of bitmap aligned to page size
     highest_page_index = highest_addr / page_size;
-    const bitmap_bytes = try std.math.divCeil(u64, highest_page_index, 8);
-    const bitmap_size = std.mem.alignForward(u64, bitmap_bytes, page_size);
+    const bitmap_bytes = try std.math.divCeil(usize, highest_page_index, 8);
+    const bitmap_size = std.mem.alignForward(usize, bitmap_bytes, page_size);
 
     if (bitmap_size == 0) {
         return error.BitmapTooBig;
@@ -101,7 +103,8 @@ pub fn init() !void {
     var bitmap_region: ?*limine.MemoryMapEntry = null;
 
     for (boot.info().memory_map.entries()) |entry| {
-        if (entry.kind == .usable and entry.length >= bitmap_size) {
+        const length: usize = @intCast(entry.length);
+        if (entry.kind == .usable and length >= bitmap_size) {
             bitmap_region = entry;
             break;
         }
@@ -111,22 +114,26 @@ pub fn init() !void {
         return error.BitmapTooBig;
     }
 
+    const bitmap_base: usize = @intCast(bitmap_region.?.base);
+
     // Create the bitmap and initialize all bits to 1 (non-free)
-    bitmap = Bitmap.init(virt.toHH([*]u8, bitmap_region.?.base)[0..bitmap_size]);
+    bitmap = Bitmap.init(virt.toHH([*]u8, bitmap_base)[0..bitmap_size]);
     @memset(bitmap.data, 0xff);
 
     // Clear free bits according to the memory map
     for (boot.info().memory_map.entries()) |entry| {
         if (entry.kind == .usable) {
-            var i: u64 = 0;
-            while (i < entry.length) : (i += page_size) {
-                bitmap.clearBit((entry.base + i) / page_size);
+            const base: usize = @intCast(entry.base);
+            const length: usize = @intCast(entry.length);
+            var i: usize = 0;
+            while (i < length) : (i += page_size) {
+                bitmap.clearBit((base + i) / page_size);
             }
         }
     }
 
     // The bitmap itself sits in a usable region and was just marked free.
-    const bitmap_page = bitmap_region.?.base / page_size;
+    const bitmap_page = bitmap_base / page_size;
     const bitmap_pages = bitmap_size / page_size;
     for (0..bitmap_pages) |i| {
         bitmap.setBit(bitmap_page + i);
@@ -142,7 +149,7 @@ pub fn init() !void {
     });
 }
 
-fn pagesToMiB(pages: u64) u64 {
+fn pagesToMiB(pages: usize) usize {
     return (pages * page_size) / (1024 * 1024);
 }
 
@@ -157,11 +164,11 @@ pub fn reclaimBootloader() void {
     lock.lock();
     defer lock.unlock();
 
-    var pages: u64 = 0;
-    var first_idx: ?u64 = null;
+    var pages: usize = 0;
+    var first_idx: ?usize = null;
 
     for (reclaim_ranges.constSlice()) |range| {
-        var offset: u64 = 0;
+        var offset: usize = 0;
         while (offset < range.length) : (offset += page_size) {
             const idx = (range.base + offset) / page_size;
             if (idx >= highest_page_index) continue;
@@ -185,7 +192,7 @@ pub fn reclaimBootloader() void {
     });
 }
 
-pub fn alloc(pages: u64) ?u64 {
+pub fn alloc(pages: usize) ?usize {
     const res = allocNoZero(pages);
 
     if (res) |address| {
@@ -198,7 +205,7 @@ pub fn alloc(pages: u64) ?u64 {
     return res;
 }
 
-pub fn allocNoZero(pages: u64) ?u64 {
+pub fn allocNoZero(pages: usize) ?usize {
     expectInit();
     if (pages == 0) return null;
     lock.lock();
@@ -206,10 +213,10 @@ pub fn allocNoZero(pages: u64) ?u64 {
     return allocInner(last_used_index, pages) orelse allocInner(0, pages);
 }
 
-fn allocInner(start: u64, pages: u64) ?u64 {
+fn allocInner(start: usize, pages: usize) ?usize {
     // Scan the bitmap for a contiguous block of free pages
-    var p_idx: u64 = start;
-    var p_count: u64 = 0;
+    var p_idx: usize = start;
+    var p_count: usize = 0;
 
     while (p_idx < highest_page_index and p_count < pages) : (p_idx += 1) {
         if (bitmap.testBit(p_idx)) {
@@ -235,7 +242,7 @@ fn allocInner(start: u64, pages: u64) ?u64 {
     return first * page_size;
 }
 
-pub fn free(address: u64, pages: u64) void {
+pub fn free(address: usize, pages: usize) void {
     expectInit();
     lock.lock();
     defer lock.unlock();

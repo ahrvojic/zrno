@@ -5,8 +5,8 @@ const sched = @import("../sched/sched.zig");
 const serial = @import("serial.zig");
 const video = @import("video.zig");
 
-var row: u64 = 0;
-var col: u64 = 0;
+var row: usize = 0;
+var col: usize = 0;
 var lock: Lock.SpinLock = .{};
 
 // Wrapping indices fill the ring iff maxInt(InIndex)+1 == in_capacity.

@@ -42,7 +42,7 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
         vec_page_fault => {
             const fault_addr = asm volatile (
                 \\mov %%cr2, %[result]
-                : [result] "=r" (-> u64),
+                : [result] "=r" (-> usize),
             );
 
             const space = if (cpu.current().thread) |thread| &thread.parent.vmm else &vmm.kernel_vmm;
