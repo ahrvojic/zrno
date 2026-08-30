@@ -48,30 +48,30 @@ const Cpuid = struct {
 // Layout matches interruptStub: last register pushed is first field,
 // then vector/error_code, then the CPU-pushed iretq frame.
 pub const Context = extern struct {
-    r15: u64,
-    r14: u64,
-    r13: u64,
-    r12: u64,
-    r11: u64,
-    r10: u64,
-    r9: u64,
-    r8: u64,
-    rsi: u64,
-    rdi: u64,
-    rbp: u64,
-    rdx: u64,
-    rcx: u64,
-    rbx: u64,
-    rax: u64,
+    r15: u64 = 0,
+    r14: u64 = 0,
+    r13: u64 = 0,
+    r12: u64 = 0,
+    r11: u64 = 0,
+    r10: u64 = 0,
+    r9: u64 = 0,
+    r8: u64 = 0,
+    rsi: u64 = 0,
+    rdi: u64 = 0,
+    rbp: u64 = 0,
+    rdx: u64 = 0,
+    rcx: u64 = 0,
+    rbx: u64 = 0,
+    rax: u64 = 0,
 
-    vector: u64,
-    error_code: u64,
+    vector: u64 = 0,
+    error_code: u64 = 0,
 
-    rip: u64,
-    cs: u64,
-    rflags: u64,
-    rsp: u64,
-    ss: u64,
+    rip: u64 = 0,
+    cs: u64 = 0,
+    rflags: u64 = 0,
+    rsp: u64 = 0,
+    ss: u64 = 0,
 };
 
 const df_stack_size = 2 * pmm.page_size;
@@ -79,7 +79,7 @@ const df_stack_size = 2 * pmm.page_size;
 pub const CPU = struct {
     gdt: gdt.GDT = .{},
     idt: idt.IDT = .{},
-    tss: gdt.TSS = std.mem.zeroes(gdt.TSS),
+    tss: gdt.TSS = .{},
     // Dedicated stack for #DF (IST). Lives in BSS so it is valid before PMM.
     df_stack: [df_stack_size]u8 align(16) = undefined,
     // HH-mapped MMIO; unused when x2apic is set.

@@ -33,7 +33,7 @@ pub const Thread = struct {
     tid: u64,
     status: ThreadStatus,
     parent: *Process,
-    ctx: cpu.Context = std.mem.zeroes(cpu.Context),
+    ctx: cpu.Context = .{},
     wait_chan: ?*const anyopaque = null,
     wake_tick: u64 = 0,
     stack_phys: usize,
