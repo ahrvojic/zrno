@@ -90,7 +90,6 @@ pub fn init() !void {
         }
     }
 
-    // Determine size of bitmap aligned to page size
     highest_page_index = highest_addr / page_size;
     const bitmap_bytes = try std.math.divCeil(usize, highest_page_index, 8);
     const bitmap_size = std.mem.alignForward(usize, bitmap_bytes, page_size);
@@ -99,7 +98,6 @@ pub fn init() !void {
         return error.BitmapTooBig;
     }
 
-    // Find where the bitmap can fit in usable memory
     var bitmap_region: ?*limine.MemoryMapEntry = null;
 
     for (boot.info().memory_map.entries()) |entry| {
@@ -116,11 +114,10 @@ pub fn init() !void {
 
     const bitmap_base: usize = @intCast(bitmap_region.?.base);
 
-    // Create the bitmap and initialize all bits to 1 (non-free)
+    // 1 = non-free
     bitmap = Bitmap.init(virt.toHH([*]u8, bitmap_base)[0..bitmap_size]);
     @memset(bitmap.data, 0xff);
 
-    // Clear free bits according to the memory map
     for (boot.info().memory_map.entries()) |entry| {
         if (entry.kind == .usable) {
             const base: usize = @intCast(entry.base);
@@ -197,7 +194,6 @@ pub fn alloc(pages: usize) ?usize {
     const res = allocNoZero(pages);
 
     if (res) |address| {
-        // Zero allocated memory before returning address
         const size = pages * page_size;
         const data = virt.toHH([*]u8, address)[0..size];
         @memset(data, 0);

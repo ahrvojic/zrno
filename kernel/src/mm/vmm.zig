@@ -113,13 +113,11 @@ const PageTable = extern struct {
     }
 
     pub fn virtToPTE(self: *PageTable, virt_addr: usize, allocate: bool, user: bool) !*PageTableEntry {
-        // Extract page table indexes from virtual address
         const pml4_idx = (virt_addr >> 39) & page_table_index_mask;
         const pml3_idx = (virt_addr >> 30) & page_table_index_mask;
         const pml2_idx = (virt_addr >> 21) & page_table_index_mask;
         const pml1_idx = (virt_addr >> 12) & page_table_index_mask;
 
-        // Walk page table hierarchy to entry
         const pml3 = self.getNextLevel(pml4_idx, allocate, user) orelse return error.PTENotFound;
         const pml2 = pml3.getNextLevel(pml3_idx, allocate, user) orelse return error.PTENotFound;
         const pml1 = pml2.getNextLevel(pml2_idx, allocate, user) orelse return error.PTENotFound;
@@ -401,7 +399,6 @@ pub fn destroyPhys(pt_addr_phys: usize) void {
 pub fn init() !void {
     kernel_vmm.expectUninit();
 
-    // Allocate L4 root page table
     kernel_vmm.pt_addr_phys = pmm.alloc(1) orelse return error.OutOfMemory;
     kernel_vmm.pt = virt.toHH(*PageTable, kernel_vmm.pt_addr_phys);
     kernel_vmm.initialized = true;
