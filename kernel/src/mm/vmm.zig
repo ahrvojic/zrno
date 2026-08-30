@@ -239,34 +239,41 @@ pub const VMM = struct {
 
     // Copy through the HHDM so a hole is mapped, not a kernel #PF on the user VA.
     pub fn copyFromUser(self: *VMM, dest: []u8, user_addr: usize) error{ Fault, OutOfMemory }!void {
-        try self.copyUser(dest, user_addr, false);
-    }
-
-    pub fn copyToUser(self: *VMM, user_addr: usize, src: []const u8) error{ Fault, OutOfMemory }!void {
-        try self.copyUser(@constCast(src), user_addr, true);
-    }
-
-    fn copyUser(self: *VMM, kernel: []u8, user_addr: usize, to_user: bool) error{ Fault, OutOfMemory }!void {
-        if (kernel.len == 0) return;
-        if (!userRange(user_addr, kernel.len)) return error.Fault;
+        if (dest.len == 0) return;
+        if (!userRange(user_addr, dest.len)) return error.Fault;
 
         self.expectInit();
         self.lock.lock();
         defer self.lock.unlock();
 
         var off: usize = 0;
-        const len = kernel.len;
-        while (off < len) {
+        while (off < dest.len) {
             const va = user_addr + off;
             const page_off = va & (pmm.page_size - 1);
-            const chunk = @min(len - off, pmm.page_size - page_off);
-            const phys = try self.userPagePhysLocked(va, to_user);
+            const chunk = @min(dest.len - off, pmm.page_size - page_off);
+            const phys = try self.userPagePhysLocked(va, false);
             const page = virt.toHH([*]u8, phys);
-            if (to_user) {
-                @memcpy(page[page_off..][0..chunk], kernel[off..][0..chunk]);
-            } else {
-                @memcpy(kernel[off..][0..chunk], page[page_off..][0..chunk]);
-            }
+            @memcpy(dest[off..][0..chunk], page[page_off..][0..chunk]);
+            off += chunk;
+        }
+    }
+
+    pub fn copyToUser(self: *VMM, user_addr: usize, src: []const u8) error{ Fault, OutOfMemory }!void {
+        if (src.len == 0) return;
+        if (!userRange(user_addr, src.len)) return error.Fault;
+
+        self.expectInit();
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        var off: usize = 0;
+        while (off < src.len) {
+            const va = user_addr + off;
+            const page_off = va & (pmm.page_size - 1);
+            const chunk = @min(src.len - off, pmm.page_size - page_off);
+            const phys = try self.userPagePhysLocked(va, true);
+            const page = virt.toHH([*]u8, phys);
+            @memcpy(page[page_off..][0..chunk], src[off..][0..chunk]);
             off += chunk;
         }
     }
