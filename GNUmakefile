@@ -27,6 +27,9 @@ endef
 override DEFAULT_KZIGFLAGS := -Doptimize=ReleaseSafe
 $(eval $(call DEFAULT_VAR,KZIGFLAGS,$(DEFAULT_KZIGFLAGS)))
 
+QEMU := qemu-system-x86_64
+QEMUFLAGS := -M q35 -m 2G -serial stdio
+
 .PHONY: all
 all: $(IMAGE_NAME).iso
 
@@ -35,19 +38,19 @@ all-hdd: $(IMAGE_NAME).hdd
 
 .PHONY: run
 run: $(IMAGE_NAME).iso
-	qemu-system-x86_64 -M q35 -m 2G -debugcon /dev/stdout -cdrom $(IMAGE_NAME).iso -boot d
+	$(QEMU) $(QEMUFLAGS) -cdrom $(IMAGE_NAME).iso -boot d
 
 .PHONY: run-uefi
 run-uefi: ovmf $(IMAGE_NAME).iso
-	qemu-system-x86_64 -M q35 -m 2G -bios ovmf/OVMF.fd -debugcon /dev/stdout -cdrom $(IMAGE_NAME).iso -boot d
+	$(QEMU) $(QEMUFLAGS) -bios ovmf/OVMF.fd -cdrom $(IMAGE_NAME).iso -boot d
 
 .PHONY: run-hdd
 run-hdd: $(IMAGE_NAME).hdd
-	qemu-system-x86_64 -M q35 -m 2G -hda $(IMAGE_NAME).hdd
+	$(QEMU) $(QEMUFLAGS) -hda $(IMAGE_NAME).hdd
 
 .PHONY: run-hdd-uefi
 run-hdd-uefi: ovmf $(IMAGE_NAME).hdd
-	qemu-system-x86_64 -M q35 -m 2G -bios ovmf/OVMF.fd -hda $(IMAGE_NAME).hdd
+	$(QEMU) $(QEMUFLAGS) -bios ovmf/OVMF.fd -hda $(IMAGE_NAME).hdd
 
 ovmf:
 	mkdir -p ovmf

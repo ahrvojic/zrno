@@ -15,6 +15,7 @@ const pit = @import("dev/pit.zig");
 const pmm = @import("mm/pmm.zig");
 const ps2 = @import("dev/ps2.zig");
 const sched = @import("sched/sched.zig");
+const serial = @import("dev/serial.zig");
 const shell = @import("shell.zig");
 const tty = @import("dev/tty.zig");
 const video = @import("dev/video.zig");
@@ -56,6 +57,9 @@ export fn _start() callconv(.c) noreturn {
 pub fn main() !void {
     cpu.interruptsOff();
     defer cpu.interruptsOn();
+
+    // Port I/O only: no heap, paging, or ACPI. First so boot panics print.
+    serial.init();
 
     try boot.init();
 
