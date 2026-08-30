@@ -123,7 +123,8 @@ pub const GDT = struct {
     }
 };
 
-inline fn reload() void {
+// Named asm label .reload_cs is unique per object; must not be inlined.
+noinline fn reload() void {
     asm volatile (
         \\pushq %[kernel_code_sel]
         \\lea .reload_cs(%rip), %rax
