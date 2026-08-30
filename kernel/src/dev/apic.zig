@@ -26,10 +26,10 @@ const IOApic = struct {
     gsi_base: u32,
     max_redir: u32,
 
-    fn init(address: u32, gsi_base: u32) !@This() {
+    fn init(address: u32, gsi_base: u32) !IOApic {
         const phys: usize = address;
         try vmm.kernel_vmm.mapMmio(phys, pmm.page_size);
-        var self: @This() = .{
+        var self: IOApic = .{
             .address = virt.toHH(usize, phys),
             .gsi_base = gsi_base,
             .max_redir = 0,
@@ -40,25 +40,25 @@ const IOApic = struct {
         return self;
     }
 
-    fn ownsGsi(self: *const @This(), gsi: u32) bool {
+    fn ownsGsi(self: *const IOApic, gsi: u32) bool {
         return gsi >= self.gsi_base and (gsi - self.gsi_base) <= self.max_redir;
     }
 
-    fn gsiMax(self: *const @This()) u32 {
+    fn gsiMax(self: *const IOApic) u32 {
         return self.gsi_base + self.max_redir;
     }
 
-    fn overlaps(self: *const @This(), other: *const @This()) bool {
+    fn overlaps(self: *const IOApic, other: *const IOApic) bool {
         return self.gsi_base <= other.gsiMax() and other.gsi_base <= self.gsiMax();
     }
 
-    fn maskAll(self: *const @This()) void {
+    fn maskAll(self: *const IOApic) void {
         for (0..self.max_redir + 1) |i| {
             self.writeRedir(@intCast(i), ioapic_redir_mask);
         }
     }
 
-    fn route(self: *const @This(), lapic_id: u32, vector: u8, gsi: u32, flags: u16) void {
+    fn route(self: *const IOApic, lapic_id: u32, vector: u8, gsi: u32, flags: u16) void {
         // Physical destination is 8 bits; IDs >= 256 need interrupt remapping.
         if (lapic_id > 0xff) @panic("I/O APIC physical dest > 255");
         const index = gsi - self.gsi_base;
@@ -68,19 +68,19 @@ const IOApic = struct {
         self.writeRedir(index, value);
     }
 
-    fn writeRedir(self: *const @This(), index: u32, value: u64) void {
+    fn writeRedir(self: *const IOApic, index: u32, value: u64) void {
         const offset = ioapic_redir_base + index * 2;
         // High dword first so the entry is not live with a stale destination
         self.write(offset + 1, @truncate(value >> 32));
         self.write(offset + 0, @truncate(value));
     }
 
-    fn read(self: *const @This(), offset: u32) u32 {
+    fn read(self: *const IOApic, offset: u32) u32 {
         @as(*volatile u32, @ptrFromInt(self.address)).* = offset;
         return @as(*volatile u32, @ptrFromInt(self.address + 0x10)).*;
     }
 
-    fn write(self: *const @This(), offset: u32, value: u32) void {
+    fn write(self: *const IOApic, offset: u32, value: u32) void {
         @as(*volatile u32, @ptrFromInt(self.address)).* = offset;
         @as(*volatile u32, @ptrFromInt(self.address + 0x10)).* = value;
     }

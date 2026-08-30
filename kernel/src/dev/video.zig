@@ -28,7 +28,7 @@ const Framebuffer = struct {
     max_col: usize = 80,
     initialized: bool = false,
 
-    fn init(self: *@This(), src: Captured) void {
+    fn init(self: *Framebuffer, src: Captured) void {
         self.expectUninit();
         self.address = src.address;
         self.width = src.width;
@@ -40,11 +40,11 @@ const Framebuffer = struct {
         self.initialized = true;
     }
 
-    fn data(self: *const @This()) []u8 {
+    fn data(self: *const Framebuffer) []u8 {
         return self.address[0 .. self.pitch * self.height];
     }
 
-    fn plotChar(self: *const @This(), ch: u8, row: usize, col: usize) void {
+    fn plotChar(self: *const Framebuffer, ch: u8, row: usize, col: usize) void {
         self.expectInit();
         if (row >= self.max_row or col >= self.max_col) return;
 
@@ -68,7 +68,7 @@ const Framebuffer = struct {
         }
     }
 
-    fn scroll(self: *const @This()) void {
+    fn scroll(self: *const Framebuffer) void {
         self.expectInit();
         // Shift framebuffer up one character row
         const new_top = self.toRowOffset(1);
@@ -79,19 +79,19 @@ const Framebuffer = struct {
         }
     }
 
-    fn toRowOffset(self: *const @This(), row: usize) usize {
+    fn toRowOffset(self: *const Framebuffer, row: usize) usize {
         return row * self.pitch * font.builtin.height;
     }
 
-    fn toColOffset(self: *const @This(), col: usize) usize {
+    fn toColOffset(self: *const Framebuffer, col: usize) usize {
         return col * self.bpp / 8 * font.builtin.width;
     }
 
-    fn expectInit(self: *const @This()) void {
+    fn expectInit(self: *const Framebuffer) void {
         if (!self.initialized) @panic("video used before init");
     }
 
-    fn expectUninit(self: *const @This()) void {
+    fn expectUninit(self: *const Framebuffer) void {
         if (self.initialized) @panic("video already initialized");
     }
 };

@@ -22,7 +22,7 @@ pub const BaseRevision = extern struct {
     id: [2]u64 = .{ 0xf9562b2d5c95a6c8, 0x6a7b384944536bdc },
     revision: u64,
 
-    pub fn isSupported(self: *const volatile @This()) bool {
+    pub fn isSupported(self: *const volatile BaseRevision) bool {
         return self.revision == 0;
     }
 };
@@ -88,7 +88,7 @@ pub const Framebuffer = extern struct {
     mode_count: u64,
     modes: [*]*VideoMode,
 
-    pub fn data(self: *@This()) []u8 {
+    pub fn data(self: *Framebuffer) []u8 {
         return self.address[0 .. self.pitch * self.height];
     }
 };
@@ -98,7 +98,7 @@ pub const FramebufferResponse = extern struct {
     framebuffer_count: u64,
     framebuffers_ptr: [*]*Framebuffer,
 
-    pub fn framebuffers(self: *@This()) []*Framebuffer {
+    pub fn framebuffers(self: *FramebufferResponse) []*Framebuffer {
         return self.framebuffers_ptr[0..self.framebuffer_count];
     }
 };
@@ -121,7 +121,7 @@ pub const MemoryMapEntryType = enum(u64) {
     reserved_mapped = 8,
 
     /// Regions the bootloader maps into the HHDM at base revision 6.
-    pub fn inHhdm(self: @This()) bool {
+    pub fn inHhdm(self: MemoryMapEntryType) bool {
         return switch (self) {
             .usable,
             .bootloader_reclaimable,
@@ -147,7 +147,7 @@ pub const MemoryMapResponse = extern struct {
     entry_count: u64,
     entries_ptr: [*]*MemoryMapEntry,
 
-    pub fn entries(self: *@This()) []*MemoryMapEntry {
+    pub fn entries(self: *MemoryMapResponse) []*MemoryMapEntry {
         return self.entries_ptr[0..self.entry_count];
     }
 };

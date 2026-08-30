@@ -47,15 +47,15 @@ const Bitmap = struct {
         return .{ .data = data };
     }
 
-    pub fn testBit(self: *const @This(), bit: usize) bool {
+    pub fn testBit(self: *const Bitmap, bit: usize) bool {
         return self.data[bit / 8] & (@as(u8, 1) << @as(u3, @intCast(bit % 8))) != 0;
     }
 
-    pub fn setBit(self: *@This(), bit: usize) void {
+    pub fn setBit(self: *Bitmap, bit: usize) void {
         self.data[bit / 8] |= (@as(u8, 1) << @as(u3, @intCast(bit % 8)));
     }
 
-    pub fn clearBit(self: *@This(), bit: usize) void {
+    pub fn clearBit(self: *Bitmap, bit: usize) void {
         self.data[bit / 8] &= ~(@as(u8, 1) << @as(u3, @intCast(bit % 8)));
     }
 };

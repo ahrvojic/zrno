@@ -91,7 +91,7 @@ pub const CPU = struct {
     initialized: bool = false,
     lapic_initialized: bool = false,
 
-    pub fn init(self: *@This()) void {
+    pub fn init(self: *CPU) void {
         self.expectUninit();
 
         // IOPB at the TSS limit means no I/O bitmap (offset 0 would
@@ -108,7 +108,7 @@ pub const CPU = struct {
         logger.info("bsp gdt idt tss", .{});
     }
 
-    pub fn initLapic(self: *@This()) !void {
+    pub fn initLapic(self: *CPU) !void {
         self.expectInit();
         self.expectLapicUninit();
 
@@ -154,29 +154,29 @@ pub const CPU = struct {
         }
     }
 
-    pub fn eoi(self: *const @This()) void {
+    pub fn eoi(self: *const CPU) void {
         self.expectLapicInit();
         self.lapicWrite(lapic_reg_eoi, 0);
     }
 
-    pub fn lapicId(self: *const @This()) u32 {
+    pub fn lapicId(self: *const CPU) u32 {
         self.expectLapicInit();
         return self.decodeLapicId(self.lapicRead(lapic_reg_id));
     }
 
-    fn decodeLapicId(self: *const @This(), raw: u32) u32 {
+    fn decodeLapicId(self: *const CPU, raw: u32) u32 {
         // xAPIC ID is bits 24-31; x2APIC ID is the full 32-bit value.
         return if (self.x2apic) raw else raw >> 24;
     }
 
-    fn enableLapic(self: *const @This()) void {
+    fn enableLapic(self: *const CPU) void {
         // Spurious interrupt vector register:
         // - Set lowest byte to interrupt vector
         // - Set bit 8 to enable local APIC
         self.lapicWrite(lapic_reg_spurious, self.lapicRead(lapic_reg_spurious) | ivt.vec_apic_spurious | 0x100);
     }
 
-    fn lapicRead(self: *const @This(), reg: u32) u32 {
+    fn lapicRead(self: *const CPU, reg: u32) u32 {
         if (self.x2apic) {
             return @truncate(readMSR(x2apic_msr_base + (reg >> 4)));
         }
@@ -185,7 +185,7 @@ pub const CPU = struct {
         return ptr.*;
     }
 
-    fn lapicWrite(self: *const @This(), reg: u32, value: u32) void {
+    fn lapicWrite(self: *const CPU, reg: u32, value: u32) void {
         if (self.x2apic) {
             writeMSR(x2apic_msr_base + (reg >> 4), value);
             return;
@@ -195,19 +195,19 @@ pub const CPU = struct {
         ptr.* = value;
     }
 
-    fn expectInit(self: *const @This()) void {
+    fn expectInit(self: *const CPU) void {
         if (!self.initialized) @panic("cpu used before init");
     }
 
-    fn expectUninit(self: *const @This()) void {
+    fn expectUninit(self: *const CPU) void {
         if (self.initialized) @panic("cpu already initialized");
     }
 
-    fn expectLapicInit(self: *const @This()) void {
+    fn expectLapicInit(self: *const CPU) void {
         if (!self.lapic_initialized) @panic("cpu lapic used before init");
     }
 
-    fn expectLapicUninit(self: *const @This()) void {
+    fn expectLapicUninit(self: *const CPU) void {
         if (self.lapic_initialized) @panic("cpu lapic already initialized");
     }
 };

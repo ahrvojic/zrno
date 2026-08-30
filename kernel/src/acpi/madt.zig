@@ -73,7 +73,7 @@ pub const Lapic = struct {
     flags: u32,
     x2apic: bool,
 
-    pub fn enabled(self: @This()) bool {
+    pub fn enabled(self: Lapic) bool {
         return self.flags & lapic_enabled_flag != 0;
     }
 };

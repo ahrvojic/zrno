@@ -10,12 +10,12 @@ comptime {
 }
 
 const KernelPages = struct {
-    pub fn alloc(_: @This(), pages: usize) ?[*]u8 {
+    pub fn alloc(_: KernelPages, pages: usize) ?[*]u8 {
         const phys = pmm.alloc(pages) orelse return null;
         return virt.toHH([*]u8, phys);
     }
 
-    pub fn free(_: @This(), ptr: [*]u8, pages: usize) void {
+    pub fn free(_: KernelPages, ptr: [*]u8, pages: usize) void {
         pmm.free(virt.fromHH(@intFromPtr(ptr)), pages);
     }
 };
@@ -27,13 +27,13 @@ pub const HeapAllocator = struct {
     lock: Lock.SpinLock = .{},
     initialized: bool = false,
 
-    pub fn init(self: *@This()) void {
+    pub fn init(self: *HeapAllocator) void {
         self.expectUninit();
         self.inner = .init(.{});
         self.initialized = true;
     }
 
-    pub fn allocator(self: *@This()) std.mem.Allocator {
+    pub fn allocator(self: *HeapAllocator) std.mem.Allocator {
         self.expectInit();
         return .{
             .ptr = self,
@@ -66,11 +66,11 @@ pub const HeapAllocator = struct {
         self.inner.free(buf, alignment);
     }
 
-    fn expectInit(self: *const @This()) void {
+    fn expectInit(self: *const HeapAllocator) void {
         if (!self.initialized) @panic("heap used before init");
     }
 
-    fn expectUninit(self: *const @This()) void {
+    fn expectUninit(self: *const HeapAllocator) void {
         if (self.initialized) @panic("heap already initialized");
     }
 };

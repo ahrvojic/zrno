@@ -29,7 +29,7 @@ const locked: u32 = 1;
 pub const SpinLock = struct {
     state: std.atomic.Value(u32) = .init(unlocked),
 
-    pub fn lock(self: *@This()) void {
+    pub fn lock(self: *SpinLock) void {
         cpu.pushCli();
         while (self.state.cmpxchgWeak(unlocked, locked, .acquire, .monotonic) != null) {
             while (self.state.load(.monotonic) != 0) {
@@ -38,7 +38,7 @@ pub const SpinLock = struct {
         }
     }
 
-    pub fn unlock(self: *@This()) void {
+    pub fn unlock(self: *SpinLock) void {
         self.state.store(unlocked, .release);
         cpu.popCli();
     }

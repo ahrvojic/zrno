@@ -38,7 +38,7 @@ pub const SDT = extern struct {
     creator_id: u32,
     creator_revision: u32,
 
-    pub fn getData(self: *align(1) const @This()) []const u8 {
+    pub fn getData(self: *align(1) const SDT) []const u8 {
         return @as([*]const u8, @ptrCast(self))[0..self.length][@sizeOf(SDT)..];
     }
 };
@@ -47,7 +47,7 @@ const ACPI = struct {
     rsdt: *align(1) const SDT = undefined,
     use_xsdt: bool = false,
 
-    pub fn load(self: *@This()) void {
+    pub fn load(self: *ACPI) void {
         // Base revision 6 returns a virtual (HHDM) pointer. Table
         // addresses inside RSDP/XSDP are still physical.
         const rsdp: *align(1) const RSDP = @ptrCast(boot.info().rsdp.address);
@@ -64,11 +64,11 @@ const ACPI = struct {
         }
     }
 
-    pub fn findSDT(self: *const @This(), signature: *const [4]u8, index: usize) !*align(1) const SDT {
+    pub fn findSDT(self: *const ACPI, signature: *const [4]u8, index: usize) !*align(1) const SDT {
         return if (self.use_xsdt) self.findSDTAt(u64, signature, index) else self.findSDTAt(u32, signature, index);
     }
 
-    fn findSDTAt(self: *const @This(), comptime T: type, signature: *const [4]u8, index: usize) !*align(1) const SDT {
+    fn findSDTAt(self: *const ACPI, comptime T: type, signature: *const [4]u8, index: usize) !*align(1) const SDT {
         const data = self.rsdt.getData();
         const entry_size = @sizeOf(T);
         var offset: usize = 0;

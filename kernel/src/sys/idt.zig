@@ -36,7 +36,7 @@ const IDTEntry = packed struct(u128) {
 pub const IDT = struct {
     entries: [256]IDTEntry align(16) = undefined,
 
-    pub fn load(self: *@This()) void {
+    pub fn load(self: *IDT) void {
         inline for (0..self.entries.len) |i| {
             const handler = ivt.makeHandler(i);
             const ist: u8 = if (i == ivt.vec_double_fault) ivt.ist_double_fault else 0;

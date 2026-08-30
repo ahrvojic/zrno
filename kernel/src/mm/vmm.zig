@@ -31,19 +31,19 @@ pub const FaultReason = packed struct(u64) {
 const PageTableEntry = extern struct {
     value: u64,
 
-    pub fn getAddress(self: *const @This()) usize {
+    pub fn getAddress(self: *const PageTableEntry) usize {
         return @intCast(self.value & ~flags_mask);
     }
 
-    pub fn getFlags(self: *const @This()) u64 {
+    pub fn getFlags(self: *const PageTableEntry) u64 {
         return self.value & flags_mask;
     }
 
-    pub fn setAddress(self: *@This(), address: usize) void {
+    pub fn setAddress(self: *PageTableEntry, address: usize) void {
         self.value = @as(u64, @intCast(address)) | self.getFlags();
     }
 
-    pub fn setFlags(self: *@This(), flags: u64) void {
+    pub fn setFlags(self: *PageTableEntry, flags: u64) void {
         self.value = self.getAddress() | flags;
     }
 };
@@ -65,7 +65,7 @@ pub fn userRange(addr: usize, len: usize) bool {
 const PageTable = extern struct {
     entries: [page_table_entries]PageTableEntry,
 
-    pub fn mapPage(self: *@This(), virt_addr: usize, phys_addr: usize, flags: u64) !void {
+    pub fn mapPage(self: *PageTable, virt_addr: usize, phys_addr: usize, flags: u64) !void {
         const entry = try self.virtToPTE(virt_addr, true);
         const entry_flags: Flags = @bitCast(entry.getFlags());
 
@@ -77,7 +77,7 @@ const PageTable = extern struct {
         }
     }
 
-    pub fn remapPage(self: *@This(), virt_addr: usize, phys_addr: usize, flags: u64) !void {
+    pub fn remapPage(self: *PageTable, virt_addr: usize, phys_addr: usize, flags: u64) !void {
         const entry = try self.virtToPTE(virt_addr, false);
         const entry_flags: Flags = @bitCast(entry.getFlags());
 
@@ -90,7 +90,7 @@ const PageTable = extern struct {
         }
     }
 
-    pub fn unmapPage(self: *@This(), virt_addr: usize) !void {
+    pub fn unmapPage(self: *PageTable, virt_addr: usize) !void {
         const entry = try self.virtToPTE(virt_addr, false);
         const entry_flags: Flags = @bitCast(entry.getFlags());
 
@@ -103,7 +103,7 @@ const PageTable = extern struct {
         }
     }
 
-    pub fn virtToPTE(self: *@This(), virt_addr: usize, allocate: bool) !*PageTableEntry {
+    pub fn virtToPTE(self: *PageTable, virt_addr: usize, allocate: bool) !*PageTableEntry {
         // Extract page table indexes from virtual address
         const pml4_idx = (virt_addr >> 39) & page_table_index_mask;
         const pml3_idx = (virt_addr >> 30) & page_table_index_mask;
@@ -117,7 +117,7 @@ const PageTable = extern struct {
         return &pml1.entries[pml1_idx];
     }
 
-    pub fn getNextLevel(self: *@This(), index: usize, allocate: bool) ?*PageTable {
+    pub fn getNextLevel(self: *PageTable, index: usize, allocate: bool) ?*PageTable {
         const entry = &self.entries[index];
         const entry_flags: Flags = @bitCast(entry.getFlags());
 
@@ -136,7 +136,7 @@ const PageTable = extern struct {
     }
 
     // `level` 3 = PDPT, 2 = PD, 1 = PT. Present leaves are mapped pages.
-    fn freeLevel(self: *@This(), level: u8) void {
+    fn freeLevel(self: *PageTable, level: u8) void {
         for (&self.entries) |*entry| {
             const entry_flags: Flags = @bitCast(entry.getFlags());
             if (!entry_flags.present) continue;
@@ -148,7 +148,7 @@ const PageTable = extern struct {
         }
     }
 
-    fn freeLowerHalf(self: *@This()) void {
+    fn freeLowerHalf(self: *PageTable) void {
         for (0..kernel_pml4_start) |i| {
             const entry = &self.entries[i];
             const entry_flags: Flags = @bitCast(entry.getFlags());
@@ -166,7 +166,7 @@ pub const VMM = struct {
     lock: Lock.SpinLock = .{},
     initialized: bool = false,
 
-    pub fn map(self: *@This(), virt_addr: usize, phys_addr: usize, size: usize, flags: u64) !void {
+    pub fn map(self: *VMM, virt_addr: usize, phys_addr: usize, size: usize, flags: u64) !void {
         self.expectInit();
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
@@ -183,7 +183,7 @@ pub const VMM = struct {
         }
     }
 
-    pub fn remap(self: *@This(), virt_addr: usize, phys_addr: usize, size: usize, flags: u64) !void {
+    pub fn remap(self: *VMM, virt_addr: usize, phys_addr: usize, size: usize, flags: u64) !void {
         self.expectInit();
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
@@ -200,7 +200,7 @@ pub const VMM = struct {
         }
     }
 
-    pub fn unmap(self: *@This(), virt_addr: usize, size: usize) !void {
+    pub fn unmap(self: *VMM, virt_addr: usize, size: usize) !void {
         self.expectInit();
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(size, pmm.page_size));
@@ -215,7 +215,7 @@ pub const VMM = struct {
         }
     }
 
-    pub fn mapMmio(self: *@This(), phys_addr: usize, size: usize) !void {
+    pub fn mapMmio(self: *VMM, phys_addr: usize, size: usize) !void {
         self.expectInit();
         std.debug.assert(size > 0);
         self.lock.lock();
@@ -223,7 +223,7 @@ pub const VMM = struct {
         try mapHhdmRange(self.pt, phys_addr, phys_addr + size);
     }
 
-    pub fn virtToPhys(self: *@This(), virt_addr: usize) !usize {
+    pub fn virtToPhys(self: *VMM, virt_addr: usize) !usize {
         self.expectInit();
         self.lock.lock();
         defer self.lock.unlock();
@@ -238,15 +238,15 @@ pub const VMM = struct {
     }
 
     // Copy through the HHDM so a hole is mapped, not a kernel #PF on the user VA.
-    pub fn copyFromUser(self: *@This(), dest: []u8, user_addr: usize) error{ Fault, OutOfMemory }!void {
+    pub fn copyFromUser(self: *VMM, dest: []u8, user_addr: usize) error{ Fault, OutOfMemory }!void {
         try self.copyUser(dest, user_addr, false);
     }
 
-    pub fn copyToUser(self: *@This(), user_addr: usize, src: []const u8) error{ Fault, OutOfMemory }!void {
+    pub fn copyToUser(self: *VMM, user_addr: usize, src: []const u8) error{ Fault, OutOfMemory }!void {
         try self.copyUser(@constCast(src), user_addr, true);
     }
 
-    fn copyUser(self: *@This(), kernel: []u8, user_addr: usize, to_user: bool) error{ Fault, OutOfMemory }!void {
+    fn copyUser(self: *VMM, kernel: []u8, user_addr: usize, to_user: bool) error{ Fault, OutOfMemory }!void {
         if (kernel.len == 0) return;
         if (!userRange(user_addr, kernel.len)) return error.Fault;
 
@@ -271,7 +271,7 @@ pub const VMM = struct {
         }
     }
 
-    fn userPagePhysLocked(self: *@This(), virt_addr: usize, write: bool) error{ Fault, OutOfMemory }!usize {
+    fn userPagePhysLocked(self: *VMM, virt_addr: usize, write: bool) error{ Fault, OutOfMemory }!usize {
         const base = std.mem.alignBackward(usize, virt_addr, pmm.page_size);
         const entry = self.pt.virtToPTE(base, false) catch {
             return self.populateUserPageLocked(base);
@@ -285,7 +285,7 @@ pub const VMM = struct {
         return entry.getAddress();
     }
 
-    fn populateUserPageLocked(self: *@This(), base_addr: usize) error{OutOfMemory}!usize {
+    fn populateUserPageLocked(self: *VMM, base_addr: usize) error{OutOfMemory}!usize {
         const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
         errdefer pmm.free(phys_addr, 1);
         const flags = Flags{ .present = true, .writable = true, .user = true };
@@ -296,13 +296,13 @@ pub const VMM = struct {
         return phys_addr;
     }
 
-    pub fn switchTo(self: *@This()) void {
+    pub fn switchTo(self: *VMM) void {
         self.expectInit();
         if (readCR3() == self.pt_addr_phys) return;
         switchPageTable(self.pt_addr_phys);
     }
 
-    pub fn isCurrent(self: *const @This()) bool {
+    pub fn isCurrent(self: *const VMM) bool {
         self.expectInit();
         return readCR3() == self.pt_addr_phys;
     }
@@ -327,7 +327,7 @@ pub const VMM = struct {
     }
 
     // Free only the lower half and the unique PML4; never the cloned kernel L3s.
-    pub fn destroy(self: *@This()) void {
+    pub fn destroy(self: *VMM) void {
         self.expectInit();
         if (self == &kernel_vmm) @panic("destroy kernel vmm");
         if (self.isCurrent()) @panic("destroy current address space");
@@ -338,7 +338,7 @@ pub const VMM = struct {
         self.lock.unlock();
     }
 
-    pub fn handlePageFault(self: *@This(), fault_addr: usize, fault_reason: u64) !bool {
+    pub fn handlePageFault(self: *VMM, fault_addr: usize, fault_reason: u64) !bool {
         self.expectInit();
         self.lock.lock();
         defer self.lock.unlock();
@@ -358,11 +358,11 @@ pub const VMM = struct {
         return false;
     }
 
-    fn expectInit(self: *const @This()) void {
+    fn expectInit(self: *const VMM) void {
         if (!self.initialized) @panic("vmm used before init");
     }
 
-    fn expectUninit(self: *const @This()) void {
+    fn expectUninit(self: *const VMM) void {
         if (self.initialized) @panic("vmm already initialized");
     }
 };
