@@ -9,6 +9,7 @@ const apic = @import("dev/apic.zig");
 const boot = @import("sys/boot.zig");
 const cpu = @import("sys/cpu.zig");
 const debug = @import("lib/debug.zig");
+const fadt = @import("acpi/fadt.zig");
 const heap = @import("mm/heap.zig");
 const lib_panic = @import("lib/panic.zig");
 const pit = @import("dev/pit.zig");
@@ -101,8 +102,12 @@ pub fn main() !void {
     logger.info("Init scheduler", .{});
     try sched.init();
 
-    logger.info("Init PS/2 keyboard", .{});
-    try ps2.init();
+    if (fadt.bootArch().has_8042) {
+        logger.info("Init PS/2 keyboard", .{});
+        try ps2.init();
+    } else {
+        logger.info("No 8042; skip PS/2 keyboard", .{});
+    }
 
     logger.info("Done.", .{});
 

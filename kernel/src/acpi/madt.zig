@@ -4,7 +4,6 @@ const std = @import("std");
 
 const acpi = @import("acpi.zig");
 const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
-const panic = @import("../lib/panic.zig").panic;
 
 const Fields = extern struct {
     local_controller_addr: u32 align(1),
@@ -16,10 +15,22 @@ const Header = extern struct {
     length: u8 align(1),
 };
 
-const Lapic = extern struct {
+const Type0Lapic = extern struct {
     processor_id: u8 align(1),
     apic_id: u8 align(1),
     flags: u32 align(1),
+};
+
+const Type9X2Apic = extern struct {
+    reserved: u16 align(1),
+    apic_id: u32 align(1),
+    flags: u32 align(1),
+    uid: u32 align(1),
+};
+
+const Type5Override = extern struct {
+    reserved: u16 align(1),
+    address: u64 align(1),
 };
 
 const LapicNMI = extern struct {
@@ -42,6 +53,9 @@ const IOApicISO = extern struct {
     flags: u16 align(1),
 };
 
+// MADT flags bit 0: dual 8259 PICs are present (PC-AT compatible).
+const pcat_compat_flag: u32 = 1 << 0;
+
 // Processor table cap: large enough that MADT parse survives a
 // typical desktop/VM, small enough to stay a static array.
 pub const max_lapics = 64;
@@ -51,38 +65,65 @@ pub const max_io_apics = 8;
 // One override per ISA IRQ (0-15).
 pub const max_io_apic_isos = 16;
 
+pub const Lapic = struct {
+    processor_id: u32,
+    apic_id: u32,
+    flags: u32,
+    x2apic: bool,
+};
+
 var lapics_value: BoundedArray(Lapic, max_lapics) = .{};
 var lapic_nmis_value: BoundedArray(LapicNMI, max_lapic_nmis) = .{};
 var io_apics_value: BoundedArray(IOApic, max_io_apics) = .{};
 var io_apic_isos_value: BoundedArray(IOApicISO, max_io_apic_isos) = .{};
+var lapic_address_value: u64 = 0;
+var pcat_compat_value: bool = false;
+var initialized = false;
 
 pub fn lapics() []const Lapic {
+    expectInit();
     return lapics_value.constSlice();
 }
 
 pub fn lapicNmis() []const LapicNMI {
+    expectInit();
     return lapic_nmis_value.constSlice();
 }
 
 pub fn ioApics() []const IOApic {
+    expectInit();
     return io_apics_value.constSlice();
 }
 
 pub fn ioApicIsos() []const IOApicISO {
+    expectInit();
     return io_apic_isos_value.constSlice();
 }
 
-pub fn init(sdt: *align(1) const acpi.SDT) !void {
-    const madt_data = sdt.getData();
-    const fields = std.mem.bytesAsValue(Fields, madt_data[0..8]);
-    if (fields.flags & 0x1 == 0) {
-        panic("System must be PC-AT compatible!");
-    }
+pub fn pcatCompat() bool {
+    expectInit();
+    return pcat_compat_value;
+}
 
-    const madt_entries = madt_data[8..];
+pub fn lapicAddress() u64 {
+    expectInit();
+    return lapic_address_value;
+}
+
+pub fn init(sdt: *align(1) const acpi.SDT) !void {
+    expectUninit();
+
+    const madt_data = sdt.getData();
+    if (madt_data.len < @sizeOf(Fields)) return error.InvalidMadt;
+    const fields = std.mem.bytesAsValue(Fields, madt_data[0..@sizeOf(Fields)]);
+    lapic_address_value = fields.local_controller_addr;
+    pcat_compat_value = fields.flags & pcat_compat_flag != 0;
+
+    const madt_entries = madt_data[@sizeOf(Fields)..];
     const header_size = @sizeOf(Header);
 
     var offset: u64 = 0;
+    var have_lapic_override = false;
 
     while (madt_entries.len - offset >= header_size) {
         const header_end = offset + header_size;
@@ -96,9 +137,14 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
         switch (entry.id) {
             0 => {
                 logger.info("Found local APIC", .{});
-                if (data.len < @sizeOf(Lapic)) return error.InvalidMadt;
-                const lapic = std.mem.bytesToValue(Lapic, data[0..@sizeOf(Lapic)]);
-                try lapics_value.append(lapic);
+                if (data.len < @sizeOf(Type0Lapic)) return error.InvalidMadt;
+                const raw = std.mem.bytesToValue(Type0Lapic, data[0..@sizeOf(Type0Lapic)]);
+                try lapics_value.append(.{
+                    .processor_id = raw.processor_id,
+                    .apic_id = raw.apic_id,
+                    .flags = raw.flags,
+                    .x2apic = false,
+                });
             },
             1 => {
                 logger.info("Found I/O APIC", .{});
@@ -122,10 +168,23 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
                 try lapic_nmis_value.append(lapic_nmi);
             },
             5 => {
-                logger.info("Found local APIC address override", .{});
+                if (data.len < @sizeOf(Type5Override)) return error.InvalidMadt;
+                if (have_lapic_override) return error.InvalidMadt;
+                const override = std.mem.bytesToValue(Type5Override, data[0..@sizeOf(Type5Override)]);
+                logger.info("Found local APIC address override {x}", .{override.address});
+                lapic_address_value = override.address;
+                have_lapic_override = true;
             },
             9 => {
                 logger.info("Found local x2APIC", .{});
+                if (data.len < @sizeOf(Type9X2Apic)) return error.InvalidMadt;
+                const raw = std.mem.bytesToValue(Type9X2Apic, data[0..@sizeOf(Type9X2Apic)]);
+                try lapics_value.append(.{
+                    .processor_id = raw.uid,
+                    .apic_id = raw.apic_id,
+                    .flags = raw.flags,
+                    .x2apic = true,
+                });
             },
             else => {
                 logger.info("Found unrecognized entry", .{});
@@ -134,4 +193,19 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
 
         offset += @max(entry.length, header_size);
     }
+
+    logger.info("PCAT_COMPAT {} local APIC {x} processors {d}", .{
+        pcat_compat_value,
+        lapic_address_value,
+        lapics_value.len,
+    });
+    initialized = true;
+}
+
+fn expectInit() void {
+    if (!initialized) @panic("madt used before init");
+}
+
+fn expectUninit() void {
+    if (initialized) @panic("madt already initialized");
 }

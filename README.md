@@ -8,7 +8,7 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 
 - Single-CPU for now
 - GDT, IDT, exceptions, and local APIC
-- ACPI tables (FADT and MADT)
+- ACPI FADT and MADT as hardware inventory
 - I/O APIC, PIT, PS/2 keyboard, and framebuffer TTY
 - 16550 serial console (COM1)
 - Bitmap physical allocator, virtual memory, and a power-of-two slab heap

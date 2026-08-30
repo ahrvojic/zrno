@@ -83,10 +83,12 @@ const IOApic = struct {
 pub fn init() !void {
     expectUninit();
 
-    // Dual 8259 is still live (MADT PC-AT flag). Mask it so IRQs
-    // only arrive through the I/O APIC.
-    port.outb(pic1_data, 0xff);
-    port.outb(pic2_data, 0xff);
+    // Dual 8259 is still live only when MADT PCAT_COMPAT is set.
+    // Mask it so IRQs only arrive through the I/O APIC.
+    if (madt.pcatCompat()) {
+        port.outb(pic1_data, 0xff);
+        port.outb(pic2_data, 0xff);
+    }
 
     if (madt.ioApics().len == 0) {
         return error.NoIoApic;
