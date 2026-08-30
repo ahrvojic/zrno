@@ -17,6 +17,7 @@
 //! `#PF` takes vmm then pmm (user demand paging). The kernel heap is HHDM
 //! slabs and does not fault; it may take pmm. Touching a not-yet-mapped
 //! user page while holding vmm or pmm deadlocks this CPU.
+//! copyFromUser/copyToUser copy through the HHDM and must not use the user VA.
 
 const std = @import("std");
 

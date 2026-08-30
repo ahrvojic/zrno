@@ -19,6 +19,7 @@ const max_io: u64 = pmm.page_size;
 const io_chunk: usize = 256;
 
 const EBADF: i64 = 9;
+const ENOMEM: i64 = 12;
 const EFAULT: i64 = 14;
 const EINVAL: i64 = 22;
 const ENOSYS: i64 = 38;
@@ -50,8 +51,7 @@ fn sys_read(ctx: *cpu.Context) u64 {
     var tmp: [io_chunk]u8 = undefined;
     const want = @min(tmp.len, len);
     const n = tty.read(tmp[0..want]);
-    const dest: [*]u8 = @ptrFromInt(addr);
-    @memcpy(dest[0..n], tmp[0..n]);
+    userSpace().copyToUser(addr, tmp[0..n]) catch |err| return copyErr(err);
     return n;
 }
 
@@ -66,10 +66,13 @@ fn sys_write(ctx: *cpu.Context) u64 {
 
     var tmp: [io_chunk]u8 = undefined;
     var copied: u64 = 0;
+    const space = userSpace();
     while (copied < len) {
         const n: usize = @intCast(@min(tmp.len, len - copied));
-        const src: [*]const u8 = @ptrFromInt(addr + copied);
-        @memcpy(tmp[0..n], src[0..n]);
+        space.copyFromUser(tmp[0..n], addr + copied) catch |err| {
+            if (copied == 0) return copyErr(err);
+            return copied;
+        };
         tty.writeBytes(tmp[0..n]);
         copied += n;
     }
@@ -95,6 +98,18 @@ fn sys_yield() u64 {
 fn sys_sleep(ctx: *cpu.Context) u64 {
     sched.sleep(ctx.rdi);
     return 0;
+}
+
+fn userSpace() *vmm.VMM {
+    const thread = cpu.current().thread orelse @panic("syscall with no thread");
+    return &thread.parent.vmm;
+}
+
+fn copyErr(err: error{ Fault, OutOfMemory }) u64 {
+    return switch (err) {
+        error.Fault => errval(EFAULT),
+        error.OutOfMemory => errval(ENOMEM),
+    };
 }
 
 fn errval(errno: i64) u64 {

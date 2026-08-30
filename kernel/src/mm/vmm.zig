@@ -237,6 +237,66 @@ pub const VMM = struct {
         }
     }
 
+    // Copy through the HHDM so a hole is mapped, not a kernel #PF on the user VA.
+    pub fn copyFromUser(self: *@This(), dest: []u8, user_addr: u64) error{ Fault, OutOfMemory }!void {
+        try self.copyUser(dest, user_addr, false);
+    }
+
+    pub fn copyToUser(self: *@This(), user_addr: u64, src: []const u8) error{ Fault, OutOfMemory }!void {
+        try self.copyUser(@constCast(src), user_addr, true);
+    }
+
+    fn copyUser(self: *@This(), kernel: []u8, user_addr: u64, to_user: bool) error{ Fault, OutOfMemory }!void {
+        if (kernel.len == 0) return;
+        if (!userRange(user_addr, kernel.len)) return error.Fault;
+
+        self.expectInit();
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        var off: u64 = 0;
+        const len: u64 = kernel.len;
+        while (off < len) {
+            const va = user_addr + off;
+            const page_off: usize = @intCast(va & (pmm.page_size - 1));
+            const chunk: usize = @intCast(@min(len - off, pmm.page_size - page_off));
+            const phys = try self.userPagePhysLocked(va, to_user);
+            const page = virt.toHH([*]u8, phys);
+            const koff: usize = @intCast(off);
+            if (to_user) {
+                @memcpy(page[page_off..][0..chunk], kernel[koff..][0..chunk]);
+            } else {
+                @memcpy(kernel[koff..][0..chunk], page[page_off..][0..chunk]);
+            }
+            off += chunk;
+        }
+    }
+
+    fn userPagePhysLocked(self: *@This(), virt_addr: u64, write: bool) error{ Fault, OutOfMemory }!u64 {
+        const base = std.mem.alignBackward(u64, virt_addr, pmm.page_size);
+        const entry = self.pt.virtToPTE(base, false) catch {
+            return self.populateUserPageLocked(base);
+        };
+        const flags: Flags = @bitCast(entry.getFlags());
+        if (!flags.present) {
+            return self.populateUserPageLocked(base);
+        }
+        if (!flags.user) return error.Fault;
+        if (write and !flags.writable) return error.Fault;
+        return entry.getAddress();
+    }
+
+    fn populateUserPageLocked(self: *@This(), base_addr: u64) error{OutOfMemory}!u64 {
+        const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
+        errdefer pmm.free(phys_addr, 1);
+        const flags = Flags{ .present = true, .writable = true, .user = true };
+        self.pt.mapPage(base_addr, phys_addr, @bitCast(flags)) catch |err| switch (err) {
+            error.AlreadyMapped => @panic("populate already mapped"),
+            error.PTENotFound => return error.OutOfMemory,
+        };
+        return phys_addr;
+    }
+
     pub fn switchTo(self: *@This()) void {
         self.expectInit();
         if (readCR3() == self.pt_addr_phys) return;
@@ -292,9 +352,7 @@ pub const VMM = struct {
         // Demand-page user space only for user-mode faults, and never page 0.
         if (reason.user and fault_addr >= pmm.page_size and fault_addr < user_space_end) {
             const base_addr = std.mem.alignBackward(u64, fault_addr, pmm.page_size);
-            const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
-            const flags = Flags{ .present = true, .writable = true, .user = true };
-            try self.pt.mapPage(base_addr, phys_addr, @bitCast(flags));
+            _ = try self.populateUserPageLocked(base_addr);
             return true;
         }
 

@@ -8,7 +8,7 @@ const virt = @import("lib/virt.zig");
 const vmm = @import("mm/vmm.zig");
 
 const text_base: u64 = 0x400000;
-const msg_off: u64 = 0x40;
+const heap_base: u64 = 0x500000;
 const msg = "Hello from userspace!\n";
 
 pub fn spawnHello() !u64 {
@@ -29,24 +29,25 @@ pub fn spawnHello() !u64 {
         return err;
     };
 
+    // Hole: copyToUser demand-maps the message; write() copies it back.
+    try process.vmm.copyToUser(heap_base, msg);
+
     _ = try sched.startUserThread(process, text_base, 0, true);
     return process.pid;
 }
 
 fn loadImage(page: []u8) void {
     @memset(page, 0);
-    @memcpy(page[msg_off..][0..msg.len], msg);
-    const msg_addr: u64 = text_base + msg_off;
 
     var o: usize = 0;
     o = movImm(page, o, .rax, syscall.nr_write);
     o = movImm(page, o, .rdi, 1);
-    o = movAbs(page, o, .rsi, msg_addr);
+    o = movAbs(page, o, .rsi, heap_base);
     o = movImm(page, o, .rdx, msg.len);
     o = int80(page, o);
     o = movImm(page, o, .rax, syscall.nr_exit);
     o = movImm(page, o, .rdi, 0);
-    _ = int80(page, o);
+    o = int80(page, o);
 }
 
 const Reg = enum(u8) { rax = 0, rcx = 1, rdx = 2, rbx = 3, rsp = 4, rbp = 5, rsi = 6, rdi = 7 };
