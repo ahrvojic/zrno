@@ -67,7 +67,7 @@ pub fn init() !void {
     var highest_addr: u64 = 0;
 
     for (boot.info().memory_map.entries()) |entry| {
-        logger.info("Entry: base=0x{X:0>16} length=0x{X:0>16} kind={}", .{ entry.base, entry.length, entry.kind });
+        logger.debug("{s}: base=0x{X:0>16} length=0x{X:0>16}", .{ @tagName(entry.kind), entry.base, entry.length });
 
         switch (entry.kind) {
             .usable => {
@@ -88,13 +88,10 @@ pub fn init() !void {
         }
     }
 
-    logger.info("Pages: usable={d} reserved={d} bad={d}", .{ usable_pages, reserved_pages, bad_pages });
-
     // Determine size of bitmap aligned to page size
     highest_page_index = highest_addr / page_size;
     const bitmap_bytes = try std.math.divCeil(u64, highest_page_index, 8);
     const bitmap_size = std.mem.alignForward(u64, bitmap_bytes, page_size);
-    logger.info("Bitmap: highest_index={d} size={d}", .{ highest_page_index, bitmap_size });
 
     if (bitmap_size == 0) {
         return error.BitmapTooBig;
@@ -136,6 +133,17 @@ pub fn init() !void {
     }
     used_pages += bitmap_pages;
     initialized = true;
+
+    logger.info("{d} MiB usable, {d} MiB reserved, {d} bad pages; bitmap {d} KiB", .{
+        pagesToMiB(usable_pages),
+        pagesToMiB(reserved_pages),
+        bad_pages,
+        bitmap_size / 1024,
+    });
+}
+
+fn pagesToMiB(pages: u64) u64 {
+    return (pages * page_size) / (1024 * 1024);
 }
 
 /// Mark previously reserved bootloader_reclaimable pages free. Call after
@@ -170,7 +178,11 @@ pub fn reclaimBootloader() void {
         last_used_index = @min(last_used_index, idx);
     }
     bootloader_reclaimed = true;
-    logger.info("Reclaimed {d} bootloader pages ({d} KiB)", .{ pages, pages * 4 });
+    logger.info("reclaimed {d} pages ({d} KiB); usable now {d} MiB", .{
+        pages,
+        pages * 4,
+        pagesToMiB(usable_pages),
+    });
 }
 
 pub fn alloc(pages: u64) ?u64 {

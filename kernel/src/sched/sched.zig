@@ -1,3 +1,5 @@
+const logger = std.log.scoped(.sched);
+
 const std = @import("std");
 
 const cpu = @import("../sys/cpu.zig");
@@ -59,6 +61,7 @@ pub fn init() !void {
     // Fallback only; never linked into `threads`.
     idle_thread = try startKernelThread(kernel_process, @intFromPtr(&idleThread), 0, false);
     initialized = true;
+    logger.info("kernel pid={d} idle tid={d}", .{ kernel_process.pid, idle_thread.tid });
 }
 
 pub fn spawnKernelThread(pc: u64, arg: u64) !*proc.Thread {

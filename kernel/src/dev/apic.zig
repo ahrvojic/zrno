@@ -1,3 +1,7 @@
+const logger = std.log.scoped(.apic);
+
+const std = @import("std");
+
 const madt = @import("../acpi/madt.zig");
 const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
 const Lock = @import("../lib/lock.zig");
@@ -103,6 +107,18 @@ pub fn init() !void {
     }
 
     initialized = true;
+
+    var gsi_lo: u32 = std.math.maxInt(u32);
+    var gsi_hi: u32 = 0;
+    for (io_apics.constSlice()) |io_apic| {
+        gsi_lo = @min(gsi_lo, io_apic.gsi_base);
+        gsi_hi = @max(gsi_hi, io_apic.gsiMax());
+    }
+    if (madt.pcatCompat()) {
+        logger.info("ioapics={d} gsi {d}-{d}; 8259 masked", .{ io_apics.len, gsi_lo, gsi_hi });
+    } else {
+        logger.info("ioapics={d} gsi {d}-{d}", .{ io_apics.len, gsi_lo, gsi_hi });
+    }
 }
 
 pub fn routeIrq(lapic_id: u32, vector: u8, irq: u8) void {

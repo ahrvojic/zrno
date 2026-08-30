@@ -37,6 +37,10 @@ fn log(
     var log_buffer: [1024]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&log_buffer);
 
+    if (cpu.nsSinceBoot()) |ns| {
+        const ms = ns / 1_000_000;
+        writer.print("[{d:>3}.{d:0>3}] ", .{ ms / 1000, ms % 1000 }) catch {};
+    }
     writer.print("[{s}] ({s}) ", .{ @tagName(scope), @tagName(level) }) catch {};
     writer.print(fmt ++ "\r\n", args) catch {};
 
@@ -62,25 +66,15 @@ pub fn main() !void {
     // Port I/O only: no heap, paging, or ACPI. First so boot panics print.
     serial.init();
 
+    cpu.identify();
+    logger.info("zrno {s}", .{build_options.version});
+    cpu.logIdentity();
+
     try boot.init();
-
-    const bootloader_name = std.mem.span(boot.info().bootloader_info.name);
-    const bootloader_version = std.mem.span(boot.info().bootloader_info.version);
-    logger.info("{s} {s}", .{ bootloader_name, bootloader_version });
-
-    logger.info("Init CPUs", .{});
     try cpu.init();
-
-    logger.info("Init PMM", .{});
     try pmm.init();
-
-    logger.info("Init VMM", .{});
     try vmm.init();
-
-    logger.info("Init heap", .{});
     heap.init();
-
-    logger.info("Init ACPI", .{});
     try acpi.init();
 
     // HHDM offset is already in BSS. Copy framebuffer config before the
@@ -90,37 +84,25 @@ pub fn main() !void {
     // ACPI tables stay reserved. Limine responses are now unused.
     boot.drop();
 
-    logger.info("Init local APIC", .{});
     try cpu.bsp().initLapic();
-
-    logger.info("Init APIC", .{});
     try apic.init();
-
-    logger.info("Init video", .{});
     try video.init();
-
-    logger.info("Init PIT", .{});
     try pit.init();
-
-    logger.info("Init scheduler", .{});
     try sched.init();
 
     if (fadt.bootArch().has_8042) {
-        logger.info("Init PS/2 keyboard", .{});
         try ps2.init();
     } else {
-        logger.info("No 8042; skip PS/2 keyboard", .{});
+        logger.warn("no 8042; skip PS/2", .{});
     }
-
-    logger.info("Done.", .{});
-
-    tty.print("Zrno kernel {s}\n", .{build_options.version});
-    tty.print("READY.\n", .{});
 
     _ = try sched.spawnKernelThread(@intFromPtr(&shell.thread), 0);
 
     // Reclaim frees the Limine boot stack we are still on; do not pmm.alloc
     // again until yield has left it.
-    logger.info("Reclaim bootloader memory", .{});
     pmm.reclaimBootloader();
+
+    logger.info("ready", .{});
+    tty.print("Zrno kernel {s}\n", .{build_options.version});
+    tty.print("READY.\n", .{});
 }

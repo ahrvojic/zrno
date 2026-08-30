@@ -1,5 +1,3 @@
-const logger = std.log.scoped(.heap);
-
 const std = @import("std");
 
 const core = @import("heap_core.zig");
@@ -78,6 +76,5 @@ pub const HeapAllocator = struct {
 };
 
 pub fn init() void {
-    logger.info("Init kernel heap", .{});
     kernel_heap.init();
 }

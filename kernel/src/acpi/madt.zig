@@ -136,7 +136,6 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
 
         switch (entry.id) {
             0 => {
-                logger.info("Found local APIC", .{});
                 if (data.len < @sizeOf(Type0Lapic)) return error.InvalidMadt;
                 const raw = std.mem.bytesToValue(Type0Lapic, data[0..@sizeOf(Type0Lapic)]);
                 try lapics_value.append(.{
@@ -145,38 +144,38 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
                     .flags = raw.flags,
                     .x2apic = false,
                 });
+                logger.info("cpu {d} apic_id={d} flags=0x{x}", .{ raw.processor_id, raw.apic_id, raw.flags });
             },
             1 => {
-                logger.info("Found I/O APIC", .{});
                 if (data.len < @sizeOf(IOApic)) return error.InvalidMadt;
                 const io_apic = std.mem.bytesToValue(IOApic, data[0..@sizeOf(IOApic)]);
                 try io_apics_value.append(io_apic);
+                logger.info("ioapic {d} addr=0x{x} gsi_base={d}", .{ io_apic.apic_id, io_apic.address, io_apic.gsi_base });
             },
             2 => {
-                logger.info("Found I/O APIC interrupt source override", .{});
                 if (data.len < @sizeOf(IOApicISO)) return error.InvalidMadt;
                 const io_apic_iso = std.mem.bytesToValue(IOApicISO, data[0..@sizeOf(IOApicISO)]);
                 try io_apic_isos_value.append(io_apic_iso);
+                logger.info("irq {d} -> gsi {d} flags=0x{x}", .{ io_apic_iso.irq_source, io_apic_iso.gsi, io_apic_iso.flags });
             },
             3 => {
-                logger.info("Found I/O APIC NMI source", .{});
+                logger.debug("ioapic nmi source", .{});
             },
             4 => {
-                logger.info("Found local APIC NMIs", .{});
                 if (data.len < @sizeOf(LapicNMI)) return error.InvalidMadt;
                 const lapic_nmi = std.mem.bytesToValue(LapicNMI, data[0..@sizeOf(LapicNMI)]);
                 try lapic_nmis_value.append(lapic_nmi);
+                logger.debug("nmi cpu={d} lint={d}", .{ lapic_nmi.processor_id, lapic_nmi.lint });
             },
             5 => {
                 if (data.len < @sizeOf(Type5Override)) return error.InvalidMadt;
                 if (have_lapic_override) return error.InvalidMadt;
                 const override = std.mem.bytesToValue(Type5Override, data[0..@sizeOf(Type5Override)]);
-                logger.info("Found local APIC address override {x}", .{override.address});
+                logger.info("lapic address override 0x{x}", .{override.address});
                 lapic_address_value = override.address;
                 have_lapic_override = true;
             },
             9 => {
-                logger.info("Found local x2APIC", .{});
                 if (data.len < @sizeOf(Type9X2Apic)) return error.InvalidMadt;
                 const raw = std.mem.bytesToValue(Type9X2Apic, data[0..@sizeOf(Type9X2Apic)]);
                 try lapics_value.append(.{
@@ -185,19 +184,21 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
                     .flags = raw.flags,
                     .x2apic = true,
                 });
+                logger.info("cpu {d} apic_id={d} flags=0x{x} x2apic", .{ raw.uid, raw.apic_id, raw.flags });
             },
             else => {
-                logger.info("Found unrecognized entry", .{});
+                logger.warn("unknown MADT type {d} len={d}", .{ entry.id, entry.length });
             },
         }
 
         offset += @max(entry.length, header_size);
     }
 
-    logger.info("PCAT_COMPAT {} local APIC {x} processors {d}", .{
-        pcat_compat_value,
+    logger.info("lapic=0x{x} pcat={} cpus={d} ioapics={d}", .{
         lapic_address_value,
+        pcat_compat_value,
         lapics_value.len,
+        io_apics_value.len,
     });
     initialized = true;
 }

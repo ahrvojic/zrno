@@ -1,7 +1,3 @@
-const logger = std.log.scoped(.gdt);
-
-const std = @import("std");
-
 // GDT long mode selectors (index << 3). User selectors need | 3 for RPL
 // when loaded into CS/SS. Code-then-data is fine for iret; SYSRET wants
 // the opposite (user data at STAR+8, user code at STAR+16).
@@ -111,17 +107,14 @@ pub const GDT = struct {
             .base = @intFromPtr(self),
         };
 
-        logger.info("Load register", .{});
         asm volatile (
             \\lgdt (%[gdtr])
             :
             : [gdtr] "r" (&gdtr),
         );
 
-        logger.info("Reload selectors", .{});
         reload();
 
-        logger.info("Load TSS", .{});
         asm volatile (
             \\ltr %[tss_sel]
             :
@@ -151,6 +144,7 @@ inline fn reload() void {
 }
 
 test "GDT entry construction" {
+    const std = @import("std");
     const value = GDTEntry.make(0x80808000, 0x8000, 0, 0);
     const expected = GDTEntry{
         .base_1 = 0x8000,
@@ -164,6 +158,7 @@ test "GDT entry construction" {
 }
 
 test "TSS entry construction" {
+    const std = @import("std");
     const value = TSSEntry.make(0x800080808000, 0, 0);
     const expected = TSSEntry{
         .base_1 = 0x8000,

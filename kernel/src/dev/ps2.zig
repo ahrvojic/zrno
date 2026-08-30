@@ -153,6 +153,7 @@ pub fn init() !void {
     const lapic_id = cpu.bsp().lapicId();
     apic.routeIrq(lapic_id, ivt.vec_keyboard, 1);
     _ = port.inb(ps2_data_port);
+    logger.info("irq=1 vec={d}", .{ivt.vec_keyboard});
 }
 
 pub fn handleInterrupt() void {

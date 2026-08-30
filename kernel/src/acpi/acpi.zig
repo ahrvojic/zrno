@@ -52,13 +52,14 @@ const ACPI = struct {
         // addresses inside RSDP/XSDP are still physical.
         const rsdp: *align(1) const RSDP = @ptrCast(boot.info().rsdp.address);
 
+        const oem = std.mem.trimEnd(u8, &rsdp.oem_id, " \x00");
         if (rsdp.revision >= 2) {
-            logger.info("Load XSDT (ACPI revision {d})", .{rsdp.revision});
+            logger.info("XSDT rev={d} oem={s}", .{ rsdp.revision, oem });
             const xsdp: *align(1) const XSDP = @ptrCast(rsdp);
             self.rsdt = virt.toHH(*align(1) const SDT, xsdp.xsdt_addr);
             self.use_xsdt = true;
         } else {
-            logger.info("Load RSDT (ACPI revision {d})", .{rsdp.revision});
+            logger.info("RSDT rev={d} oem={s}", .{ rsdp.revision, oem });
             self.rsdt = virt.toHH(*align(1) const SDT, rsdp.rsdt_addr);
         }
     }
@@ -99,11 +100,9 @@ pub fn init() !void {
     var acpi: ACPI = .{};
     acpi.load();
 
-    logger.info("Load FADT", .{});
     const fadt_sdt = try acpi.findSDT("FACP", 0);
     try fadt.init(fadt_sdt);
 
-    logger.info("Load MADT", .{});
     const madt_sdt = try acpi.findSDT("APIC", 0);
     try madt.init(madt_sdt);
 }

@@ -123,10 +123,14 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
     }
 
     const boot_arch = parseBootArch(sdt.revision, fadt.boot_arch_flags);
-    logger.info(
-        "IAPC_BOOT_ARCH 8042={} VGA_NOT_PRESENT={} CMOS_RTC_NOT_PRESENT={} legacy_devices={}",
-        .{ boot_arch.has_8042, boot_arch.vga_not_present, boot_arch.cmos_rtc_not_present, boot_arch.legacy_devices },
-    );
+    logger.info("sci={d} smi_cmd=0x{x} 8042={} vga={} rtc={} legacy={}", .{
+        fadt.sci_interrupt,
+        fadt.smi_cmd_port,
+        boot_arch.has_8042,
+        !boot_arch.vga_not_present,
+        !boot_arch.cmos_rtc_not_present,
+        boot_arch.legacy_devices,
+    });
 
     info_value = .{
         .sci_interrupt = fadt.sci_interrupt,
@@ -165,11 +169,11 @@ fn enableAcpi(fadt: *align(1) const FADT) !void {
 
     const smi_cmd: u16 = @intCast(fadt.smi_cmd_port);
     if (inAcpiMode(fadt.pm1a_ctrl_block)) {
-        logger.info("Already in ACPI mode", .{});
+        logger.debug("already in ACPI mode", .{});
         return;
     }
 
-    logger.info("Enable ACPI mode via SMI_CMD {x}", .{smi_cmd});
+    logger.info("enable ACPI mode via SMI_CMD 0x{x}", .{smi_cmd});
     port.outb(smi_cmd, fadt.acpi_enable);
     waitAcpiMode(fadt.pm1a_ctrl_block);
 }

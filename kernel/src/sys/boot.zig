@@ -1,3 +1,7 @@
+const logger = std.log.scoped(.boot);
+
+const std = @import("std");
+
 const limine = @import("limine");
 
 const panic = @import("../lib/panic.zig").panic;
@@ -54,6 +58,16 @@ pub fn init() !void {
     };
     virt.init(info_value.higher_half.offset);
     state = .live;
+
+    const name = std.mem.span(info_value.bootloader_info.name);
+    const version = std.mem.span(info_value.bootloader_info.version);
+    logger.info("{s} {s} hhdm=0x{x} kernel phys=0x{x} virt=0x{x}", .{
+        name,
+        version,
+        info_value.higher_half.offset,
+        info_value.kernel.physical_base,
+        info_value.kernel.virtual_base,
+    });
 }
 
 /// Limine responses (and the boot stack) live in bootloader-reclaimable

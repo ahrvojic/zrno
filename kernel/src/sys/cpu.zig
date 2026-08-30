@@ -15,12 +15,27 @@ const msr_lapic = 0x1b;
 const rflags_if: u64 = 1 << 9;
 const apic_base_enable: u64 = 1 << 11;
 const apic_base_addr_mask: u64 = ~@as(u64, 0xfff);
+const tsc_feature: u32 = 1 << 4;
 
 const lapic_reg_id = 0x20;
 const lapic_reg_eoi = 0xb0;
 const lapic_reg_spurious = 0xf0;
 
 var bsp_value: CPU = .{};
+
+var vendor: [12]u8 = undefined;
+var display_family: u32 = 0;
+var display_model: u32 = 0;
+var tsc_ok = false;
+var tsc_origin: u64 = 0;
+var tsc_hz_value: u64 = 0;
+
+const Cpuid = struct {
+    eax: u32,
+    ebx: u32,
+    ecx: u32,
+    edx: u32,
+};
 
 // Layout matches interruptStub: last register pushed is first field,
 // then vector/error_code, then the CPU-pushed iretq frame.
@@ -77,18 +92,15 @@ pub const CPU = struct {
         // from the moment the TSS is loaded.
         self.tss.ist[ivt.ist_double_fault - 1] = @intFromPtr(&self.df_stack) + self.df_stack.len;
 
-        logger.info("Load GDT", .{});
         self.gdt.load(&self.tss);
-
-        logger.info("Load IDT", .{});
         self.idt.load();
         self.initialized = true;
+        logger.info("bsp gdt idt tss", .{});
     }
 
     pub fn initLapic(self: *@This()) !void {
         self.expectInit();
         self.expectLapicUninit();
-        logger.info("Init local APIC", .{});
 
         const phys = madt.lapicAddress();
         if (phys == 0 or phys & ~apic_base_addr_mask != 0) return error.InvalidLapicAddress;
@@ -101,6 +113,7 @@ pub const CPU = struct {
         self.lapic_base = virt.toHH(u64, phys);
         self.enableLapic();
         self.lapic_initialized = true;
+        logger.info("lapic 0x{x} id={d}", .{ phys, self.lapicId() });
     }
 
     pub fn eoi(self: *const @This()) void {
@@ -151,8 +164,112 @@ pub const CPU = struct {
 };
 
 pub fn init() !void {
-    logger.info("Init bootstrap processor", .{});
     bsp_value.init();
+}
+
+fn rdtsc() u64 {
+    var hi: u32 = undefined;
+    var lo: u32 = undefined;
+    asm volatile (
+        \\rdtsc
+        : [lo] "={eax}" (lo),
+          [hi] "={edx}" (hi),
+    );
+    return (@as(u64, hi) << 32) | lo;
+}
+
+pub fn identify() void {
+    if (tsc_origin == 0) tsc_origin = rdtsc();
+
+    const leaf0 = cpuid(0, 0);
+    std.mem.writeInt(u32, vendor[0..4], leaf0.ebx, .little);
+    std.mem.writeInt(u32, vendor[4..8], leaf0.edx, .little);
+    std.mem.writeInt(u32, vendor[8..12], leaf0.ecx, .little);
+
+    if (leaf0.eax >= 1) {
+        const leaf1 = cpuid(1, 0);
+        const fm = familyModel(leaf1.eax);
+        display_family = fm.family;
+        display_model = fm.model;
+        tsc_ok = leaf1.edx & tsc_feature != 0;
+    }
+
+    if (tsc_ok and tsc_hz_value == 0) {
+        tsc_hz_value = probeTscHz(leaf0.eax);
+    }
+}
+
+pub fn logIdentity() void {
+    if (tsc_hz_value != 0) {
+        logger.info("{s} family={d} model={d} tsc={d} MHz", .{
+            vendor,
+            display_family,
+            display_model,
+            tsc_hz_value / 1_000_000,
+        });
+    } else if (tsc_ok) {
+        logger.info("{s} family={d} model={d} tsc", .{ vendor, display_family, display_model });
+    } else {
+        logger.info("{s} family={d} model={d}", .{ vendor, display_family, display_model });
+    }
+}
+
+pub fn nsSinceBoot() ?u64 {
+    if (tsc_hz_value == 0) return null;
+    const delta = rdtsc() -% tsc_origin;
+    const hz = tsc_hz_value;
+    const sec = delta / hz;
+    const rem = delta % hz;
+    return sec * 1_000_000_000 + (rem * 1_000_000_000) / hz;
+}
+
+fn cpuid(leaf: u32, subleaf: u32) Cpuid {
+    var eax: u32 = undefined;
+    var ebx: u32 = undefined;
+    var ecx: u32 = undefined;
+    var edx: u32 = undefined;
+
+    asm volatile (
+        \\pushq %%rbx
+        \\cpuid
+        \\movl %%ebx, %%r8d
+        \\popq %%rbx
+        : [eax] "={eax}" (eax),
+          [ebx] "={r8d}" (ebx),
+          [ecx] "={ecx}" (ecx),
+          [edx] "={edx}" (edx),
+        : [leaf] "{eax}" (leaf),
+          [subleaf] "{ecx}" (subleaf),
+    );
+
+    return .{ .eax = eax, .ebx = ebx, .ecx = ecx, .edx = edx };
+}
+
+fn familyModel(eax: u32) struct { family: u32, model: u32 } {
+    const family_id = (eax >> 8) & 0xf;
+    const model_id = (eax >> 4) & 0xf;
+    const ext_model = (eax >> 16) & 0xf;
+    const ext_family = (eax >> 20) & 0xff;
+    const family = if (family_id == 0xf) family_id + ext_family else family_id;
+    const model = if (family_id == 0x6 or family_id == 0xf)
+        (ext_model << 4) + model_id
+    else
+        model_id;
+    return .{ .family = family, .model = model };
+}
+
+fn probeTscHz(max_leaf: u32) u64 {
+    if (max_leaf >= 0x15) {
+        const t = cpuid(0x15, 0);
+        if (t.eax != 0 and t.ebx != 0 and t.ecx != 0) {
+            return (@as(u64, t.ecx) * t.ebx) / t.eax;
+        }
+    }
+    if (max_leaf >= 0x16) {
+        const f = cpuid(0x16, 0);
+        if (f.eax != 0) return @as(u64, f.eax) * 1_000_000;
+    }
+    return 0;
 }
 
 pub fn bsp() *CPU {

@@ -1,3 +1,5 @@
+const logger = std.log.scoped(.pit);
+
 const std = @import("std");
 
 const apic = @import("apic.zig");
@@ -13,6 +15,7 @@ pub fn init() !void {
     try setFrequency(timer_freq_hz);
     const lapic_id = cpu.bsp().lapicId();
     apic.routeIrq(lapic_id, ivt.vec_pit, 0);
+    logger.info("{d} Hz irq=0 vec={d}", .{ timer_freq_hz, ivt.vec_pit });
 }
 
 pub fn getCount() u16 {

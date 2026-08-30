@@ -320,7 +320,6 @@ pub fn destroyPhys(pt_addr_phys: u64) void {
 
 pub fn init() !void {
     kernel_vmm.expectUninit();
-    logger.info("Init kernel VMM", .{});
 
     // Allocate L4 root page table
     kernel_vmm.pt_addr_phys = pmm.alloc(1) orelse return error.OutOfMemory;
@@ -334,21 +333,28 @@ pub fn init() !void {
     }
 
     // Base revision 6 maps only selected memory-map types into the HHDM.
-    logger.info("Mapping HHDM regions", .{});
+    var hhdm_bytes: u64 = 0;
+    logger.debug("mapping HHDM", .{});
     for (boot.info().memory_map.entries()) |entry| {
         if (!entry.kind.inHhdm()) continue;
+        const start = std.mem.alignBackward(u64, entry.base, pmm.page_size);
+        const end = std.mem.alignForward(u64, entry.base + entry.length, pmm.page_size);
+        hhdm_bytes += end - start;
         try mapHhdmRange(kernel_vmm.pt, entry.base, entry.base + entry.length);
     }
 
-    // Map kernel
-    logger.info("Mapping kernel", .{});
-    try mapKernelSection(&kernel_vmm, "text", @bitCast(Flags{ .present = true }));
-    try mapKernelSection(&kernel_vmm, "rodata", @bitCast(Flags{ .present = true, .noexec = true }));
-    try mapKernelSection(&kernel_vmm, "data", @bitCast(Flags{ .present = true, .writable = true, .noexec = true }));
+    const text = try mapKernelSection(&kernel_vmm, "text", @bitCast(Flags{ .present = true }));
+    const rodata = try mapKernelSection(&kernel_vmm, "rodata", @bitCast(Flags{ .present = true, .noexec = true }));
+    const data = try mapKernelSection(&kernel_vmm, "data", @bitCast(Flags{ .present = true, .writable = true, .noexec = true }));
 
-    // Switch address space
-    logger.info("Loading kernel VMM", .{});
     kernel_vmm.switchTo();
+    logger.info("hhdm {d} MiB, kernel text={d} KiB rodata={d} KiB data={d} KiB cr3=0x{x}", .{
+        hhdm_bytes / (1024 * 1024),
+        text / 1024,
+        rodata / 1024,
+        data / 1024,
+        kernel_vmm.pt_addr_phys,
+    });
 }
 
 fn mapHhdmRange(pt: *PageTable, base: u64, top: u64) !void {
@@ -363,7 +369,7 @@ fn mapHhdmRange(pt: *PageTable, base: u64, top: u64) !void {
     }
 }
 
-fn mapKernelSection(vmm: *VMM, comptime section_name: []const u8, flags: u64) !void {
+fn mapKernelSection(vmm: *VMM, comptime section_name: []const u8, flags: u64) !u64 {
     const section_start = @intFromPtr(@extern(*u8, .{ .name = section_name ++ "_start_addr" }));
     const section_end = @intFromPtr(@extern(*u8, .{ .name = section_name ++ "_end_addr" }));
 
@@ -374,6 +380,7 @@ fn mapKernelSection(vmm: *VMM, comptime section_name: []const u8, flags: u64) !v
     const size = virt_end - virt_start;
 
     try vmm.map(virt_start, phys_start, size, flags);
+    return size;
 }
 
 inline fn flushTLB(virt_addr: u64) void {

@@ -1,7 +1,3 @@
-const logger = std.log.scoped(.idt);
-
-const std = @import("std");
-
 const gdt = @import("gdt.zig");
 const ivt = @import("ivt.zig");
 
@@ -41,7 +37,6 @@ pub const IDT = struct {
     entries: [256]IDTEntry align(16) = undefined,
 
     pub fn load(self: *@This()) void {
-        logger.info("Set interrupt handlers", .{});
         inline for (0..self.entries.len) |i| {
             const handler = ivt.makeHandler(i);
             const ist: u8 = if (i == ivt.vec_double_fault) ivt.ist_double_fault else 0;
@@ -54,7 +49,6 @@ pub const IDT = struct {
             .base = @intFromPtr(self),
         };
 
-        logger.info("Load register", .{});
         asm volatile (
             \\lidt (%[idtr])
             :
@@ -64,6 +58,7 @@ pub const IDT = struct {
 };
 
 test "IDT entry construction" {
+    const std = @import("std");
     const value = IDTEntry.make(0x8000000080008000, 0, 0);
     const expected = IDTEntry{
         .offset_1 = 0x8000,

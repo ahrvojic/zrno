@@ -1,8 +1,13 @@
 //! 16550 UART. COM1 (0x3f8) first; SPCR can re-init via `initIo` later.
 
+const logger = std.log.scoped(.serial);
+
+const std = @import("std");
+
 const port = @import("../sys/port.zig");
 
 const com1_io: u16 = 0x3f8;
+const baud = 115200;
 
 const data = 0;
 const ier = 1;
@@ -46,6 +51,7 @@ pub fn initIo(base: u16) void {
     port.outb(base + mcr, mcr_dtr_rts_out2);
 
     present = true;
+    logger.info("COM1 0x{x} {d} 8N1", .{ base, baud });
 }
 
 pub fn write(bytes: []const u8) void {

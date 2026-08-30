@@ -135,7 +135,7 @@ pub fn init() !void {
     initialized = true;
 
     const info = captured orelse {
-        logger.info("No framebuffer", .{});
+        logger.warn("no framebuffer", .{});
         return;
     };
     if (info.bpp != 32) {
@@ -146,4 +146,5 @@ pub fn init() !void {
     }
 
     fb.init(info);
+    logger.info("{d}x{d} {d}bpp pitch={d}", .{ info.width, info.height, info.bpp, info.pitch });
 }
