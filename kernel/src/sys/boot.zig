@@ -17,7 +17,7 @@ export var rsdp_req: limine.RsdpRequest linksection(".limine_requests") = .{};
 
 const Info = struct {
     bootloader_info: *limine.BootloaderInfoResponse,
-    framebuffers: *limine.FramebufferResponse,
+    framebuffers: ?*limine.FramebufferResponse,
     higher_half: *limine.HhdmResponse,
     kernel: *limine.ExecutableAddressResponse,
     memory_map: *limine.MemoryMapResponse,
@@ -46,7 +46,7 @@ pub fn init() !void {
 
     info_value = .{
         .bootloader_info = bootloader_req.response orelse return error.NoBootloaderInfo,
-        .framebuffers = fb_req.response orelse return error.NoFramebuffer,
+        .framebuffers = fb_req.response,
         .higher_half = hhdm_req.response orelse return error.NoHhdm,
         .kernel = kaddr_req.response orelse return error.NoKernelAddress,
         .memory_map = mm_req.response orelse return error.NoMemoryMap,

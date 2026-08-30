@@ -77,24 +77,27 @@ pub fn main() !void {
     logger.info("Init VMM", .{});
     try vmm.init();
 
-    logger.info("Init local APIC", .{});
-    try cpu.bsp().initLapic();
-
-    logger.info("Init video", .{});
-    try video.init();
-
     logger.info("Init heap", .{});
     heap.init();
 
     logger.info("Init ACPI", .{});
     try acpi.init();
 
-    // HHDM offset and framebuffer metadata are in BSS; ACPI tables and
-    // framebuffer pixels stay reserved. Limine responses are now unused.
+    // HHDM offset is already in BSS. Copy framebuffer config before the
+    // Limine response goes away; pixels stay reserved via the memory map.
+    video.capture();
+
+    // ACPI tables stay reserved. Limine responses are now unused.
     boot.drop();
+
+    logger.info("Init local APIC", .{});
+    try cpu.bsp().initLapic();
 
     logger.info("Init APIC", .{});
     try apic.init();
+
+    logger.info("Init video", .{});
+    try video.init();
 
     logger.info("Init PIT", .{});
     try pit.init();

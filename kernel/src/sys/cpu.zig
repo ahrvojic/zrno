@@ -5,6 +5,7 @@ const std = @import("std");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const ivt = @import("ivt.zig");
+const madt = @import("../acpi/madt.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("../sched/proc.zig");
 const virt = @import("../lib/virt.zig");
@@ -12,6 +13,8 @@ const vmm = @import("../mm/vmm.zig");
 
 const msr_lapic = 0x1b;
 const rflags_if: u64 = 1 << 9;
+const apic_base_enable: u64 = 1 << 11;
+const apic_base_addr_mask: u64 = ~@as(u64, 0xfff);
 
 const lapic_reg_id = 0x20;
 const lapic_reg_eoi = 0xb0;
@@ -86,7 +89,14 @@ pub const CPU = struct {
         self.expectInit();
         self.expectLapicUninit();
         logger.info("Init local APIC", .{});
-        const phys = readMSR(msr_lapic) & 0xfffff000;
+
+        const phys = madt.lapicAddress();
+        if (phys == 0 or phys & ~apic_base_addr_mask != 0) return error.InvalidLapicAddress;
+
+        // MADT (header or type 5 override) is the firmware LAPIC address.
+        const msr = readMSR(msr_lapic);
+        writeMSR(msr_lapic, (msr & ~apic_base_addr_mask) | phys | apic_base_enable);
+
         try vmm.kernel_vmm.mapMmio(phys, pmm.page_size);
         self.lapic_base = virt.toHH(u64, phys);
         self.enableLapic();

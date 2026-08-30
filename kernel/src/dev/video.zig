@@ -1,10 +1,21 @@
+const logger = std.log.scoped(.video);
+
 const std = @import("std");
-const limine = @import("limine");
 
 const boot = @import("../sys/boot.zig");
 const font = @import("font.zig");
 const panic = @import("../lib/panic.zig").panic;
 
+const Captured = struct {
+    address: [*]u8,
+    width: u64,
+    height: u64,
+    pitch: u64,
+    bpp: u16,
+};
+
+var captured: ?Captured = null;
+var initialized = false;
 var fb: Framebuffer = .{};
 
 const Framebuffer = struct {
@@ -17,7 +28,7 @@ const Framebuffer = struct {
     max_col: u64 = 80,
     initialized: bool = false,
 
-    fn init(self: *@This(), src: *const limine.Framebuffer) void {
+    fn init(self: *@This(), src: Captured) void {
         self.expectUninit();
         self.address = src.address;
         self.width = src.width;
@@ -105,14 +116,28 @@ pub fn maxCol() u64 {
     return fb.max_col;
 }
 
+/// Copy Limine framebuffer metadata into BSS. Call before `boot.drop()`.
+pub fn capture() void {
+    const fbs = boot.info().framebuffers orelse return;
+    if (fbs.framebuffer_count < 1) return;
+    const src = fbs.framebuffers()[0];
+    captured = .{
+        .address = src.address,
+        .width = src.width,
+        .height = src.height,
+        .pitch = src.pitch,
+        .bpp = src.bpp,
+    };
+}
+
 pub fn init() !void {
-    if (fb.initialized) panic("video already initialized");
+    if (initialized) panic("video already initialized");
+    initialized = true;
 
-    if (boot.info().framebuffers.framebuffer_count < 1) {
-        panic("No framebuffer available!");
-    }
-
-    const info = boot.info().framebuffers.framebuffers()[0];
+    const info = captured orelse {
+        logger.info("No framebuffer", .{});
+        return;
+    };
     if (info.bpp != 32) {
         panic("Only 32-bit framebuffers are supported!");
     }
