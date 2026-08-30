@@ -17,6 +17,34 @@ const Decode = struct {
 };
 
 const ps2_data_port = 0x60;
+const ps2_status_port = 0x64;
+const ps2_cmd_port = 0x64;
+
+const status_out_full: u8 = 1 << 0;
+const status_in_full: u8 = 1 << 1;
+
+const cmd_read_cfg: u8 = 0x20;
+const cmd_write_cfg: u8 = 0x60;
+const cmd_disable_p2: u8 = 0xa7;
+const cmd_test_ctrl: u8 = 0xaa;
+const cmd_test_p1: u8 = 0xab;
+const cmd_disable_p1: u8 = 0xad;
+const cmd_enable_p1: u8 = 0xae;
+
+const cfg_irq1: u8 = 1 << 0;
+const cfg_irq2: u8 = 1 << 1;
+const cfg_clock1_disable: u8 = 1 << 4;
+const cfg_clock2_disable: u8 = 1 << 5;
+const cfg_transl: u8 = 1 << 6;
+
+const kbd_reset: u8 = 0xff;
+const kbd_enable_scan: u8 = 0xf4;
+const resp_ack: u8 = 0xfa;
+const resp_bat_ok: u8 = 0xaa;
+const resp_ctrl_ok: u8 = 0x55;
+const resp_port_ok: u8 = 0x00;
+
+const io_spins: u32 = 0xfffff;
 
 pub const Key = enum {
     esc,
@@ -148,12 +176,119 @@ var kb_tail: KbIndex = 0;
 
 var keyboard_state: KeyboardState = .{ .modifiers = std.StaticBitSet(4).initEmpty() };
 var lock: Lock.SpinLock = .{};
+var initialized = false;
 
 pub fn init() !void {
+    if (initialized) @panic("ps2 already initialized");
+    initialized = true;
+
+    initController() catch |err| {
+        logger.warn("8042 init failed: {s}; skip keyboard", .{@errorName(err)});
+        return;
+    };
+
     const lapic_id = cpu.bsp().lapicId();
     apic.routeIrq(lapic_id, ivt.vec_keyboard, 1);
-    _ = port.inb(ps2_data_port);
     logger.info("irq=1 vec={d}", .{ivt.vec_keyboard});
+}
+
+fn initController() !void {
+    try writeCmd(cmd_disable_p1);
+    try writeCmd(cmd_disable_p2);
+    flushOutput();
+
+    var cfg = try readConfig();
+    cfg &= ~(cfg_irq1 | cfg_irq2 | cfg_transl);
+    cfg |= cfg_clock2_disable;
+    try writeConfig(cfg);
+
+    try writeCmd(cmd_test_ctrl);
+    if (try readData() != resp_ctrl_ok) return error.SelfTest;
+
+    // Self-test may reset the config byte.
+    cfg = try readConfig();
+    cfg &= ~(cfg_irq1 | cfg_irq2 | cfg_transl);
+    cfg |= cfg_clock2_disable;
+    try writeConfig(cfg);
+
+    try writeCmd(cmd_test_p1);
+    if (try readData() != resp_port_ok) return error.PortTest;
+
+    try writeCmd(cmd_enable_p1);
+
+    cfg = try readConfig();
+    cfg |= cfg_irq1 | cfg_transl;
+    cfg &= ~(cfg_irq2 | cfg_clock1_disable);
+    cfg |= cfg_clock2_disable;
+    try writeConfig(cfg);
+
+    try resetKeyboard();
+}
+
+fn resetKeyboard() !void {
+    flushOutput();
+    try writeData(kbd_reset);
+    var got_ack = false;
+    var got_bat = false;
+    var i: u32 = 0;
+    while (i < 4 and !(got_ack and got_bat)) : (i += 1) {
+        switch (try readData()) {
+            resp_ack => got_ack = true,
+            resp_bat_ok => got_bat = true,
+            0xfe => try writeData(kbd_reset),
+            else => return error.NoDevice,
+        }
+    }
+    if (!got_ack or !got_bat) return error.NoDevice;
+    try writeData(kbd_enable_scan);
+    if (try readData() != resp_ack) return error.NoDevice;
+}
+
+fn writeCmd(cmd: u8) !void {
+    try waitInputEmpty();
+    port.outb(ps2_cmd_port, cmd);
+}
+
+fn writeData(value: u8) !void {
+    try waitInputEmpty();
+    port.outb(ps2_data_port, value);
+}
+
+fn readData() !u8 {
+    try waitOutputFull();
+    return port.inb(ps2_data_port);
+}
+
+fn readConfig() !u8 {
+    try writeCmd(cmd_read_cfg);
+    return readData();
+}
+
+fn writeConfig(cfg: u8) !void {
+    try writeCmd(cmd_write_cfg);
+    try writeData(cfg);
+}
+
+fn flushOutput() void {
+    var spins: u32 = 0;
+    while (port.inb(ps2_status_port) & status_out_full != 0) : (spins += 1) {
+        _ = port.inb(ps2_data_port);
+        if (spins >= io_spins) return;
+    }
+}
+
+fn waitInputEmpty() !void {
+    var spins: u32 = 0;
+    while (port.inb(ps2_status_port) & status_in_full != 0) : (spins += 1) {
+        if (spins >= io_spins) return error.Timeout;
+    }
+}
+
+fn waitOutputFull() !void {
+    var spins: u32 = 0;
+    while (port.inb(ps2_status_port) & status_out_full == 0) : (spins += 1) {
+        if (spins >= io_spins) return error.Timeout;
+    }
 }
 
 pub fn handleInterrupt() void {

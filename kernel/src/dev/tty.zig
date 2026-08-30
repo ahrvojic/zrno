@@ -2,6 +2,7 @@ const std = @import("std");
 
 const Lock = @import("../lib/lock.zig");
 const sched = @import("../sched/sched.zig");
+const serial = @import("serial.zig");
 const video = @import("video.zig");
 
 var row: u64 = 0;
@@ -17,6 +18,7 @@ comptime {
 var in_buf: [in_capacity]u8 = undefined;
 var in_head: InIndex = 0;
 var in_tail: InIndex = 0;
+var serial_saw_cr = false;
 
 pub fn writeBytes(string: []const u8) void {
     lock.lock();
@@ -70,11 +72,20 @@ pub fn enqueue(ch: u8) void {
     if (!isInputChar(ch)) return;
     lock.lock();
     defer lock.unlock();
-    const next = in_tail +% 1;
-    if (next == in_head) return;
-    in_buf[in_tail] = ch;
-    in_tail = next;
-    sched.wakeup(&in_buf);
+    enqueueUnlocked(ch);
+}
+
+// Drain the UART into the input ring. Call from the timer IRQ before
+// taking the sched lock (wakeup takes sched).
+pub fn pollSerial() void {
+    lock.lock();
+    defer lock.unlock();
+    var n: u32 = 0;
+    while (n < 16) : (n += 1) {
+        const raw = serial.readByte() orelse break;
+        const ch = mapSerialByte(raw) orelse continue;
+        enqueueUnlocked(ch);
+    }
 }
 
 pub fn getChar() u8 {
@@ -118,6 +129,29 @@ fn isInputChar(ch: u8) bool {
     return ch == '\n' or ch == '\x08' or (ch >= 0x20 and ch <= 0x7e);
 }
 
+fn mapSerialByte(b: u8) ?u8 {
+    if (b == '\n' and serial_saw_cr) {
+        serial_saw_cr = false;
+        return null;
+    }
+    serial_saw_cr = b == '\r';
+    const ch: u8 = switch (b) {
+        '\r' => '\n',
+        0x7f => '\x08',
+        else => b,
+    };
+    if (!isInputChar(ch)) return null;
+    return ch;
+}
+
+fn enqueueUnlocked(ch: u8) void {
+    const next = in_tail +% 1;
+    if (next == in_head) return;
+    in_buf[in_tail] = ch;
+    in_tail = next;
+    sched.wakeup(&in_buf);
+}
+
 fn write(string: []const u8) void {
     for (string) |ch| {
         putCharUnlocked(ch);
@@ -125,6 +159,19 @@ fn write(string: []const u8) void {
 }
 
 fn putCharUnlocked(ch: u8) void {
+    putSerial(ch);
+    putVideo(ch);
+}
+
+fn putSerial(ch: u8) void {
+    switch (ch) {
+        '\n' => serial.write("\r\n"),
+        '\x08' => serial.write("\x08 \x08"),
+        else => serial.write(&.{ch}),
+    }
+}
+
+fn putVideo(ch: u8) void {
     if (!video.isReady()) return;
 
     switch (ch) {

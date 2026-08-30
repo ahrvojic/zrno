@@ -21,6 +21,7 @@ const lcr_dlab: u8 = 0x80;
 const lcr_8n1: u8 = 0x03;
 const fcr_init: u8 = 0xc7;
 const mcr_dtr_rts_out2: u8 = 0x0b;
+const lsr_dr: u8 = 1 << 0;
 const lsr_thre: u8 = 0x20;
 const thre_spins: u32 = 0xffff;
 
@@ -61,6 +62,12 @@ pub fn write(bytes: []const u8) void {
         if (!waitThre()) return;
         port.outb(io_base + data, byte);
     }
+}
+
+pub fn readByte() ?u8 {
+    if (!present) return null;
+    if (port.inb(io_base + lsr) & lsr_dr == 0) return null;
+    return port.inb(io_base + data);
 }
 
 fn scratchOk(base: u16) bool {

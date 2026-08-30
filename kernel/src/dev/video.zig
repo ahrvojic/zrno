@@ -134,15 +134,19 @@ pub fn init() !void {
     if (initialized) panic("video already initialized");
     initialized = true;
 
+    // GOP/Limine FB is independent of FADT VGA_NOT_PRESENT (legacy VGA
+    // I/O). Missing or unusable FB: stay on serial; do not panic.
     const info = captured orelse {
         logger.warn("no framebuffer", .{});
         return;
     };
     if (info.bpp != 32) {
-        panic("Only 32-bit framebuffers are supported!");
+        logger.warn("{d} bpp framebuffer; skip", .{info.bpp});
+        return;
     }
     if (info.width < font.builtin.width or info.height < font.builtin.height) {
-        panic("Framebuffer too small for builtin font!");
+        logger.warn("framebuffer {d}x{d} too small; skip", .{ info.width, info.height });
+        return;
     }
 
     fb.init(info);

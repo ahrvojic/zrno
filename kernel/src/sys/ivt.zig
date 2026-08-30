@@ -7,6 +7,7 @@ const debug = @import("../lib/debug.zig");
 const panic = @import("../lib/panic.zig").panic;
 const ps2 = @import("../dev/ps2.zig");
 const sched = @import("../sched/sched.zig");
+const tty = @import("../dev/tty.zig");
 const syscall = @import("syscall.zig");
 const vmm = @import("../mm/vmm.zig");
 
@@ -55,6 +56,7 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
             fatalException(ctx, "Unhandled page fault");
         },
         vec_pit => {
+            tty.pollSerial();
             sched.tick(ctx);
             cpu.current().eoi();
         },
