@@ -39,10 +39,10 @@ fn log(
 
     if (cpu.nsSinceBoot()) |ns| {
         const ms = ns / 1_000_000;
-        writer.print("[{d:>3}.{d:0>3}] ", .{ ms / 1000, ms % 1000 }) catch {};
+        debug.printTo(&writer, "[{d:>3}.{d:0>3}] ", .{ ms / 1000, ms % 1000 });
     }
-    writer.print("[{s}] ({s}) ", .{ @tagName(scope), @tagName(level) }) catch {};
-    writer.print(fmt ++ "\r\n", args) catch {};
+    debug.printTo(&writer, "[{s}] ({s}) ", .{ @tagName(scope), @tagName(level) });
+    debug.printTo(&writer, fmt ++ "\r\n", args);
 
     debug.print(writer.buffered());
 }
@@ -51,7 +51,7 @@ export fn _start() callconv(.c) noreturn {
     main() catch |err| {
         var buf: [64]u8 = undefined;
         var writer: std.Io.Writer = .fixed(&buf);
-        writer.print("Kernel init failed: {s}", .{@errorName(err)}) catch {};
+        debug.printTo(&writer, "Kernel init failed: {s}", .{@errorName(err)});
         @panic(writer.buffered());
     };
     // Not a scheduled thread: yield discards this context and never returns.

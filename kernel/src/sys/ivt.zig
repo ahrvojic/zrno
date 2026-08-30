@@ -187,10 +187,10 @@ fn printRegisters(ctx: *cpu.Context) void {
     // Lock-free: we may already hold the debug lock, or be on the DF IST.
     var buf: [512]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&buf);
-    writer.print("rax={x:0>16} rbx={x:0>16} rcx={x:0>16} rdx={x:0>16}\r\n", .{ ctx.rax, ctx.rbx, ctx.rcx, ctx.rdx }) catch {};
-    writer.print("rbp={x:0>16} rdi={x:0>16} rsi={x:0>16} rsp={x:0>16}\r\n", .{ ctx.rbp, ctx.rdi, ctx.rsi, ctx.rsp }) catch {};
-    writer.print(" r8={x:0>16}  r9={x:0>16} r10={x:0>16} r11={x:0>16}\r\n", .{ ctx.r8, ctx.r9, ctx.r10, ctx.r11 }) catch {};
-    writer.print("r12={x:0>16} r13={x:0>16} r14={x:0>16} r15={x:0>16}\r\n", .{ ctx.r12, ctx.r13, ctx.r14, ctx.r15 }) catch {};
-    writer.print("rip={x:0>16} cr2={x:0>16} cr3={x:0>16} vec={d} err={x:0>16}\r\n", .{ ctx.rip, cr2, cr3, ctx.vector, ctx.error_code }) catch {};
+    debug.printTo(&writer, "rax={x:0>16} rbx={x:0>16} rcx={x:0>16} rdx={x:0>16}\r\n", .{ ctx.rax, ctx.rbx, ctx.rcx, ctx.rdx });
+    debug.printTo(&writer, "rbp={x:0>16} rdi={x:0>16} rsi={x:0>16} rsp={x:0>16}\r\n", .{ ctx.rbp, ctx.rdi, ctx.rsi, ctx.rsp });
+    debug.printTo(&writer, " r8={x:0>16}  r9={x:0>16} r10={x:0>16} r11={x:0>16}\r\n", .{ ctx.r8, ctx.r9, ctx.r10, ctx.r11 });
+    debug.printTo(&writer, "r12={x:0>16} r13={x:0>16} r14={x:0>16} r15={x:0>16}\r\n", .{ ctx.r12, ctx.r13, ctx.r14, ctx.r15 });
+    debug.printTo(&writer, "rip={x:0>16} cr2={x:0>16} cr3={x:0>16} vec={d} err={x:0>16}\r\n", .{ ctx.rip, cr2, cr3, ctx.vector, ctx.error_code });
     debug.printUnsafe(writer.buffered());
 }
