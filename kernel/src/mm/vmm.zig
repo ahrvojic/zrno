@@ -75,7 +75,7 @@ const PageTable = extern struct {
     entries: [page_table_entries]PageTableEntry,
 
     pub fn mapPage(self: *PageTable, virt_addr: usize, phys_addr: usize, flags: Flags) !void {
-        const entry = try self.virtToPTE(virt_addr, true);
+        const entry = try self.virtToPTE(virt_addr, true, flags.user);
         const entry_flags = entry.getFlags();
 
         if (!entry_flags.present) {
@@ -87,7 +87,7 @@ const PageTable = extern struct {
     }
 
     pub fn remapPage(self: *PageTable, virt_addr: usize, phys_addr: usize, flags: Flags) !void {
-        const entry = try self.virtToPTE(virt_addr, false);
+        const entry = try self.virtToPTE(virt_addr, false, false);
         const entry_flags = entry.getFlags();
 
         if (entry_flags.present) {
@@ -100,7 +100,7 @@ const PageTable = extern struct {
     }
 
     pub fn unmapPage(self: *PageTable, virt_addr: usize) !void {
-        const entry = try self.virtToPTE(virt_addr, false);
+        const entry = try self.virtToPTE(virt_addr, false, false);
         const entry_flags = entry.getFlags();
 
         if (entry_flags.present) {
@@ -112,7 +112,7 @@ const PageTable = extern struct {
         }
     }
 
-    pub fn virtToPTE(self: *PageTable, virt_addr: usize, allocate: bool) !*PageTableEntry {
+    pub fn virtToPTE(self: *PageTable, virt_addr: usize, allocate: bool, user: bool) !*PageTableEntry {
         // Extract page table indexes from virtual address
         const pml4_idx = (virt_addr >> 39) & page_table_index_mask;
         const pml3_idx = (virt_addr >> 30) & page_table_index_mask;
@@ -120,24 +120,26 @@ const PageTable = extern struct {
         const pml1_idx = (virt_addr >> 12) & page_table_index_mask;
 
         // Walk page table hierarchy to entry
-        const pml3 = self.getNextLevel(pml4_idx, allocate) orelse return error.PTENotFound;
-        const pml2 = pml3.getNextLevel(pml3_idx, allocate) orelse return error.PTENotFound;
-        const pml1 = pml2.getNextLevel(pml2_idx, allocate) orelse return error.PTENotFound;
+        const pml3 = self.getNextLevel(pml4_idx, allocate, user) orelse return error.PTENotFound;
+        const pml2 = pml3.getNextLevel(pml3_idx, allocate, user) orelse return error.PTENotFound;
+        const pml1 = pml2.getNextLevel(pml2_idx, allocate, user) orelse return error.PTENotFound;
         return &pml1.entries[pml1_idx];
     }
 
-    pub fn getNextLevel(self: *PageTable, index: usize, allocate: bool) ?*PageTable {
+    pub fn getNextLevel(self: *PageTable, index: usize, allocate: bool, user: bool) ?*PageTable {
         const entry = &self.entries[index];
         const entry_flags = entry.getFlags();
 
         if (entry_flags.present) {
+            // User leaves need U=1 on every ancestor; never clear U for a kernel map.
+            if (allocate and user and !entry_flags.user) {
+                entry.setFlags(.{ .present = true, .writable = true, .user = true });
+            }
             return virt.toHH(*PageTable, entry.getAddress());
         } else if (allocate) {
             const next_level = pmm.alloc(1) orelse return null;
             entry.setAddress(next_level);
-            // User pages are reachable only if every ancestor is user;
-            // kernel leaves still protect kernel pages.
-            entry.setFlags(.{ .present = true, .writable = true, .user = true });
+            entry.setFlags(.{ .present = true, .writable = true, .user = user });
             return virt.toHH(*PageTable, next_level);
         }
 
@@ -241,7 +243,7 @@ pub const VMM = struct {
         self.expectInit();
         self.lock.lock();
         defer self.lock.unlock();
-        const entry = try self.pt.virtToPTE(virt_addr, false);
+        const entry = try self.pt.virtToPTE(virt_addr, false, false);
         const entry_flags = entry.getFlags();
 
         if (entry_flags.present) {
@@ -294,7 +296,7 @@ pub const VMM = struct {
 
     fn userPagePhysLocked(self: *VMM, virt_addr: usize, write: bool) error{ Fault, OutOfMemory }!usize {
         const base = std.mem.alignBackward(usize, virt_addr, pmm.page_size);
-        const entry = self.pt.virtToPTE(base, false) catch {
+        const entry = self.pt.virtToPTE(base, false, false) catch {
             return self.populateUserPageLocked(base);
         };
         const flags = entry.getFlags();
@@ -407,7 +409,7 @@ pub fn init() !void {
     // Pre-allocate higher half L3 tables to facilitate sharing kernel space
     // across user spaces
     for (kernel_pml4_start..page_table_entries) |i| {
-        _ = kernel_vmm.pt.getNextLevel(i, true) orelse return error.OutOfMemory;
+        _ = kernel_vmm.pt.getNextLevel(i, true, false) orelse return error.OutOfMemory;
     }
 
     // Base revision 6 maps only selected memory-map types into the HHDM.
