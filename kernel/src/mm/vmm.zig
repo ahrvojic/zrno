@@ -11,11 +11,20 @@ pub var kernel_vmm: VMM = .{};
 
 const flags_mask: u64 = 0xfff0_0000_0000_0fff;
 
+// 4K PTE flags. Intel SDM Vol. 3 Table 4-19.
 pub const Flags = packed struct(u64) {
     present: bool = false,
     writable: bool = false,
     user: bool = false,
-    _padding: u60 = 0,
+    write_through: bool = false, // PWT
+    cache_disable: bool = false, // PCD
+    accessed: bool = false,
+    dirty: bool = false,
+    huge: bool = false, // PS on PD/PDPT; PAT on 4K PTE
+    global: bool = false,
+    _avl: u3 = 0,
+    _phys: u40 = 0,
+    _ignored: u11 = 0,
     noexec: bool = false,
 };
 
@@ -35,16 +44,16 @@ const PageTableEntry = extern struct {
         return @intCast(self.value & ~flags_mask);
     }
 
-    pub fn getFlags(self: *const PageTableEntry) u64 {
-        return self.value & flags_mask;
+    pub fn getFlags(self: *const PageTableEntry) Flags {
+        return @bitCast(self.value & flags_mask);
     }
 
     pub fn setAddress(self: *PageTableEntry, address: usize) void {
-        self.value = @as(u64, @intCast(address)) | self.getFlags();
+        self.value = @as(u64, @intCast(address)) | @as(u64, @bitCast(self.getFlags()));
     }
 
-    pub fn setFlags(self: *PageTableEntry, flags: u64) void {
-        self.value = self.getAddress() | flags;
+    pub fn setFlags(self: *PageTableEntry, flags: Flags) void {
+        self.value = self.getAddress() | @as(u64, @bitCast(flags));
     }
 };
 
@@ -65,9 +74,9 @@ pub fn userRange(addr: usize, len: usize) bool {
 const PageTable = extern struct {
     entries: [page_table_entries]PageTableEntry,
 
-    pub fn mapPage(self: *PageTable, virt_addr: usize, phys_addr: usize, flags: u64) !void {
+    pub fn mapPage(self: *PageTable, virt_addr: usize, phys_addr: usize, flags: Flags) !void {
         const entry = try self.virtToPTE(virt_addr, true);
-        const entry_flags: Flags = @bitCast(entry.getFlags());
+        const entry_flags = entry.getFlags();
 
         if (!entry_flags.present) {
             entry.setAddress(phys_addr);
@@ -77,9 +86,9 @@ const PageTable = extern struct {
         }
     }
 
-    pub fn remapPage(self: *PageTable, virt_addr: usize, phys_addr: usize, flags: u64) !void {
+    pub fn remapPage(self: *PageTable, virt_addr: usize, phys_addr: usize, flags: Flags) !void {
         const entry = try self.virtToPTE(virt_addr, false);
-        const entry_flags: Flags = @bitCast(entry.getFlags());
+        const entry_flags = entry.getFlags();
 
         if (entry_flags.present) {
             entry.setAddress(phys_addr);
@@ -92,11 +101,11 @@ const PageTable = extern struct {
 
     pub fn unmapPage(self: *PageTable, virt_addr: usize) !void {
         const entry = try self.virtToPTE(virt_addr, false);
-        const entry_flags: Flags = @bitCast(entry.getFlags());
+        const entry_flags = entry.getFlags();
 
         if (entry_flags.present) {
             entry.setAddress(0);
-            entry.setFlags(@bitCast(Flags{}));
+            entry.setFlags(.{});
             flushTLB(virt_addr);
         } else {
             return error.NotMapped;
@@ -119,7 +128,7 @@ const PageTable = extern struct {
 
     pub fn getNextLevel(self: *PageTable, index: usize, allocate: bool) ?*PageTable {
         const entry = &self.entries[index];
-        const entry_flags: Flags = @bitCast(entry.getFlags());
+        const entry_flags = entry.getFlags();
 
         if (entry_flags.present) {
             return virt.toHH(*PageTable, entry.getAddress());
@@ -128,7 +137,7 @@ const PageTable = extern struct {
             entry.setAddress(next_level);
             // User pages are reachable only if every ancestor is user;
             // kernel leaves still protect kernel pages.
-            entry.setFlags(@bitCast(Flags{ .present = true, .writable = true, .user = true }));
+            entry.setFlags(.{ .present = true, .writable = true, .user = true });
             return virt.toHH(*PageTable, next_level);
         }
 
@@ -138,7 +147,7 @@ const PageTable = extern struct {
     // `level` 3 = PDPT, 2 = PD, 1 = PT. Present leaves are mapped pages.
     fn freeLevel(self: *PageTable, level: u8) void {
         for (&self.entries) |*entry| {
-            const entry_flags: Flags = @bitCast(entry.getFlags());
+            const entry_flags = entry.getFlags();
             if (!entry_flags.present) continue;
             const phys = entry.getAddress();
             if (level > 1) {
@@ -151,7 +160,7 @@ const PageTable = extern struct {
     fn freeLowerHalf(self: *PageTable) void {
         for (0..kernel_pml4_start) |i| {
             const entry = &self.entries[i];
-            const entry_flags: Flags = @bitCast(entry.getFlags());
+            const entry_flags = entry.getFlags();
             if (!entry_flags.present) continue;
             const phys = entry.getAddress();
             virt.toHH(*PageTable, phys).freeLevel(3);
@@ -166,7 +175,7 @@ pub const VMM = struct {
     lock: Lock.SpinLock = .{},
     initialized: bool = false,
 
-    pub fn map(self: *VMM, virt_addr: usize, phys_addr: usize, size: usize, flags: u64) !void {
+    pub fn map(self: *VMM, virt_addr: usize, phys_addr: usize, size: usize, flags: Flags) !void {
         self.expectInit();
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
@@ -183,7 +192,7 @@ pub const VMM = struct {
         }
     }
 
-    pub fn remap(self: *VMM, virt_addr: usize, phys_addr: usize, size: usize, flags: u64) !void {
+    pub fn remap(self: *VMM, virt_addr: usize, phys_addr: usize, size: usize, flags: Flags) !void {
         self.expectInit();
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
@@ -220,7 +229,12 @@ pub const VMM = struct {
         std.debug.assert(size > 0);
         self.lock.lock();
         defer self.lock.unlock();
-        try mapHhdmRange(self.pt, phys_addr, phys_addr + size);
+        try mapHhdmRange(self.pt, phys_addr, phys_addr + size, .{
+            .present = true,
+            .writable = true,
+            .cache_disable = true,
+            .noexec = true,
+        });
     }
 
     pub fn virtToPhys(self: *VMM, virt_addr: usize) !usize {
@@ -228,7 +242,7 @@ pub const VMM = struct {
         self.lock.lock();
         defer self.lock.unlock();
         const entry = try self.pt.virtToPTE(virt_addr, false);
-        const entry_flags: Flags = @bitCast(entry.getFlags());
+        const entry_flags = entry.getFlags();
 
         if (entry_flags.present) {
             return entry.getAddress() + (virt_addr & (pmm.page_size - 1));
@@ -283,7 +297,7 @@ pub const VMM = struct {
         const entry = self.pt.virtToPTE(base, false) catch {
             return self.populateUserPageLocked(base);
         };
-        const flags: Flags = @bitCast(entry.getFlags());
+        const flags = entry.getFlags();
         if (!flags.present) {
             return self.populateUserPageLocked(base);
         }
@@ -296,7 +310,7 @@ pub const VMM = struct {
         const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
         errdefer pmm.free(phys_addr, 1);
         const flags = Flags{ .present = true, .writable = true, .user = true };
-        self.pt.mapPage(base_addr, phys_addr, @bitCast(flags)) catch |err| switch (err) {
+        self.pt.mapPage(base_addr, phys_addr, flags) catch |err| switch (err) {
             error.AlreadyMapped => @panic("populate already mapped"),
             error.PTENotFound => return error.OutOfMemory,
         };
@@ -406,12 +420,12 @@ pub fn init() !void {
         const start = std.mem.alignBackward(usize, base, pmm.page_size);
         const end = std.mem.alignForward(usize, top, pmm.page_size);
         hhdm_bytes += end - start;
-        try mapHhdmRange(kernel_vmm.pt, base, top);
+        try mapHhdmRange(kernel_vmm.pt, base, top, .{ .present = true, .writable = true, .noexec = true });
     }
 
-    const text = try mapKernelSection(&kernel_vmm, "text", @bitCast(Flags{ .present = true }));
-    const rodata = try mapKernelSection(&kernel_vmm, "rodata", @bitCast(Flags{ .present = true, .noexec = true }));
-    const data = try mapKernelSection(&kernel_vmm, "data", @bitCast(Flags{ .present = true, .writable = true, .noexec = true }));
+    const text = try mapKernelSection(&kernel_vmm, "text", .{ .present = true });
+    const rodata = try mapKernelSection(&kernel_vmm, "rodata", .{ .present = true, .noexec = true });
+    const data = try mapKernelSection(&kernel_vmm, "data", .{ .present = true, .writable = true, .noexec = true });
 
     kernel_vmm.switchTo();
     logger.info("hhdm {d} MiB, kernel text={d} KiB rodata={d} KiB data={d} KiB cr3=0x{x}", .{
@@ -423,8 +437,7 @@ pub fn init() !void {
     });
 }
 
-fn mapHhdmRange(pt: *PageTable, base: usize, top: usize) !void {
-    const flags: u64 = @bitCast(Flags{ .present = true, .writable = true, .noexec = true });
+fn mapHhdmRange(pt: *PageTable, base: usize, top: usize, flags: Flags) !void {
     var addr = std.mem.alignBackward(usize, base, pmm.page_size);
     const end = std.mem.alignForward(usize, top, pmm.page_size);
     while (addr < end) : (addr += pmm.page_size) {
@@ -435,7 +448,7 @@ fn mapHhdmRange(pt: *PageTable, base: usize, top: usize) !void {
     }
 }
 
-fn mapKernelSection(vmm: *VMM, comptime section_name: []const u8, flags: u64) !usize {
+fn mapKernelSection(vmm: *VMM, comptime section_name: []const u8, flags: Flags) !usize {
     const section_start = @intFromPtr(@extern(*u8, .{ .name = section_name ++ "_start_addr" }));
     const section_end = @intFromPtr(@extern(*u8, .{ .name = section_name ++ "_end_addr" }));
 
@@ -476,5 +489,8 @@ inline fn switchPageTable(phys_addr: usize) void {
 
 test "Flags construction" {
     const flags = Flags{ .present = true, .writable = true, .noexec = true };
-    try std.testing.expect(@as(u64, @bitCast(flags)) == 0x8000000000000003);
+    try std.testing.expectEqual(@as(u64, 0x8000_0000_0000_0003), @as(u64, @bitCast(flags)));
+
+    const mmio = Flags{ .present = true, .writable = true, .cache_disable = true, .noexec = true };
+    try std.testing.expectEqual(@as(u64, 0x8000_0000_0000_0013), @as(u64, @bitCast(mmio)));
 }

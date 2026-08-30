@@ -204,7 +204,7 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bo
         user_stack_base,
         user_stack_phys,
         stack_size,
-        @bitCast(vmm.Flags{ .present = true, .writable = true, .user = true, .noexec = true }),
+        .{ .present = true, .writable = true, .user = true, .noexec = true },
     );
 
     thread.* = .{

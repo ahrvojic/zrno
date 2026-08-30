@@ -23,7 +23,7 @@ pub fn spawnHello() !u64 {
         text_base,
         phys,
         pmm.page_size,
-        @bitCast(vmm.Flags{ .present = true, .user = true }),
+        .{ .present = true, .user = true },
     ) catch |err| {
         pmm.free(phys, 1);
         return err;
