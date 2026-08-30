@@ -53,9 +53,8 @@ const IOApic = struct {
     }
 
     fn maskAll(self: *const @This()) void {
-        var i: u32 = 0;
-        while (i <= self.max_redir) : (i += 1) {
-            self.writeRedir(i, ioapic_redir_mask);
+        for (0..self.max_redir + 1) |i| {
+            self.writeRedir(@intCast(i), ioapic_redir_mask);
         }
     }
 

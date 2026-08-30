@@ -184,8 +184,7 @@ test "slab exhausts after objects-per-page plus one without a second page" {
 
     const class: usize = 32;
     const per_page = page_size / class;
-    var i: usize = 0;
-    while (i < per_page) : (i += 1) {
+    for (0..per_page) |_| {
         _ = h.alloc(class, .@"1") orelse return error.TestUnexpectedResult;
     }
     try std.testing.expectEqual(@as(usize, 1), pages.allocs);

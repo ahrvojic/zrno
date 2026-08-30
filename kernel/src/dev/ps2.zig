@@ -230,14 +230,14 @@ fn resetKeyboard() !void {
     try writeData(kbd_reset);
     var got_ack = false;
     var got_bat = false;
-    var i: u32 = 0;
-    while (i < 4 and !(got_ack and got_bat)) : (i += 1) {
+    for (0..4) |_| {
         switch (try readData()) {
             resp_ack => got_ack = true,
             resp_bat_ok => got_bat = true,
             0xfe => try writeData(kbd_reset),
             else => return error.NoDevice,
         }
+        if (got_ack and got_bat) break;
     }
     if (!got_ack or !got_bat) return error.NoDevice;
     try writeData(kbd_enable_scan);

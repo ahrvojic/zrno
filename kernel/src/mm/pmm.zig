@@ -125,9 +125,10 @@ pub fn init() !void {
         if (entry.kind == .usable) {
             const base: usize = @intCast(entry.base);
             const length: usize = @intCast(entry.length);
-            var i: usize = 0;
-            while (i < length) : (i += page_size) {
-                bitmap.clearBit((base + i) / page_size);
+            const start = base / page_size;
+            const end = start + length / page_size;
+            for (start..end) |page| {
+                bitmap.clearBit(page);
             }
         }
     }
@@ -168,9 +169,9 @@ pub fn reclaimBootloader() void {
     var first_idx: ?usize = null;
 
     for (reclaim_ranges.constSlice()) |range| {
-        var offset: usize = 0;
-        while (offset < range.length) : (offset += page_size) {
-            const idx = (range.base + offset) / page_size;
+        const start = range.base / page_size;
+        const end = start + range.length / page_size;
+        for (start..end) |idx| {
             if (idx >= highest_page_index) continue;
             if (!bitmap.testBit(idx)) continue;
             bitmap.clearBit(idx);
@@ -214,31 +215,23 @@ pub fn allocNoZero(pages: usize) ?usize {
 }
 
 fn allocInner(start: usize, pages: usize) ?usize {
-    // Scan the bitmap for a contiguous block of free pages
-    var p_idx: usize = start;
-    var p_count: usize = 0;
-
-    while (p_idx < highest_page_index and p_count < pages) : (p_idx += 1) {
-        if (bitmap.testBit(p_idx)) {
-            p_count = 0; // used page; reset counter
+    var run: usize = 0;
+    const end = for (start..highest_page_index) |idx| {
+        if (bitmap.testBit(idx)) {
+            run = 0;
         } else {
-            p_count += 1;
+            run += 1;
+            if (run == pages) break idx + 1;
         }
-    }
+    } else return null;
 
-    if (p_count < pages) {
-        return null;
-    }
-
-    // p_idx sits one past the last free page of the run
-    const first = p_idx - pages;
-    for (first..p_idx) |i| {
+    const first = end - pages;
+    for (first..end) |i| {
         bitmap.setBit(i);
     }
 
-    last_used_index = p_idx;
+    last_used_index = end;
     used_pages += pages;
-
     return first * page_size;
 }
 

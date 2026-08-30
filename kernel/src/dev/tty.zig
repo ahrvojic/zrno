@@ -80,8 +80,7 @@ pub fn enqueue(ch: u8) void {
 pub fn pollSerial() void {
     lock.lock();
     defer lock.unlock();
-    var n: u32 = 0;
-    while (n < 16) : (n += 1) {
+    for (0..16) |_| {
         const raw = serial.readByte() orelse break;
         const ch = mapSerialByte(raw) orelse continue;
         enqueueUnlocked(ch);
