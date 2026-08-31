@@ -29,7 +29,16 @@ pub fn spawnHello() !u64 {
         return err;
     };
 
-    // Hole: copyToUser demand-maps the message; write() copies it back.
+    const data_phys = pmm.alloc(1) orelse return error.OutOfMemory;
+    process.vmm.map(
+        heap_base,
+        data_phys,
+        pmm.page_size,
+        .{ .present = true, .writable = true, .user = true, .noexec = true },
+    ) catch |err| {
+        pmm.free(data_phys, 1);
+        return err;
+    };
     try process.vmm.copyToUser(heap_base, msg);
 
     _ = try sched.startUserThread(process, text_base, 0, true);

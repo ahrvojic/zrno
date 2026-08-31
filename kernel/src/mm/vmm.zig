@@ -280,7 +280,7 @@ pub const VMM = struct {
         }
     }
 
-    // Copy through the HHDM so a hole is mapped, not a kernel #PF on the user VA.
+    // Copy through the HHDM so a kernel #PF cannot deadlock on the VMM lock.
     pub fn copyFromUser(self: *VMM, dest: []u8, user_addr: usize) error{ Fault, OutOfMemory }!void {
         if (dest.len == 0) return;
         if (!userRange(user_addr, dest.len)) return error.Fault;
@@ -321,29 +321,13 @@ pub const VMM = struct {
         }
     }
 
-    fn userPagePhysLocked(self: *VMM, virt_addr: usize, write: bool) error{ Fault, OutOfMemory }!usize {
+    fn userPagePhysLocked(self: *VMM, virt_addr: usize, write: bool) error{Fault}!usize {
         const base = std.mem.alignBackward(usize, virt_addr, pmm.page_size);
-        const entry = self.pt.virtToPTE(base, false, false) catch {
-            return self.populateUserPageLocked(base);
-        };
+        const entry = self.pt.virtToPTE(base, false, false) catch return error.Fault;
         const flags = entry.getFlags();
-        if (!flags.present) {
-            return self.populateUserPageLocked(base);
-        }
-        if (!flags.user) return error.Fault;
+        if (!flags.present or !flags.user) return error.Fault;
         if (write and !flags.writable) return error.Fault;
         return entry.getAddress();
-    }
-
-    fn populateUserPageLocked(self: *VMM, base_addr: usize) error{OutOfMemory}!usize {
-        const phys_addr = pmm.alloc(1) orelse return error.OutOfMemory;
-        errdefer pmm.free(phys_addr, 1);
-        const flags = Flags{ .present = true, .writable = true, .user = true };
-        self.pt.mapPage(base_addr, phys_addr, flags) catch |err| switch (err) {
-            error.AlreadyMapped => @panic("populate already mapped"),
-            error.PTENotFound => return error.OutOfMemory,
-        };
-        return phys_addr;
     }
 
     pub fn switchTo(self: *VMM) void {
@@ -388,23 +372,10 @@ pub const VMM = struct {
         self.lock.unlock();
     }
 
-    pub fn handlePageFault(self: *VMM, fault_addr: usize, fault_reason: u64) !bool {
+    // Not-present user faults are not auto-mapped. Only `map` (loader, stack,
+    // future mmap) creates user pages.
+    pub fn handlePageFault(self: *VMM, _: usize, _: u64) bool {
         self.expectInit();
-        self.lock.lock();
-        defer self.lock.unlock();
-        const reason: FaultReason = @bitCast(fault_reason);
-
-        if (reason.protection) {
-            return false;
-        }
-
-        // Demand-page user space only for user-mode faults, and never page 0.
-        if (reason.user and fault_addr >= pmm.page_size and fault_addr < user_space_end) {
-            const base_addr = std.mem.alignBackward(usize, fault_addr, pmm.page_size);
-            _ = try self.populateUserPageLocked(base_addr);
-            return true;
-        }
-
         return false;
     }
 
