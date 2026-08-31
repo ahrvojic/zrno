@@ -76,13 +76,15 @@ pub const Context = extern struct {
 };
 
 const df_stack_size = 2 * pmm.page_size;
+const pf_stack_size = 16 * pmm.page_size;
 
 pub const CPU = struct {
     gdt: gdt.GDT = .{},
     idt: idt.IDT = .{},
     tss: gdt.TSS = .{},
-    // Dedicated stack for #DF (IST). Lives in BSS so it is valid before PMM.
+    // Dedicated stacks for #DF / #PF (IST). BSS so they are valid before PMM.
     df_stack: [df_stack_size]u8 align(16) = undefined,
+    pf_stack: [pf_stack_size]u8 align(16) = undefined,
     // HH-mapped MMIO; unused when x2apic is set.
     lapic_base: usize = 0,
     x2apic: bool = false,
@@ -99,9 +101,11 @@ pub const CPU = struct {
         // interpret the TSS itself as permission bits).
         self.tss.iopb_offset = @sizeOf(gdt.TSS);
 
-        // IDT IST n uses TSS.ist[n - 1]. Set before LTR so #DF is safe
-        // from the moment the TSS is loaded.
+        // IDT IST n uses TSS.ist[n - 1]. Set before LTR so #DF / #PF are
+        // safe from the moment the TSS is loaded. #PF has its own stack
+        // so the handler (log + map) does not run on a nearly-full kernel stack.
         self.tss.ist[ivt.ist_double_fault - 1] = @intFromPtr(&self.df_stack) + self.df_stack.len;
+        self.tss.ist[ivt.ist_page_fault - 1] = @intFromPtr(&self.pf_stack) + self.pf_stack.len;
 
         self.gdt.load(&self.tss);
         self.idt.load();

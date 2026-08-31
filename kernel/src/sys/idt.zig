@@ -39,7 +39,11 @@ pub const IDT = struct {
     pub fn load(self: *IDT) void {
         inline for (0..self.entries.len) |i| {
             const handler = ivt.makeHandler(i);
-            const ist: u8 = if (i == ivt.vec_double_fault) ivt.ist_double_fault else 0;
+            const ist: u8 = switch (i) {
+                ivt.vec_double_fault => ivt.ist_double_fault,
+                ivt.vec_page_fault => ivt.ist_page_fault,
+                else => 0,
+            };
             const flags: u8 = if (i == ivt.vec_syscall) interrupt_gate_user else interrupt_gate;
             self.entries[i] = IDTEntry.make(@intFromPtr(handler), ist, flags);
         }

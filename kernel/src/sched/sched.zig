@@ -12,7 +12,9 @@ const proc = @import("proc.zig");
 const virt = @import("../lib/virt.zig");
 const vmm = @import("../mm/vmm.zig");
 
-const stack_size: usize = pmm.page_size;
+// Kernel threads and TSS.rsp[0] (syscall/IRQ). 16 KiB covers a 1 KiB
+// print buffer plus a nested IRQ frame (int 0x80 → 0x90, or PIT during print).
+const stack_size: usize = 16 * pmm.page_size;
 const stack_pages: usize = stack_size / pmm.page_size;
 const kernel_pid: u64 = 0;
 // Exclusive top of the first user stack. Later threads grow down one

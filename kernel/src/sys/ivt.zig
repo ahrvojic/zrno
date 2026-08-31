@@ -27,8 +27,11 @@ pub const vec_apic_spurious = 255;
 
 // IDT IST index (1-7). TSS.ist[index - 1] is the stack pointer.
 pub const ist_double_fault: u8 = 1;
+pub const ist_page_fault: u8 = 2;
 comptime {
     std.debug.assert(ist_double_fault >= 1 and ist_double_fault <= 7);
+    std.debug.assert(ist_page_fault >= 1 and ist_page_fault <= 7);
+    std.debug.assert(ist_page_fault != ist_double_fault);
 }
 
 export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
