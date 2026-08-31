@@ -19,6 +19,8 @@ pub const Process = struct {
     node: std.DoublyLinkedList.Node,
     on_proctable: bool,
     exit_code: u8,
+    // Exclusive top of the next user stack; grows down.
+    user_stack_next: usize,
 };
 
 pub const ThreadStatus = enum {

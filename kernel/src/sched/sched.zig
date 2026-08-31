@@ -15,7 +15,8 @@ const vmm = @import("../mm/vmm.zig");
 const stack_size: usize = pmm.page_size;
 const stack_pages: usize = stack_size / pmm.page_size;
 const kernel_pid: u64 = 0;
-// Exclusive top of the one-page user stack. Canonical low half (2 GiB).
+// Exclusive top of the first user stack. Later threads grow down one
+// stack_size at a time. Canonical low half (2 GiB).
 const user_stack_top: usize = 0x0000_0000_8000_0000;
 
 comptime {
@@ -91,6 +92,7 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .node = .{},
         .on_proctable = false,
         .exit_code = 0,
+        .user_stack_next = user_stack_top,
     };
 
     lock.lock();
@@ -199,7 +201,7 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bo
 
     const user_stack_phys = pmm.alloc(stack_pages) orelse return error.OutOfMemory;
     errdefer pmm.free(user_stack_phys, stack_pages);
-    const user_stack_base = user_stack_top - stack_size;
+    const user_stack_base = try takeUserStack(parent);
     try parent.vmm.map(
         user_stack_base,
         user_stack_phys,
@@ -222,7 +224,7 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bo
     thread.ctx.ss = gdt.user_data_sel | 3;
     thread.ctx.rip = @intCast(pc);
     thread.ctx.rdi = @intCast(arg);
-    thread.ctx.rsp = @intCast(user_stack_top);
+    thread.ctx.rsp = @intCast(user_stack_base + stack_size);
 
     lock.lock();
     defer lock.unlock();
@@ -231,6 +233,15 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bo
     parent.threads.append(&thread.proc_node);
     if (enqueue) enqueueThread(thread);
     return thread;
+}
+
+fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
+    lock.lock();
+    defer lock.unlock();
+    if (parent.user_stack_next < stack_size) return error.OutOfMemory;
+    const base = parent.user_stack_next - stack_size;
+    parent.user_stack_next = base;
+    return base;
 }
 
 pub fn schedule(ctx: *cpu.Context) void {
