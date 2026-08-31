@@ -291,22 +291,29 @@ fn waitOutputFull() !void {
     }
 }
 
-pub fn handleInterrupt() void {
+pub fn handleInterrupt() bool {
     const code = port.inb(ps2_data_port);
 
     lock.lock();
     code_buffer.append(code) catch {};
 
     const buffer = code_buffer.slice();
-    const result: Decode = switch (buffer[0]) {
-        0xe0 => if (buffer.len >= 2) putKey(buffer[1], true) else .{},
+    if (buffer.len == 0) {
+        lock.unlock();
+        return false;
+    }
+    const incomplete = buffer[0] == 0xe0 and buffer.len < 2;
+    const result: Decode = if (incomplete) .{} else switch (buffer[0]) {
+        0xe0 => putKey(buffer[1], true),
         else => |c| putKey(c, false),
     };
+    const known = result.unknown == null and !incomplete;
     lock.unlock();
 
     // Drop the PS/2 lock before taking tty (sched → tty → … → ps2).
     if (result.ascii) |ch| tty.enqueue(ch);
     if (result.unknown) |c| logger.err("Unknown scan code: {d}", .{c});
+    return known;
 }
 
 pub fn isPressed(modifier: KeyModifier) bool {

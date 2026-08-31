@@ -100,16 +100,45 @@ const PageTable = extern struct {
     }
 
     pub fn unmapPage(self: *PageTable, virt_addr: usize) !void {
-        const entry = try self.virtToPTE(virt_addr, false, false);
-        const entry_flags = entry.getFlags();
+        const pml4_idx = (virt_addr >> 39) & page_table_index_mask;
+        const pml3_idx = (virt_addr >> 30) & page_table_index_mask;
+        const pml2_idx = (virt_addr >> 21) & page_table_index_mask;
+        const pml1_idx = (virt_addr >> 12) & page_table_index_mask;
 
-        if (entry_flags.present) {
-            entry.setAddress(0);
-            entry.setFlags(.{});
-            flushTLB(virt_addr);
-        } else {
-            return error.NotMapped;
+        const pml3 = self.getNextLevel(pml4_idx, false, false) orelse return error.PTENotFound;
+        const pml2 = pml3.getNextLevel(pml3_idx, false, false) orelse return error.PTENotFound;
+        const pml1 = pml2.getNextLevel(pml2_idx, false, false) orelse return error.PTENotFound;
+
+        const entry = &pml1.entries[pml1_idx];
+        if (!entry.getFlags().present) return error.NotMapped;
+        entry.setAddress(0);
+        entry.setFlags(.{});
+        flushTLB(virt_addr);
+
+        // Kernel L3/L2/L1 are shared with clones; never release them.
+        if (pml4_idx >= kernel_pml4_start) return;
+
+        if (!pml1.isEmpty()) return;
+        pmm.free(pml2.entries[pml2_idx].getAddress(), 1);
+        pml2.entries[pml2_idx].setAddress(0);
+        pml2.entries[pml2_idx].setFlags(.{});
+
+        if (!pml2.isEmpty()) return;
+        pmm.free(pml3.entries[pml3_idx].getAddress(), 1);
+        pml3.entries[pml3_idx].setAddress(0);
+        pml3.entries[pml3_idx].setFlags(.{});
+
+        if (!pml3.isEmpty()) return;
+        pmm.free(self.entries[pml4_idx].getAddress(), 1);
+        self.entries[pml4_idx].setAddress(0);
+        self.entries[pml4_idx].setFlags(.{});
+    }
+
+    fn isEmpty(self: *const PageTable) bool {
+        for (self.entries) |entry| {
+            if (entry.getFlags().present) return false;
         }
+        return true;
     }
 
     pub fn virtToPTE(self: *PageTable, virt_addr: usize, allocate: bool, user: bool) !*PageTableEntry {

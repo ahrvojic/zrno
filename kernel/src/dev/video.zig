@@ -144,6 +144,10 @@ pub fn init() !void {
         logger.warn("{d} bpp framebuffer; skip", .{info.bpp});
         return;
     }
+    if (info.pitch % 4 != 0 or @intFromPtr(info.address) % 4 != 0) {
+        logger.warn("framebuffer not 4-aligned; skip", .{});
+        return;
+    }
     if (info.width < font.builtin.width or info.height < font.builtin.height) {
         logger.warn("framebuffer {d}x{d} too small; skip", .{ info.width, info.height });
         return;

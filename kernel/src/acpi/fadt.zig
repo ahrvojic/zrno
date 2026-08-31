@@ -71,7 +71,7 @@ const FADT = extern struct {
 // ACPI spec: FADT Flags bit 20 = HW_REDUCED_ACPI
 const hw_reduced_acpi: u32 = 1 << 20;
 // SCI_EN in PM1_CNT: platform has entered ACPI mode.
-const sci_en: u8 = 1 << 0;
+const sci_en: u16 = 1 << 0;
 const sci_en_spins: u32 = 0xfffff;
 
 // IAPC_BOOT_ARCH (ACPI 2.0 / FADT revision 3+).
@@ -182,7 +182,7 @@ fn waitAcpiMode(pm1a_ctrl_block: u32) void {
     if (pm1a_ctrl_block == 0 or pm1a_ctrl_block > std.math.maxInt(u16)) return;
     const pm1a: u16 = @intCast(pm1a_ctrl_block);
     var spins: u32 = 0;
-    while (port.inb(pm1a) & sci_en == 0) : (spins += 1) {
+    while (port.inw(pm1a) & sci_en == 0) : (spins += 1) {
         if (spins >= sci_en_spins) {
             logger.err("ACPI enable did not set SCI_EN", .{});
             return;
@@ -192,7 +192,7 @@ fn waitAcpiMode(pm1a_ctrl_block: u32) void {
 
 fn inAcpiMode(pm1a_ctrl_block: u32) bool {
     if (pm1a_ctrl_block == 0 or pm1a_ctrl_block > std.math.maxInt(u16)) return false;
-    return port.inb(@intCast(pm1a_ctrl_block)) & sci_en != 0;
+    return port.inw(@intCast(pm1a_ctrl_block)) & sci_en != 0;
 }
 
 fn expectInit() void {

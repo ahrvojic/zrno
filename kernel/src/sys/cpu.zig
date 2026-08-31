@@ -37,6 +37,7 @@ var display_model: u32 = 0;
 var tsc_ok = false;
 var tsc_origin: u64 = 0;
 var tsc_hz_value: u64 = 0;
+var cpu_base_mhz: u32 = 0;
 
 const Cpuid = struct {
     eax: u32,
@@ -141,16 +142,16 @@ pub const CPU = struct {
             return error.BspNotInMadt;
         };
 
-        var skipped: usize = 0;
+        var disabled: usize = 0;
         for (madt.lapics()) |lapic| {
-            if (!lapic.enabled()) skipped += 1;
+            if (!lapic.enabled()) disabled += 1;
         }
 
         self.lapic_initialized = true;
         if (self.x2apic) {
-            logger.info("lapic x2apic id={d} cpu={d} skipped={d}", .{ id, entry.processor_id, skipped });
+            logger.info("lapic x2apic id={d} cpu={d} disabled={d}", .{ id, entry.processor_id, disabled });
         } else {
-            logger.info("lapic 0x{x} id={d} cpu={d} skipped={d}", .{ madt.lapicAddress(), id, entry.processor_id, skipped });
+            logger.info("lapic 0x{x} id={d} cpu={d} disabled={d}", .{ madt.lapicAddress(), id, entry.processor_id, disabled });
         }
     }
 
@@ -246,18 +247,43 @@ pub fn identify() void {
     if (tsc_ok and tsc_hz_value == 0) {
         tsc_hz_value = probeTscHz(leaf0.eax);
     }
+    if (cpu_base_mhz == 0) {
+        cpu_base_mhz = probeCpuBaseMhz(leaf0.eax);
+    }
 }
 
 pub fn logIdentity() void {
-    if (tsc_hz_value != 0) {
+    if (tsc_hz_value != 0 and cpu_base_mhz != 0) {
+        logger.info("{s} family={d} model={d} tsc={d} MHz cpu={d} MHz", .{
+            vendor,
+            display_family,
+            display_model,
+            tsc_hz_value / 1_000_000,
+            cpu_base_mhz,
+        });
+    } else if (tsc_hz_value != 0) {
         logger.info("{s} family={d} model={d} tsc={d} MHz", .{
             vendor,
             display_family,
             display_model,
             tsc_hz_value / 1_000_000,
         });
+    } else if (tsc_ok and cpu_base_mhz != 0) {
+        logger.info("{s} family={d} model={d} tsc cpu={d} MHz", .{
+            vendor,
+            display_family,
+            display_model,
+            cpu_base_mhz,
+        });
     } else if (tsc_ok) {
         logger.info("{s} family={d} model={d} tsc", .{ vendor, display_family, display_model });
+    } else if (cpu_base_mhz != 0) {
+        logger.info("{s} family={d} model={d} cpu={d} MHz", .{
+            vendor,
+            display_family,
+            display_model,
+            cpu_base_mhz,
+        });
     } else {
         logger.info("{s} family={d} model={d}", .{ vendor, display_family, display_model });
     }
@@ -308,17 +334,20 @@ fn familyModel(eax: u32) struct { family: u32, model: u32 } {
 }
 
 fn probeTscHz(max_leaf: u32) u64 {
+    // Leaf 0x15 is TSC / crystal ratio. Leaf 0x16 is CPU base frequency,
+    // not TSC frequency — do not use it for timestamps.
     if (max_leaf >= 0x15) {
         const t = cpuid(0x15, 0);
         if (t.eax != 0 and t.ebx != 0 and t.ecx != 0) {
             return (@as(u64, t.ecx) * t.ebx) / t.eax;
         }
     }
-    if (max_leaf >= 0x16) {
-        const f = cpuid(0x16, 0);
-        if (f.eax != 0) return @as(u64, f.eax) * 1_000_000;
-    }
     return 0;
+}
+
+fn probeCpuBaseMhz(max_leaf: u32) u32 {
+    if (max_leaf < 0x16) return 0;
+    return cpuid(0x16, 0).eax;
 }
 
 pub fn bsp() *CPU {

@@ -61,8 +61,9 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
             cpu.current().eoi();
         },
         vec_keyboard => {
-            ps2.handleInterrupt();
-            sched.schedule(ctx);
+            if (ps2.handleInterrupt()) {
+                sched.schedule(ctx);
+            }
             cpu.current().eoi();
         },
         vec_syscall => {

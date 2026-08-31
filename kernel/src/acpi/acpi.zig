@@ -7,6 +7,12 @@ const fadt = @import("fadt.zig");
 const madt = @import("madt.zig");
 const virt = @import("../lib/virt.zig");
 
+const rsdp_sig = "RSD PTR ";
+const rsdp_v1_len: usize = 20;
+const rsdp_v2_len: usize = 36;
+const rsdp_max_len: usize = 64;
+const max_sdt_len: u32 = 1 << 20;
+
 const RSDP = extern struct {
     signature: [8]u8,
     checksum: u8,
@@ -47,20 +53,21 @@ const ACPI = struct {
     rsdt: *align(1) const SDT = undefined,
     use_xsdt: bool = false,
 
-    pub fn load(self: *ACPI) void {
+    pub fn load(self: *ACPI) !void {
         // Base revision 6 returns a virtual (HHDM) pointer. Table
         // addresses inside RSDP/XSDP are still physical.
         const rsdp: *align(1) const RSDP = @ptrCast(boot.info().rsdp.address);
+        try verifyRsdp(rsdp);
 
         const oem = std.mem.trimEnd(u8, &rsdp.oem_id, " \x00");
         if (rsdp.revision >= 2) {
             logger.info("XSDT rev={d} oem={s}", .{ rsdp.revision, oem });
             const xsdp: *align(1) const XSDP = @ptrCast(rsdp);
-            self.rsdt = virt.toHH(*align(1) const SDT, @intCast(xsdp.xsdt_addr));
+            self.rsdt = try mapSdt(@intCast(xsdp.xsdt_addr), "XSDT");
             self.use_xsdt = true;
         } else {
             logger.info("RSDT rev={d} oem={s}", .{ rsdp.revision, oem });
-            self.rsdt = virt.toHH(*align(1) const SDT, @intCast(rsdp.rsdt_addr));
+            self.rsdt = try mapSdt(@intCast(rsdp.rsdt_addr), "RSDT");
         }
     }
 
@@ -88,6 +95,7 @@ const ACPI = struct {
                 continue;
             }
 
+            try verifySdt(sdt);
             return sdt;
         }
 
@@ -96,13 +104,63 @@ const ACPI = struct {
     }
 };
 
+fn checksum(bytes: []const u8) u8 {
+    var sum: u8 = 0;
+    for (bytes) |b| sum +%= b;
+    return sum;
+}
+
+fn verifyRsdp(rsdp: *align(1) const RSDP) !void {
+    const bytes: [*]const u8 = @ptrCast(rsdp);
+    if (!std.mem.eql(u8, bytes[0..8], rsdp_sig)) return error.InvalidAcpiTable;
+    if (checksum(bytes[0..rsdp_v1_len]) != 0) return error.InvalidAcpiTable;
+    if (rsdp.revision < 2) return;
+
+    const xsdp: *align(1) const XSDP = @ptrCast(rsdp);
+    // On the wire XSDP is 36 bytes; @sizeOf may be 40 from extern tail padding.
+    if (xsdp.length < rsdp_v2_len or xsdp.length > rsdp_max_len) {
+        return error.InvalidAcpiTable;
+    }
+    if (checksum(bytes[0..xsdp.length]) != 0) return error.InvalidAcpiTable;
+}
+
+fn verifySdt(sdt: *align(1) const SDT) !void {
+    if (sdt.length < @sizeOf(SDT) or sdt.length > max_sdt_len) {
+        return error.InvalidAcpiTable;
+    }
+    const bytes = @as([*]const u8, @ptrCast(sdt))[0..sdt.length];
+    if (checksum(bytes) != 0) {
+        logger.err("bad checksum for {s} len={d}", .{ sdt.signature, sdt.length });
+        return error.InvalidAcpiTable;
+    }
+}
+
+fn mapSdt(phys: usize, comptime expected_sig: *const [4]u8) !*align(1) const SDT {
+    const sdt = virt.toHH(*align(1) const SDT, phys);
+    try verifySdt(sdt);
+    if (!std.mem.eql(u8, &sdt.signature, expected_sig)) {
+        logger.err("expected {s}, got {s}", .{ expected_sig, &sdt.signature });
+        return error.InvalidAcpiTable;
+    }
+    return sdt;
+}
+
 pub fn init() !void {
     var acpi: ACPI = .{};
-    acpi.load();
+    try acpi.load();
 
     const fadt_sdt = try acpi.findSDT("FACP", 0);
     try fadt.init(fadt_sdt);
 
     const madt_sdt = try acpi.findSDT("APIC", 0);
     try madt.init(madt_sdt);
+}
+
+comptime {
+    std.debug.assert(@sizeOf(RSDP) == rsdp_v1_len);
+}
+
+test "acpi checksum is zero iff bytes sum to 0 mod 256" {
+    try std.testing.expectEqual(@as(u8, 0), checksum(&.{ 1, 2, 3, 250 }));
+    try std.testing.expect(checksum(&.{ 1, 2, 3, 0 }) != 0);
 }
