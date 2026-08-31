@@ -262,12 +262,21 @@ fn findAlignedRun(start: usize, pages: usize, align_pages: usize) ?usize {
 
 pub fn free(address: usize, pages: usize) void {
     expectInit();
+    if (pages == 0) @panic("pmm free of zero pages");
+    if (!std.mem.isAligned(address, page_size)) {
+        @panic("pmm free of misaligned address");
+    }
+
+    const start = address / page_size;
+    const end = std.math.add(usize, start, pages) catch @panic("pmm free out of bounds");
+    if (end > highest_page_index) @panic("pmm free out of bounds");
+
     lock.lock();
     defer lock.unlock();
 
-    const start = address / page_size;
-    const end = start + pages;
-
+    for (start..end) |i| {
+        if (!bitmap.testBit(i)) @panic("pmm double free");
+    }
     for (start..end) |i| {
         bitmap.clearBit(i);
     }
