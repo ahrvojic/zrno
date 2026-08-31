@@ -10,8 +10,8 @@ comptime {
 }
 
 const KernelPages = struct {
-    pub fn alloc(_: KernelPages, pages: usize) ?[*]u8 {
-        const phys = pmm.alloc(pages) orelse return null;
+    pub fn alloc(_: KernelPages, pages: usize, align_pages: usize) ?[*]u8 {
+        const phys = pmm.allocAligned(pages, align_pages) orelse return null;
         return virt.toHH([*]u8, phys);
     }
 

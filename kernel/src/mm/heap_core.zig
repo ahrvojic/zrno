@@ -16,11 +16,12 @@ pub const FreeNode = struct {
 /// page-sized slabs; larger requests are a contiguous run of pages.
 ///
 /// `Pages` must provide:
-///   alloc(self: Pages, n: usize) ?[*]u8
+///   alloc(self: Pages, n: usize, align_pages: usize) ?[*]u8
 ///   free(self: Pages, ptr: [*]u8, n: usize) void
-/// and must return already-mapped memory. Store a pointer when the page
-/// source has identity (tests, per-process accounting); a zero-size
-/// struct when it is global (kernel PMM).
+/// and must return already-mapped memory. `align_pages` is a power of
+/// two ≥ 1 (page-index alignment). Store a pointer when the page source
+/// has identity (tests, per-process accounting); a zero-size struct when
+/// it is global (kernel PMM).
 pub fn Heap(comptime Pages: type) type {
     return struct {
         const Self = @This();
@@ -42,17 +43,21 @@ pub fn Heap(comptime Pages: type) type {
                 }
                 return self.refill(class);
             }
-            return self.pages.alloc(class / page_size);
+            const align_pages = @max(@as(usize, 1), alignment.toByteUnits() / page_size);
+            return self.pages.alloc(class / page_size, align_pages);
         }
 
         pub fn free(self: *Self, buf: []u8, alignment: std.mem.Alignment) void {
             const class = classSize(buf.len, alignment) orelse @panic("heap free of invalid size");
             const addr = @intFromPtr(buf.ptr);
-            if (!std.mem.isAligned(addr, class)) {
+            if (!std.mem.isAligned(addr, alignment.toByteUnits())) {
                 @panic("heap free of misaligned pointer");
             }
 
             if (class <= page_size) {
+                if (!std.mem.isAligned(addr, class)) {
+                    @panic("heap free of misaligned pointer");
+                }
                 const node: *FreeNode = @ptrCast(@alignCast(buf.ptr));
                 const i = classIndex(class);
                 node.next = self.classes[i];
@@ -60,11 +65,14 @@ pub fn Heap(comptime Pages: type) type {
                 return;
             }
 
+            if (!std.mem.isAligned(addr, page_size)) {
+                @panic("heap free of misaligned pointer");
+            }
             self.pages.free(buf.ptr, class / page_size);
         }
 
         fn refill(self: *Self, class: usize) ?[*]u8 {
-            const slab = self.pages.alloc(1) orelse return null;
+            const slab = self.pages.alloc(1, 1) orelse return null;
             const i = classIndex(class);
             var off: usize = class;
             while (off < page_size) : (off += class) {
@@ -99,13 +107,16 @@ const TestPages = struct {
     allocs: usize = 0,
     frees: usize = 0,
 
-    fn alloc(self: *TestPages, pages: usize) ?[*]u8 {
+    fn alloc(self: *TestPages, pages: usize, align_pages: usize) ?[*]u8 {
         const n = pages * page_size;
-        if (self.used + n > self.buf.len) return null;
-        const p = self.buf[self.used..].ptr;
-        self.used += n;
+        const align_bytes = align_pages * page_size;
+        const base = @intFromPtr(self.buf.ptr) + self.used;
+        const aligned = std.mem.alignForward(usize, base, align_bytes);
+        const pad = aligned - base;
+        if (self.used + pad + n > self.buf.len) return null;
+        self.used += pad + n;
         self.allocs += 1;
-        return p;
+        return @ptrFromInt(aligned);
     }
 
     fn free(self: *TestPages, ptr: [*]u8, pages: usize) void {
@@ -204,4 +215,34 @@ test "large allocation is a page run and free returns it" {
 
     const q = h.alloc(page_size + 1, .@"1") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@intFromPtr(p), @intFromPtr(q));
+}
+
+test "large free accepts a page-aligned run that is not class-aligned" {
+    // 8 KiB-aligned backing so consuming one page yields an odd-page 8 KiB class.
+    var backing: [page_size * 4]u8 align(page_size * 2) = undefined;
+    var pages: TestPages = .{ .buf = &backing };
+    var h = TestHeap.init(&pages);
+
+    const slab = h.alloc(page_size, .@"1") orelse return error.TestUnexpectedResult;
+    const p = h.alloc(page_size + 1, .@"1") orelse return error.TestUnexpectedResult;
+    const addr = @intFromPtr(p);
+    try std.testing.expect(std.mem.isAligned(addr, page_size));
+    try std.testing.expect(!std.mem.isAligned(addr, page_size * 2));
+    h.free(p[0 .. page_size + 1], .@"1");
+
+    const q = h.alloc(page_size + 1, .@"1") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(addr, @intFromPtr(q));
+    h.free(q[0 .. page_size + 1], .@"1");
+    h.free(slab[0..page_size], .@"1");
+}
+
+test "large allocation honors alignment above a page" {
+    var backing: [page_size * 6]u8 align(page_size) = undefined;
+    var pages: TestPages = .{ .buf = &backing };
+    var h = TestHeap.init(&pages);
+
+    _ = h.alloc(page_size, .@"1") orelse return error.TestUnexpectedResult;
+    const p = h.alloc(16, .fromByteUnits(8192)) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.isAligned(@intFromPtr(p), 8192));
+    h.free(p[0..16], .fromByteUnits(8192));
 }

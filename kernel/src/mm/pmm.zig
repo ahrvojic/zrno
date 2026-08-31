@@ -191,7 +191,17 @@ pub fn reclaimBootloader() void {
 }
 
 pub fn alloc(pages: usize) ?usize {
-    const res = allocNoZero(pages);
+    return allocAligned(pages, 1);
+}
+
+pub fn allocNoZero(pages: usize) ?usize {
+    return allocAlignedNoZero(pages, 1);
+}
+
+/// Allocate `pages` consecutive pages whose start index is 0 mod `align_pages`.
+/// `align_pages` must be a power of two ≥ 1; otherwise returns null.
+pub fn allocAligned(pages: usize, align_pages: usize) ?usize {
+    const res = allocAlignedNoZero(pages, align_pages);
 
     if (res) |address| {
         const size = pages * page_size;
@@ -202,15 +212,31 @@ pub fn alloc(pages: usize) ?usize {
     return res;
 }
 
-pub fn allocNoZero(pages: usize) ?usize {
+pub fn allocAlignedNoZero(pages: usize, align_pages: usize) ?usize {
     expectInit();
     if (pages == 0) return null;
+    if (align_pages == 0 or !std.math.isPowerOfTwo(align_pages)) return null;
     lock.lock();
     defer lock.unlock();
-    return allocInner(last_used_index, pages) orelse allocInner(0, pages);
+    return allocInner(last_used_index, pages, align_pages) orelse allocInner(0, pages, align_pages);
 }
 
-fn allocInner(start: usize, pages: usize) ?usize {
+fn allocInner(start: usize, pages: usize, align_pages: usize) ?usize {
+    const first = if (align_pages <= 1)
+        findRun(start, pages)
+    else
+        findAlignedRun(start, pages, align_pages);
+    const idx = first orelse return null;
+    const end = idx + pages;
+    for (idx..end) |i| {
+        bitmap.setBit(i);
+    }
+    last_used_index = end;
+    used_pages += pages;
+    return idx * page_size;
+}
+
+fn findRun(start: usize, pages: usize) ?usize {
     var run: usize = 0;
     const end = for (start..highest_page_index) |idx| {
         if (bitmap.testBit(idx)) {
@@ -220,15 +246,18 @@ fn allocInner(start: usize, pages: usize) ?usize {
             if (run == pages) break idx + 1;
         }
     } else return null;
+    return end - pages;
+}
 
-    const first = end - pages;
-    for (first..end) |i| {
-        bitmap.setBit(i);
+fn findAlignedRun(start: usize, pages: usize, align_pages: usize) ?usize {
+    var idx = std.mem.alignForward(usize, start, align_pages);
+    while (idx + pages <= highest_page_index) {
+        const used = for (idx..idx + pages) |i| {
+            if (bitmap.testBit(i)) break i;
+        } else return idx;
+        idx = std.mem.alignForward(usize, used + 1, align_pages);
     }
-
-    last_used_index = end;
-    used_pages += pages;
-    return first * page_size;
+    return null;
 }
 
 pub fn free(address: usize, pages: usize) void {
