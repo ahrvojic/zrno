@@ -134,6 +134,21 @@ const PageTable = extern struct {
         self.entries[pml4_idx].setFlags(.{});
     }
 
+    fn expectMappedRange(self: *PageTable, virt_addr: usize, size: usize) !void {
+        var off: usize = 0;
+        while (off < size) : (off += pmm.page_size) {
+            const entry = try self.virtToPTE(virt_addr + off, false, false);
+            if (!entry.getFlags().present) return error.NotMapped;
+        }
+    }
+
+    fn unmapRange(self: *PageTable, virt_addr: usize, size: usize) void {
+        var off: usize = 0;
+        while (off < size) : (off += pmm.page_size) {
+            self.unmapPage(virt_addr + off) catch @panic("unmap of mapped page");
+        }
+    }
+
     fn isEmpty(self: *const PageTable) bool {
         for (self.entries) |entry| {
             if (entry.getFlags().present) return false;
@@ -213,11 +228,12 @@ pub const VMM = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        var i: usize = 0;
-        while (i < size) : (i += pmm.page_size) {
-            const new_virt_addr = virt_addr + i;
-            const new_phys_addr = phys_addr + i;
-            try self.pt.mapPage(new_virt_addr, new_phys_addr, flags);
+        // Callers errdefer-free the physical run; a leftover prefix would dangle.
+        var mapped: usize = 0;
+        errdefer self.pt.unmapRange(virt_addr, mapped);
+
+        while (mapped < size) : (mapped += pmm.page_size) {
+            try self.pt.mapPage(virt_addr + mapped, phys_addr + mapped, flags);
         }
     }
 
@@ -230,11 +246,10 @@ pub const VMM = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        var i: usize = 0;
-        while (i < size) : (i += pmm.page_size) {
-            const new_virt_addr = virt_addr + i;
-            const new_phys_addr = phys_addr + i;
-            try self.pt.remapPage(new_virt_addr, new_phys_addr, flags);
+        try self.pt.expectMappedRange(virt_addr, size);
+        var off: usize = 0;
+        while (off < size) : (off += pmm.page_size) {
+            self.pt.remapPage(virt_addr + off, phys_addr + off, flags) catch @panic("remap of mapped page");
         }
     }
 
@@ -246,11 +261,8 @@ pub const VMM = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        var i: usize = 0;
-        while (i < size) : (i += pmm.page_size) {
-            const new_virt_addr = virt_addr + i;
-            try self.pt.unmapPage(new_virt_addr);
-        }
+        try self.pt.expectMappedRange(virt_addr, size);
+        self.pt.unmapRange(virt_addr, size);
     }
 
     pub fn mapMmio(self: *VMM, phys_addr: usize, size: usize) !void {
@@ -465,7 +477,7 @@ fn mapKernelSection(vmm: *VMM, comptime section_name: []const u8, flags: Flags) 
 
 inline fn flushTLB(virt_addr: usize) void {
     asm volatile (
-        \\invlpg %[virt_addr]
+        \\invlpg (%[virt_addr])
         :
         : [virt_addr] "r" (virt_addr),
         : .{ .memory = true });
