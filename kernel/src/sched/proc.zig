@@ -39,6 +39,8 @@ pub const Thread = struct {
     wait_chan: ?*const anyopaque = null,
     wake_tick: u64 = 0,
     stack_phys: usize,
+    // Mapped VA of the kernel stack (guard page is the page below).
+    stack_base: usize,
     proc_node: std.DoublyLinkedList.Node,
     sched_node: std.DoublyLinkedList.Node,
     on_runqueue: bool,

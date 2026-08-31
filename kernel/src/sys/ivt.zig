@@ -51,6 +51,11 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
             const space = if (cpu.current().thread) |thread| &thread.parent.vmm else &vmm.kernel_vmm;
             if (space.handlePageFault(fault_addr, ctx.error_code)) return;
 
+            const reason: vmm.FaultReason = @bitCast(ctx.error_code);
+            if (!reason.user and sched.isKernelStackGuard(fault_addr)) {
+                fatalException(ctx, "Kernel stack overflow");
+            }
+
             fatalException(ctx, "Unhandled page fault");
         },
         vec_pit => {

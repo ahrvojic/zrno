@@ -9,7 +9,6 @@ const ivt = @import("../sys/ivt.zig");
 const Lock = @import("../lib/lock.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
-const virt = @import("../lib/virt.zig");
 const vmm = @import("../mm/vmm.zig");
 
 // Kernel threads and TSS.rsp[0] (syscall/IRQ). 16 KiB covers a 1 KiB
@@ -21,9 +20,20 @@ const kernel_pid: u64 = 0;
 // stack_size at a time. Canonical low half (2 GiB).
 const user_stack_top: usize = 0x0000_0000_8000_0000;
 
+// Kernel stacks live in the cloned higher half (not HHDM) so an unmapped
+// guard page under each stack is possible. PML4 510: below the kernel
+// image, above HHDM.
+const kstack_region_base: usize = 0xffff_ff00_0000_0000;
+const kstack_region_end: usize = kstack_region_base + (1024 * 1024 * 1024);
+const kstack_slot: usize = stack_size + pmm.page_size;
+
 comptime {
     std.debug.assert(user_stack_top % pmm.page_size == 0);
     std.debug.assert(user_stack_top < 0x0000_8000_0000_0000);
+    std.debug.assert(kstack_region_base % pmm.page_size == 0);
+    std.debug.assert(kstack_slot % pmm.page_size == 0);
+    std.debug.assert(kstack_region_base >= 0xffff_8000_0000_0000);
+    std.debug.assert(kstack_region_end <= 0xffff_ffff_8000_0000);
 }
 
 // Live processes; not a runqueue. `schedule` walks `threads`.
@@ -38,9 +48,11 @@ var tid_next: u64 = 0;
 var lock: Lock.SpinLock = .{};
 var initialized = false;
 
-// Kernel stack of a thread that died while running on it. Freed on the
-// next `switchLocked` that is no longer executing on that stack.
-var doomed_stack_phys: ?usize = null;
+// Kernel stack of a thread that died while running on it. Unmapped and
+// freed on the next `switchLocked` that is no longer executing on that stack.
+const DoomedStack = struct { phys: usize, base: usize };
+var doomed_stack: ?DoomedStack = null;
+var kstack_next: usize = kstack_region_base;
 
 // Unique PML4 of a process that died while CR3 still pointed at it.
 // Freed on the next `switchLocked` that is no longer using that root.
@@ -158,15 +170,15 @@ pub fn startKernelThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: 
     const thread = try parent.heap.create(proc.Thread);
     errdefer parent.heap.destroy(thread);
 
-    const stack_phys = pmm.alloc(stack_pages) orelse return error.OutOfMemory;
-    errdefer pmm.free(stack_phys, stack_pages);
-    const stack_virt = virt.toHH(usize, stack_phys);
+    const kstack = try allocKernelStack();
+    errdefer freeKernelStack(kstack.phys, kstack.base);
 
     thread.* = .{
         .tid = 0,
         .status = .ready,
         .parent = parent,
-        .stack_phys = stack_phys,
+        .stack_phys = kstack.phys,
+        .stack_base = kstack.base,
         .proc_node = .{},
         .sched_node = .{},
         .on_runqueue = false,
@@ -174,7 +186,7 @@ pub fn startKernelThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: 
 
     // Fake a `call` so a `ret` panics instead of running off the stack, and so
     // SysV entry alignment is rsp ≡ 8 (mod 16).
-    const stack: [*]u64 = @ptrFromInt(stack_virt);
+    const stack: [*]u64 = @ptrFromInt(kstack.base);
     const slots = stack_size / @sizeOf(u64);
     stack[slots - 1] = @intFromPtr(&kernelThreadReturned);
 
@@ -183,7 +195,7 @@ pub fn startKernelThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: 
     thread.ctx.ss = gdt.kernel_data_sel;
     thread.ctx.rip = @intCast(pc);
     thread.ctx.rdi = @intCast(arg);
-    thread.ctx.rsp = @intCast(stack_virt + stack_size - @sizeOf(u64));
+    thread.ctx.rsp = @intCast(kstack.base + stack_size - @sizeOf(u64));
 
     lock.lock();
     defer lock.unlock();
@@ -198,8 +210,8 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bo
     const thread = try parent.heap.create(proc.Thread);
     errdefer parent.heap.destroy(thread);
 
-    const stack_phys = pmm.alloc(stack_pages) orelse return error.OutOfMemory;
-    errdefer pmm.free(stack_phys, stack_pages);
+    const kstack = try allocKernelStack();
+    errdefer freeKernelStack(kstack.phys, kstack.base);
 
     const user_stack_phys = pmm.alloc(stack_pages) orelse return error.OutOfMemory;
     errdefer pmm.free(user_stack_phys, stack_pages);
@@ -215,7 +227,8 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bo
         .tid = 0,
         .status = .ready,
         .parent = parent,
-        .stack_phys = stack_phys,
+        .stack_phys = kstack.phys,
+        .stack_base = kstack.base,
         .proc_node = .{},
         .sched_node = .{},
         .on_runqueue = false,
@@ -369,7 +382,7 @@ fn switchLocked(ctx: *cpu.Context) void {
     thread.parent.vmm.switchTo();
     reapDoomedPt();
     // CPL 3 → 0 loads RSP from here. Absolute top; ctx.rsp is the thread's SP.
-    this_cpu.tss.rsp[0] = @intCast(virt.toHH(usize, thread.stack_phys) + stack_size);
+    this_cpu.tss.rsp[0] = @intCast(thread.stack_base + stack_size);
     ctx.* = thread.ctx;
 }
 
@@ -426,6 +439,7 @@ fn stopThread(thread: *proc.Thread) void {
     thread.parent.threads.remove(&thread.proc_node);
 
     const stack_phys = thread.stack_phys;
+    const stack_base = thread.stack_base;
     const parent_heap = thread.parent.heap;
     const this_cpu = cpu.current();
     const is_current = this_cpu.thread == thread;
@@ -434,9 +448,9 @@ fn stopThread(thread: *proc.Thread) void {
     parent_heap.destroy(thread);
 
     if (is_current) {
-        deferStackFree(stack_phys);
+        deferStackFree(stack_phys, stack_base);
     } else {
-        pmm.free(stack_phys, stack_pages);
+        freeKernelStack(stack_phys, stack_base);
     }
 }
 
@@ -448,18 +462,18 @@ fn dropAddressSpace(space: *vmm.VMM) void {
     }
 }
 
-fn deferStackFree(stack_phys: usize) void {
-    if (doomed_stack_phys) |old| {
-        pmm.free(old, stack_pages);
+fn deferStackFree(stack_phys: usize, stack_base: usize) void {
+    if (doomed_stack) |old| {
+        freeKernelStack(old.phys, old.base);
     }
-    doomed_stack_phys = stack_phys;
+    doomed_stack = .{ .phys = stack_phys, .base = stack_base };
 }
 
 fn reapDoomedStack() void {
-    const phys = doomed_stack_phys orelse return;
-    if (rspInStack(phys)) return;
-    doomed_stack_phys = null;
-    pmm.free(phys, stack_pages);
+    const doomed = doomed_stack orelse return;
+    if (rspInStack(doomed.base)) return;
+    doomed_stack = null;
+    freeKernelStack(doomed.phys, doomed.base);
 }
 
 fn deferPtFree(pt_phys: usize) void {
@@ -476,13 +490,49 @@ fn reapDoomedPt() void {
     vmm.destroyPhys(phys);
 }
 
-fn rspInStack(stack_phys: usize) bool {
+fn rspInStack(stack_base: usize) bool {
     const rsp = asm volatile (
         \\movq %%rsp, %[rsp]
         : [rsp] "=r" (-> usize),
     );
-    const base = virt.toHH(usize, stack_phys);
-    return rsp >= base and rsp < base + stack_size;
+    return rsp >= stack_base and rsp < stack_base + stack_size;
+}
+
+const KernelStack = struct { phys: usize, base: usize };
+
+fn allocKernelStack() !KernelStack {
+    const phys = pmm.alloc(stack_pages) orelse return error.OutOfMemory;
+    errdefer pmm.free(phys, stack_pages);
+    const base = try takeKernelStackSlot();
+    try vmm.kernel_vmm.map(base, phys, stack_size, .{
+        .present = true,
+        .writable = true,
+        .noexec = true,
+    });
+    return .{ .phys = phys, .base = base };
+}
+
+fn freeKernelStack(phys: usize, base: usize) void {
+    vmm.kernel_vmm.unmap(base, stack_size) catch @panic("unmap kernel stack");
+    pmm.free(phys, stack_pages);
+}
+
+fn takeKernelStackSlot() error{OutOfMemory}!usize {
+    lock.lock();
+    defer lock.unlock();
+    if (kstack_next >= kstack_region_end or kstack_region_end - kstack_next < kstack_slot) {
+        return error.OutOfMemory;
+    }
+    const slot = kstack_next;
+    kstack_next += kstack_slot;
+    return slot + pmm.page_size;
+}
+
+/// True when `addr` is the unmapped page under a kernel stack.
+pub fn isKernelStackGuard(addr: usize) bool {
+    if (addr < kstack_region_base or addr >= kstack_next) return false;
+    const off = addr - kstack_region_base;
+    return off % kstack_slot < pmm.page_size;
 }
 
 fn nextReadyThread(start: ?*std.DoublyLinkedList.Node) ?*proc.Thread {
