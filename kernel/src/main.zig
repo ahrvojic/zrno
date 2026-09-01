@@ -87,8 +87,9 @@ pub fn main() !void {
     try cpu.bsp().initLapic();
     try apic.init();
     try video.init();
-    try timer.init();
+    // Scheduler first: timer.init unmasks the periodic LVT.
     try sched.init();
+    try timer.init();
 
     if (fadt.bootArch().has_8042) {
         try ps2.init();

@@ -177,7 +177,11 @@ pub fn init() !void {
     const madt_sdt = try acpi.findSDT("APIC", 0);
     try madt.init(madt_sdt);
 
-    try hpet.init(try acpi.lookupSDT("HPET", 0));
+    const hpet_sdt = acpi.lookupSDT("HPET", 0) catch |err| blk: {
+        logger.warn("HPET table ignored: {s}", .{@errorName(err)});
+        break :blk null;
+    };
+    try hpet.init(hpet_sdt);
 }
 
 comptime {

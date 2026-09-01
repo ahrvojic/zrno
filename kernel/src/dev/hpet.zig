@@ -28,7 +28,7 @@ var freq_hz_value: u64 = 0;
 var counter_64 = false;
 var initialized = false;
 
-pub fn init() !void {
+pub fn init() void {
     expectUninit();
     defer initialized = true;
 
@@ -44,7 +44,10 @@ pub fn init() !void {
     }
 
     const phys: usize = @intCast(gas.address);
-    try vmm.kernel_vmm.mapMmio(phys, pmm.page_size);
+    vmm.kernel_vmm.mapMmio(phys, pmm.page_size) catch |err| {
+        logger.warn("HPET MMIO map failed: {s}", .{@errorName(err)});
+        return;
+    };
     mmio_base = virt.toHH(usize, phys);
 
     const cap = read64(reg_cap);
@@ -56,16 +59,18 @@ pub fn init() !void {
     };
 
     counter_64 = cap & cap_count_size != 0;
+    // Disable first: spec forbids changing LEG_RT_CNF while ENABLE_CNF is 1.
+    const cfg = read32(reg_config);
+    write32(reg_config, cfg & ~@as(u32, @truncate(cfg_enable)));
     // Do not enable legacy replacement: it steals ISA IRQ 0/8 from the PIT/RTC.
-    var cfg = read32(reg_config);
-    cfg = (cfg & ~@as(u32, @truncate(cfg_legacy))) | @as(u32, @truncate(cfg_enable));
-    write32(reg_config, cfg);
+    write32(reg_config, (cfg & ~@as(u32, @truncate(cfg_legacy))) | @as(u32, @truncate(cfg_enable)));
 
     const a = readCounter();
     pauseLoop(tick_spins);
     const b = readCounter();
     if (b == a) {
         logger.warn("HPET counter is not ticking", .{});
+        write32(reg_config, read32(reg_config) & ~@as(u32, @truncate(cfg_enable)));
         mmio_base = 0;
         return;
     }

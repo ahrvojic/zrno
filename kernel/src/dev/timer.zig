@@ -19,8 +19,8 @@ pub fn init() !void {
     expectUninit();
     defer initialized = true;
 
-    try hpet.init();
-    try pmtimer.init();
+    hpet.init();
+    pmtimer.init();
     _ = pit.probeChannel2();
 
     const bsp = cpu.bsp();

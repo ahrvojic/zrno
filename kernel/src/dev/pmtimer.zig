@@ -20,7 +20,7 @@ var mmio_base: usize = 0;
 var bits_value: u8 = 24;
 var initialized = false;
 
-pub fn init() !void {
+pub fn init() void {
     expectUninit();
     defer initialized = true;
 
@@ -35,7 +35,10 @@ pub fn init() !void {
         },
         .memory => {
             const phys: usize = @intCast(spec.address);
-            try vmm.kernel_vmm.mapMmio(phys, pmm.page_size);
+            vmm.kernel_vmm.mapMmio(phys, pmm.page_size) catch |err| {
+                logger.warn("PM timer MMIO map failed: {s}", .{@errorName(err)});
+                return;
+            };
             mmio_base = virt.toHH(usize, phys);
             address = spec.address;
         },
@@ -129,7 +132,7 @@ fn counterDelta(now: u32, then: u32, width: u8) u32 {
     return (now -% then) & counterMask(width);
 }
 
-// Linux acpi_pm verified-read: retry when the middle sample is an outlier.
+// Retry torn 24-bit I/O reads.
 fn readsConsistent(v1: u32, v2: u32, v3: u32) bool {
     return !((v1 > v2 and v1 < v3) or (v2 > v3 and v2 < v1) or (v3 > v1 and v3 < v2));
 }
