@@ -4,6 +4,7 @@ const std = @import("std");
 
 const boot = @import("../sys/boot.zig");
 const fadt = @import("fadt.zig");
+const hpet = @import("hpet.zig");
 const madt = @import("madt.zig");
 const virt = @import("../lib/virt.zig");
 
@@ -32,6 +33,18 @@ const XSDP = extern struct {
     extended_checksum: u8,
     reserved: [3]u8,
 };
+
+// ACPI 5.2.3.2 Generic Address Structure. 12 bytes on the wire.
+pub const GenericAddress = extern struct {
+    address_space: u8 align(1),
+    bit_width: u8 align(1),
+    bit_offset: u8 align(1),
+    access_size: u8 align(1),
+    address: u64 align(1),
+};
+
+pub const gas_space_memory: u8 = 0;
+pub const gas_space_io: u8 = 1;
 
 pub const SDT = extern struct {
     signature: [4]u8,
@@ -72,10 +85,20 @@ const ACPI = struct {
     }
 
     pub fn findSDT(self: *const ACPI, signature: *const [4]u8, index: usize) !*align(1) const SDT {
-        return if (self.use_xsdt) self.findSDTAt(u64, signature, index) else self.findSDTAt(u32, signature, index);
+        return (try self.lookupSDT(signature, index)) orelse {
+            logger.err("SDT not found: {s}", .{signature});
+            return error.AcpiSdtNotFound;
+        };
     }
 
-    fn findSDTAt(self: *const ACPI, comptime T: type, signature: *const [4]u8, index: usize) !*align(1) const SDT {
+    fn lookupSDT(self: *const ACPI, signature: *const [4]u8, index: usize) !?*align(1) const SDT {
+        return if (self.use_xsdt)
+            self.lookupSDTAt(u64, signature, index)
+        else
+            self.lookupSDTAt(u32, signature, index);
+    }
+
+    fn lookupSDTAt(self: *const ACPI, comptime T: type, signature: *const [4]u8, index: usize) !?*align(1) const SDT {
         const data = self.rsdt.getData();
         const entry_size = @sizeOf(T);
         var offset: usize = 0;
@@ -99,8 +122,7 @@ const ACPI = struct {
             return sdt;
         }
 
-        logger.err("SDT not found: {s}", .{signature});
-        return error.AcpiSdtNotFound;
+        return null;
     }
 };
 
@@ -154,10 +176,13 @@ pub fn init() !void {
 
     const madt_sdt = try acpi.findSDT("APIC", 0);
     try madt.init(madt_sdt);
+
+    try hpet.init(try acpi.lookupSDT("HPET", 0));
 }
 
 comptime {
     std.debug.assert(@sizeOf(RSDP) == rsdp_v1_len);
+    std.debug.assert(@sizeOf(GenericAddress) == 12);
 }
 
 test "acpi checksum is zero iff bytes sum to 0 mod 256" {

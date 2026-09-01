@@ -6,14 +6,6 @@ const acpi = @import("acpi.zig");
 const panic = @import("../lib/panic.zig").panic;
 const port = @import("../sys/port.zig");
 
-const GenericAddress = extern struct {
-    address_space: u8 align(1),
-    bit_width: u8 align(1),
-    bit_offset: u8 align(1),
-    access_size: u8 align(1),
-    address: u64 align(1),
-};
-
 const FADT = extern struct {
     firmware_ctrl: u32 align(1),
     dsdt_addr: u32 align(1),
@@ -53,21 +45,29 @@ const FADT = extern struct {
     boot_arch_flags: u16 align(1),
     reserved_2: u8 align(1),
     flags: u32 align(1),
-    reset_reg: GenericAddress align(1),
+    reset_reg: acpi.GenericAddress align(1),
     reset_value: u8 align(1),
     reserved_3: [3]u8 align(1),
     x_firmware_ctrl: u64 align(1),
     x_dsdt_addr: u64 align(1),
-    x_pm1a_event_block: GenericAddress align(1),
-    x_pm1b_event_block: GenericAddress align(1),
-    x_pm1a_ctrl_block: GenericAddress align(1),
-    x_pm1b_ctrl_block: GenericAddress align(1),
-    x_pm2_ctrl_block: GenericAddress align(1),
-    x_pm_timer_block: GenericAddress align(1),
-    x_gpe0_block: GenericAddress align(1),
-    x_gpe1_block: GenericAddress align(1),
+    x_pm1a_event_block: acpi.GenericAddress align(1),
+    x_pm1b_event_block: acpi.GenericAddress align(1),
+    x_pm1a_ctrl_block: acpi.GenericAddress align(1),
+    x_pm1b_ctrl_block: acpi.GenericAddress align(1),
+    x_pm2_ctrl_block: acpi.GenericAddress align(1),
+    x_pm_timer_block: acpi.GenericAddress align(1),
+    x_gpe0_block: acpi.GenericAddress align(1),
+    x_gpe1_block: acpi.GenericAddress align(1),
 };
 
+comptime {
+    std.debug.assert(@offsetOf(FADT, "pm_timer_block") == 40);
+    std.debug.assert(@offsetOf(FADT, "flags") == 76);
+    std.debug.assert(@offsetOf(FADT, "x_pm_timer_block") == 172);
+}
+
+// ACPI spec: FADT Flags bit 8 = TMR_VAL_EXT (PM timer is 32-bit, else 24).
+const tmr_val_ext: u32 = 1 << 8;
 // ACPI spec: FADT Flags bit 20 = HW_REDUCED_ACPI
 const hw_reduced_acpi: u32 = 1 << 20;
 // SCI_EN in PM1_CNT: platform has entered ACPI mode.
@@ -97,7 +97,16 @@ pub const Info = struct {
     boot_arch: BootArch,
 };
 
+pub const PmTimer = struct {
+    pub const Kind = enum { io, memory };
+
+    kind: Kind,
+    address: u64,
+    bits: u8,
+};
+
 var info_value: Info = undefined;
+var pm_timer_value: ?PmTimer = null;
 var initialized = false;
 
 pub fn info() Info {
@@ -107,6 +116,11 @@ pub fn info() Info {
 
 pub fn bootArch() BootArch {
     return info().boot_arch;
+}
+
+pub fn pmTimer() ?PmTimer {
+    expectInit();
+    return pm_timer_value;
 }
 
 pub fn init(sdt: *align(1) const acpi.SDT) !void {
@@ -141,8 +155,39 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
         .boot_arch = boot_arch,
     };
 
+    const bits: u8 = if (fadt.flags & tmr_val_ext != 0) 32 else 24;
+    pm_timer_value = parsePmTimer(data, bits);
+
     try enableAcpi(fadt);
     initialized = true;
+}
+
+fn parsePmTimer(data: []const u8, bits: u8) ?PmTimer {
+    const x_off = @offsetOf(FADT, "x_pm_timer_block");
+    if (data.len >= x_off + @sizeOf(acpi.GenericAddress)) {
+        const x = std.mem.bytesAsValue(
+            acpi.GenericAddress,
+            data[x_off..][0..@sizeOf(acpi.GenericAddress)],
+        ).*;
+        if (fromGas(x, bits)) |tmr| return tmr;
+    }
+
+    const blk = std.mem.readInt(u32, data[@offsetOf(FADT, "pm_timer_block")..][0..4], .little);
+    if (blk != 0 and blk <= std.math.maxInt(u16)) {
+        return .{ .kind = .io, .address = blk, .bits = bits };
+    }
+    return null;
+}
+
+fn fromGas(gas: acpi.GenericAddress, bits: u8) ?PmTimer {
+    if (gas.address == 0 or gas.bit_offset != 0) return null;
+    const kind: PmTimer.Kind = switch (gas.address_space) {
+        acpi.gas_space_memory => .memory,
+        acpi.gas_space_io => .io,
+        else => return null,
+    };
+    if (kind == .io and gas.address > std.math.maxInt(u16)) return null;
+    return .{ .kind = kind, .address = gas.address, .bits = bits };
 }
 
 fn parseBootArch(revision: u8, flags: u16) BootArch {

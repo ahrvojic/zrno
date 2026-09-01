@@ -14,6 +14,14 @@ pub inline fn inw(port: u16) u16 {
     );
 }
 
+pub inline fn inl(port: u16) u32 {
+    return asm volatile (
+        \\inl %[port], %[res]
+        : [res] "={eax}" (-> u32),
+        : [port] "N{dx}" (port),
+    );
+}
+
 pub inline fn outb(port: u16, value: u8) void {
     asm volatile (
         \\outb %[value], %[port]
