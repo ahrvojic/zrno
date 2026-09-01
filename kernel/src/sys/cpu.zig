@@ -23,10 +23,21 @@ const x2apic_msr_base: u32 = 0x800;
 const lapic_reg_id = 0x20;
 const lapic_reg_eoi = 0xb0;
 const lapic_reg_spurious = 0xf0;
+const lapic_reg_lvt_timer = 0x320;
+const lapic_reg_timer_icr = 0x380;
+const lapic_reg_timer_ccr = 0x390;
+const lapic_reg_timer_dcr = 0x3e0;
+const lapic_lvt_masked: u32 = 1 << 16;
+const lapic_lvt_periodic: u32 = 1 << 17;
+const lapic_timer_div16: u32 = 0b0011;
 comptime {
     std.debug.assert(x2apic_msr_base + (lapic_reg_id >> 4) == 0x802);
     std.debug.assert(x2apic_msr_base + (lapic_reg_eoi >> 4) == 0x80b);
     std.debug.assert(x2apic_msr_base + (lapic_reg_spurious >> 4) == 0x80f);
+    std.debug.assert(x2apic_msr_base + (lapic_reg_lvt_timer >> 4) == 0x832);
+    std.debug.assert(x2apic_msr_base + (lapic_reg_timer_icr >> 4) == 0x838);
+    std.debug.assert(x2apic_msr_base + (lapic_reg_timer_ccr >> 4) == 0x839);
+    std.debug.assert(x2apic_msr_base + (lapic_reg_timer_dcr >> 4) == 0x83e);
 }
 
 var bsp_value: CPU = .{};
@@ -167,6 +178,26 @@ pub const CPU = struct {
     pub fn lapicId(self: *const CPU) u32 {
         self.expectLapicInit();
         return self.decodeLapicId(self.lapicRead(lapic_reg_id));
+    }
+
+    pub fn lapicTimerCurrent(self: *const CPU) u32 {
+        self.expectLapicInit();
+        return self.lapicRead(lapic_reg_timer_ccr);
+    }
+
+    /// Masked one-shot. Counts down from `initial`; does not interrupt.
+    pub fn lapicTimerArm(self: *const CPU, initial: u32) void {
+        self.expectLapicInit();
+        self.lapicWrite(lapic_reg_timer_dcr, lapic_timer_div16);
+        self.lapicWrite(lapic_reg_lvt_timer, @as(u32, ivt.vec_timer) | lapic_lvt_masked);
+        self.lapicWrite(lapic_reg_timer_icr, initial);
+    }
+
+    pub fn lapicTimerPeriodic(self: *const CPU, initial: u32) void {
+        self.expectLapicInit();
+        self.lapicWrite(lapic_reg_timer_dcr, lapic_timer_div16);
+        self.lapicWrite(lapic_reg_lvt_timer, @as(u32, ivt.vec_timer) | lapic_lvt_periodic);
+        self.lapicWrite(lapic_reg_timer_icr, initial);
     }
 
     fn decodeLapicId(self: *const CPU, raw: u32) u32 {

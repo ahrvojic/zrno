@@ -11,15 +11,13 @@ const cpu = @import("sys/cpu.zig");
 const debug = @import("lib/debug.zig");
 const fadt = @import("acpi/fadt.zig");
 const heap = @import("mm/heap.zig");
-const hpet = @import("dev/hpet.zig");
 const lib_panic = @import("lib/panic.zig");
-const pit = @import("dev/pit.zig");
-const pmtimer = @import("dev/pmtimer.zig");
 const pmm = @import("mm/pmm.zig");
 const ps2 = @import("dev/ps2.zig");
 const sched = @import("sched/sched.zig");
 const serial = @import("dev/serial.zig");
 const shell = @import("shell.zig");
+const timer = @import("dev/timer.zig");
 const tty = @import("dev/tty.zig");
 const video = @import("dev/video.zig");
 const vmm = @import("mm/vmm.zig");
@@ -89,10 +87,7 @@ pub fn main() !void {
     try cpu.bsp().initLapic();
     try apic.init();
     try video.init();
-    try hpet.init();
-    try pmtimer.init();
-    _ = pit.probeChannel2();
-    try pit.init();
+    try timer.init();
     try sched.init();
 
     if (fadt.bootArch().has_8042) {

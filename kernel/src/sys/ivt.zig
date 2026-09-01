@@ -18,7 +18,7 @@ pub const vec_double_fault = 8;
 pub const vec_stack_segment = 12;
 pub const vec_gpf = 13;
 pub const vec_page_fault = 14;
-pub const vec_pit = 32;
+pub const vec_timer = 32; // local APIC timer, not ISA IRQ 0
 pub const vec_keyboard = 33;
 // Software only: must not overlap IOAPIC GSIs (32 + pin) or APIC spurious.
 pub const vec_syscall = 0x80;
@@ -58,7 +58,7 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
 
             fatalException(ctx, "Unhandled page fault");
         },
-        vec_pit => {
+        vec_timer => {
             tty.pollSerial();
             sched.tick(ctx);
             cpu.current().eoi();

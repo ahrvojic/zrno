@@ -94,6 +94,12 @@ pub fn read() u64 {
     return readCounter();
 }
 
+pub fn delta(now: u64, then: u64) u64 {
+    expectPresent();
+    if (counter_64) return now -% then;
+    return (now -% then) & 0xffff_ffff;
+}
+
 fn readCounter() u64 {
     if (!counter_64) return read32(reg_counter);
     while (true) {

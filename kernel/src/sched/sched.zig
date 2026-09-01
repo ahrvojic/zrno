@@ -11,8 +11,10 @@ const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
 const vmm = @import("../mm/vmm.zig");
 
+pub const tick_hz: u64 = 1000;
+
 // Kernel threads and TSS.rsp[0] (syscall/IRQ). 16 KiB covers a 1 KiB
-// print buffer plus a nested IRQ frame (int 0x80 → 0x90, or PIT during print).
+// print buffer plus a nested IRQ frame (int 0x80 → 0x90, or timer during print).
 const stack_size: usize = 16 * pmm.page_size;
 const stack_pages: usize = stack_size / pmm.page_size;
 const kernel_pid: u64 = 0;
@@ -58,7 +60,7 @@ var kstack_next: usize = kstack_region_base;
 // Freed on the next `switchLocked` that is no longer using that root.
 var doomed_pt_phys: ?usize = null;
 
-// PIT ticks. 1 kHz so 1 tick = 1 ms (`pit.timer_freq_hz`).
+// Local APIC timer ticks. 1 kHz so 1 tick = 1 ms (`tick_hz`).
 var ticks: u64 = 0;
 
 fn expectInit() void {
@@ -313,7 +315,7 @@ pub fn yield() void {
     ivt.interrupt(ivt.vec_yield);
 }
 
-// Park the current thread for `ms` milliseconds. PIT is 1 kHz, so 1 ms = 1 tick.
+// Park the current thread for `ms` milliseconds. 1 kHz tick, so 1 ms = 1 tick.
 pub fn sleep(ms: u64) void {
     expectInit();
     if (ms == 0) return;
