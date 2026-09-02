@@ -8,6 +8,7 @@ const pmm = @import("../mm/pmm.zig");
 const proc = @import("../sched/proc.zig");
 const sched = @import("../sched/sched.zig");
 const tty = @import("../dev/tty.zig");
+const user = @import("../user.zig");
 const vmm = @import("../mm/vmm.zig");
 
 // int 0x80: rax = number / return, rdi/rsi/rdx = args. Negative rax is -errno.
@@ -18,12 +19,14 @@ pub const nr_yield: u64 = 3;
 pub const nr_sleep: u64 = 4;
 pub const nr_open: u64 = 5;
 pub const nr_close: u64 = 6;
+pub const nr_exec: u64 = 7;
 
 const max_io: usize = pmm.page_size;
 const io_chunk: usize = 256;
 const max_path: usize = 128;
 
 const ENOENT: i64 = 2;
+const ENOEXEC: i64 = 8;
 const EBADF: i64 = 9;
 const ENOMEM: i64 = 12;
 const EFAULT: i64 = 14;
@@ -45,6 +48,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_sleep => sys_sleep(ctx),
         nr_open => sys_open(ctx),
         nr_close => sys_close(ctx),
+        nr_exec => sys_exec(ctx),
         else => errval(ENOSYS),
     };
 }
@@ -153,6 +157,14 @@ fn sys_close(ctx: *cpu.Context) u64 {
     return 0;
 }
 
+fn sys_exec(ctx: *cpu.Context) u64 {
+    const addr: usize = @intCast(ctx.rdi);
+    var buf: [max_path]u8 = undefined;
+    const path = copyUserPath(addr, &buf) catch |err| return pathErr(err);
+    const pid = user.spawnPath(path) catch |err| return spawnErr(err);
+    return pid;
+}
+
 fn copyUserPath(addr: usize, buf: *[max_path]u8) error{ Fault, OutOfMemory, NameTooLong }![]const u8 {
     const space = userSpace();
     var n: usize = 0;
@@ -187,6 +199,14 @@ fn pathErr(err: error{ Fault, OutOfMemory, NameTooLong }) u64 {
         error.Fault => errval(EFAULT),
         error.OutOfMemory => errval(ENOMEM),
         error.NameTooLong => errval(ENAMETOOLONG),
+    };
+}
+
+fn spawnErr(err: anyerror) u64 {
+    return switch (err) {
+        error.NoEnt => errval(ENOENT),
+        error.OutOfMemory => errval(ENOMEM),
+        else => errval(ENOEXEC),
     };
 }
 

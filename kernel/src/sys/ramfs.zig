@@ -70,13 +70,14 @@ fn stripSlash(path: []const u8) []const u8 {
 test "mount fixture tar and lookup" {
     var tar: ustar.Fixture = .{};
     tar.addFile("hello.txt", "hello from ramfs\n");
-    tar.addFile("hello.elf", "\x7fELF");
+    tar.addFile("hello", "\x7fELF");
     var t: Table = .{};
     try t.mount(tar.finish());
 
     try std.testing.expectEqualStrings("hello from ramfs\n", t.lookup("hello.txt").?);
     try std.testing.expectEqualStrings("hello from ramfs\n", t.lookup("/hello.txt").?);
-    try std.testing.expectEqualStrings("\x7fELF", t.lookup("hello.elf").?);
+    try std.testing.expectEqualStrings("\x7fELF", t.lookup("hello").?);
+    try std.testing.expectEqualStrings("\x7fELF", t.lookup("/hello").?);
     try std.testing.expect(t.lookup("missing") == null);
     try std.testing.expect(t.lookup("") == null);
     try std.testing.expect(t.lookup("/") == null);

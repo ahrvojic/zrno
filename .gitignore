@@ -5,4 +5,6 @@ ovmf/
 *.iso
 *.hdd
 user/hello.elf
+user/init.elf
 user/initramfs.tar
+user/.initramfs/

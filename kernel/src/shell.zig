@@ -47,7 +47,7 @@ fn help() void {
 }
 
 fn hello() void {
-    const pid = user.spawnHello() catch |err| {
+    const pid = user.spawnPath("/init") catch |err| {
         tty.print("hello: {s}\n", .{@errorName(err)});
         return;
     };

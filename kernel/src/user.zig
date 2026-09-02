@@ -1,9 +1,9 @@
 const std = @import("std");
 
-const boot = @import("sys/boot.zig");
 const elf = @import("sys/elf.zig");
 const heap = @import("mm/heap.zig");
 const pmm = @import("mm/pmm.zig");
+const ramfs = @import("sys/ramfs.zig");
 const sched = @import("sched/sched.zig");
 const virt = @import("lib/virt.zig");
 const vmm = @import("mm/vmm.zig");
@@ -13,8 +13,8 @@ comptime {
     std.debug.assert(vmm.user_space_end == elf.user_space_end);
 }
 
-pub fn spawnHello() !u64 {
-    const image = try helloImage();
+pub fn spawnPath(path: []const u8) !u64 {
+    const image = ramfs.lookup(path) orelse return error.NoEnt;
     const process = try sched.startProcess(heap.kernel_heap.allocator(), true);
     errdefer sched.exitProcess(process, 1);
 
@@ -22,15 +22,6 @@ pub fn spawnHello() !u64 {
     const entry = try elf.load(&space, image);
     _ = try sched.startUserThread(process, entry, 0, true);
     return process.pid;
-}
-
-fn helloImage() ![]const u8 {
-    const mods = boot.modules();
-    for (mods) |m| {
-        if (std.mem.eql(u8, m.cmdlineSlice(), "hello")) return m.bytes();
-    }
-    if (mods.len != 0) return mods[0].bytes();
-    return error.NoHello;
 }
 
 const VmmSpace = struct {
