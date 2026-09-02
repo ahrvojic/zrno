@@ -10,11 +10,11 @@ pub fn thread(_: usize) callconv(.c) noreturn {
     var buf: [128]u8 = undefined;
     while (true) {
         tty.print("> ", .{});
-        run(tty.readLine(&buf));
+        dispatch(tty.readLine(&buf));
     }
 }
 
-fn run(line: []const u8) void {
+fn dispatch(line: []const u8) void {
     var it = std.mem.tokenizeScalar(u8, line, ' ');
     const cmd = it.next() orelse return;
     if (std.mem.eql(u8, cmd, "help")) {
@@ -27,8 +27,8 @@ fn run(line: []const u8) void {
         sleep(it.next());
     } else if (std.mem.eql(u8, cmd, "echo")) {
         tty.print("{s}\n", .{it.rest()});
-    } else if (std.mem.eql(u8, cmd, "hello")) {
-        hello();
+    } else if (std.mem.eql(u8, cmd, "run")) {
+        run(it.next());
     } else if (std.mem.eql(u8, cmd, "cat")) {
         cat(it.next());
     } else {
@@ -42,13 +42,17 @@ fn help() void {
     tty.print("yield         yield the CPU\n", .{});
     tty.print("sleep [ms]    sleep (default 1000)\n", .{});
     tty.print("echo [text]   print arguments\n", .{});
-    tty.print("hello         userspace hello\n", .{});
+    tty.print("run [path]    spawn a ramfs ELF\n", .{});
     tty.print("cat [path]    print a ramfs file\n", .{});
 }
 
-fn hello() void {
-    const pid = user.spawnPath("/init") catch |err| {
-        tty.print("hello: {s}\n", .{@errorName(err)});
+fn run(arg: ?[]const u8) void {
+    const path = arg orelse {
+        tty.print("usage: run [path]\n", .{});
+        return;
+    };
+    const pid = user.spawnPath(path) catch |err| {
+        tty.print("run: {s}\n", .{@errorName(err)});
         return;
     };
     sched.waitProcess(pid);
