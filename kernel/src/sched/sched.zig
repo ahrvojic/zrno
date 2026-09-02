@@ -3,6 +3,7 @@ const logger = std.log.scoped(.sched);
 const std = @import("std");
 
 const cpu = @import("../sys/cpu.zig");
+const elf = @import("../sys/elf.zig");
 const gdt = @import("../sys/gdt.zig");
 const heap = @import("../mm/heap.zig");
 const ivt = @import("../sys/ivt.zig");
@@ -20,7 +21,7 @@ const stack_pages: usize = stack_size / pmm.page_size;
 const kernel_pid: u64 = 0;
 // Exclusive top of the first user stack. Later threads grow down one
 // stack_size at a time. Canonical low half (2 GiB).
-const user_stack_top: usize = 0x0000_0000_8000_0000;
+const user_stack_top: usize = elf.user_stack_top;
 
 // Kernel stacks live in the cloned higher half (not HHDM) so an unmapped
 // guard page under each stack is possible. PML4 510: below the kernel
@@ -30,6 +31,7 @@ const kstack_region_end: usize = kstack_region_base + (1024 * 1024 * 1024);
 const kstack_slot: usize = stack_size + pmm.page_size;
 
 comptime {
+    std.debug.assert(stack_size == elf.user_stack_window);
     std.debug.assert(user_stack_top % pmm.page_size == 0);
     std.debug.assert(user_stack_top < 0x0000_8000_0000_0000);
     std.debug.assert(kstack_region_base % pmm.page_size == 0);

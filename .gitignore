@@ -4,3 +4,4 @@ limine-binary/
 ovmf/
 *.iso
 *.hdd
+user/hello.elf

@@ -67,8 +67,20 @@ limine/limine:
 		LDFLAGS="$(HOST_LDFLAGS)" \
 		LIBS="$(HOST_LIBS)"
 
+user/hello.elf: user/hello.S user/user.ld
+	zig build-exe user/hello.S \
+		-target x86_64-freestanding-none \
+		-T user/user.ld \
+		-fentry=_start \
+		-fno-PIE \
+		-fno-compiler-rt \
+		-fstrip \
+		-fno-stack-protector \
+		--name hello \
+		-femit-bin=$@
+
 .PHONY: kernel
-kernel:
+kernel: user/hello.elf
 	cd kernel && zig build $(KZIGFLAGS)
 
 $(IMAGE_NAME).iso: limine/limine kernel
@@ -104,6 +116,7 @@ $(IMAGE_NAME).hdd: limine/limine kernel
 clean:
 	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
 	rm -rf kernel/.zig-cache kernel/zig-cache kernel/zig-out
+	rm -f user/hello.elf
 
 .PHONY: distclean
 distclean: clean
