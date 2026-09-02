@@ -40,7 +40,8 @@ comptime {
     std.debug.assert(kstack_region_end <= 0xffff_ffff_8000_0000);
 }
 
-// Live processes; not a runqueue. `schedule` walks `threads`.
+// Processes including zombies until `waitProcess`; not a runqueue.
+// `schedule` walks `threads`.
 var processes: std.DoublyLinkedList = .{};
 var threads: std.DoublyLinkedList = .{};
 
@@ -92,7 +93,7 @@ pub fn spawnKernelThread(pc: usize, arg: usize) !*proc.Thread {
 pub fn spawnUserThread(pc: usize, arg: usize) !*proc.Thread {
     expectInit();
     const process = try startProcess(heap.kernel_heap.allocator(), true);
-    errdefer exitProcess(process, 1);
+    errdefer abortProcess(process, 1);
     return startUserThread(process, pc, arg, true);
 }
 
@@ -113,9 +114,14 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .user_stack_next = user_stack_top,
         .fds = [_]proc.Fd{.empty} ** proc.max_fds,
     };
+
     process.fds[0] = .tty;
     process.fds[1] = .tty;
     process.fds[2] = .tty;
+
+    if (cpu.current().thread) |thread| {
+        process.parent = thread.parent.pid;
+    }
 
     lock.lock();
     defer lock.unlock();
@@ -129,7 +135,10 @@ pub fn findProcess(pid: u64) ?*proc.Process {
     expectInit();
     lock.lock();
     defer lock.unlock();
+    return findProcessLocked(pid);
+}
 
+fn findProcessLocked(pid: u64) ?*proc.Process {
     var node = processes.first;
     while (node) |n| {
         const process: *proc.Process = @fieldParentPtr("node", n);
@@ -139,12 +148,30 @@ pub fn findProcess(pid: u64) ?*proc.Process {
     return null;
 }
 
-// Park until `pid` is gone. Pid 0 is the kernel process and never exits.
-pub fn waitProcess(pid: u64) void {
+// Park until `pid` has exited, then reap it and return its exit code.
+// Pid 0 is the kernel process and never exits.
+pub fn waitProcess(pid: u64) error{ NoChild, Invalid }!u8 {
     expectInit();
-    if (pid == kernel_pid) @panic("waitProcess kernel process");
-    while (findProcess(pid) != null) {
-        yield();
+    if (pid == kernel_pid) return error.Invalid;
+    if (cpu.current().thread) |thread| {
+        if (thread.parent.pid == pid) return error.Invalid;
+    }
+
+    while (true) {
+        lock.lock();
+        if (findProcessLocked(pid)) |process| {
+            if (process.status == .stopped) {
+                const code = process.exit_code;
+                reapLocked(process);
+                lock.unlock();
+                return code;
+            }
+            lock.unlock();
+            yield();
+            continue;
+        }
+        lock.unlock();
+        return error.NoChild;
     }
 }
 
@@ -290,7 +317,6 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
 
     process.exit_code = exit_code;
     process.status = .stopped;
-    dequeueProcess(process);
 
     var node = process.threads.first;
     while (node) |n| {
@@ -300,7 +326,12 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
     }
 
     dropAddressSpace(&process.vmm);
-    process.heap.destroy(process);
+}
+
+pub fn abortProcess(process: *proc.Process, exit_code: u8) void {
+    const pid = process.pid;
+    exitProcess(process, exit_code);
+    _ = waitProcess(pid) catch {};
 }
 
 pub fn exitThread() noreturn {
@@ -427,6 +458,11 @@ fn dequeueProcess(process: *proc.Process) void {
     if (!process.on_proctable) return;
     processes.remove(&process.node);
     process.on_proctable = false;
+}
+
+fn reapLocked(process: *proc.Process) void {
+    dequeueProcess(process);
+    process.heap.destroy(process);
 }
 
 fn enqueueThread(thread: *proc.Thread) void {

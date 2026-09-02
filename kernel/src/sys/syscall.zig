@@ -20,6 +20,7 @@ pub const nr_sleep: u64 = 4;
 pub const nr_open: u64 = 5;
 pub const nr_close: u64 = 6;
 pub const nr_exec: u64 = 7;
+pub const nr_wait: u64 = 8;
 
 const max_io: usize = pmm.page_size;
 const io_chunk: usize = 256;
@@ -28,6 +29,7 @@ const max_path: usize = 128;
 const ENOENT: i64 = 2;
 const ENOEXEC: i64 = 8;
 const EBADF: i64 = 9;
+const ECHILD: i64 = 10;
 const ENOMEM: i64 = 12;
 const EFAULT: i64 = 14;
 const EINVAL: i64 = 22;
@@ -49,6 +51,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_open => sys_open(ctx),
         nr_close => sys_close(ctx),
         nr_exec => sys_exec(ctx),
+        nr_wait => sys_wait(ctx),
         else => errval(ENOSYS),
     };
 }
@@ -163,6 +166,14 @@ fn sys_exec(ctx: *cpu.Context) u64 {
     const path = copyUserPath(addr, &buf) catch |err| return pathErr(err);
     const pid = user.spawnPath(path) catch |err| return spawnErr(err);
     return pid;
+}
+
+fn sys_wait(ctx: *cpu.Context) u64 {
+    const code = sched.waitProcess(ctx.rdi) catch |err| return switch (err) {
+        error.NoChild => errval(ECHILD),
+        error.Invalid => errval(EINVAL),
+    };
+    return code;
 }
 
 fn copyUserPath(addr: usize, buf: *[max_path]u8) error{ Fault, OutOfMemory, NameTooLong }![]const u8 {

@@ -16,7 +16,7 @@ comptime {
 pub fn spawnPath(path: []const u8) !u64 {
     const image = ramfs.lookup(path) orelse return error.NoEnt;
     const process = try sched.startProcess(heap.kernel_heap.allocator(), true);
-    errdefer sched.exitProcess(process, 1);
+    errdefer sched.abortProcess(process, 1);
 
     var space: VmmSpace = .{ .vmm = &process.vmm };
     const entry = try elf.load(&space, image);

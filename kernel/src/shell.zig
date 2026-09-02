@@ -55,7 +55,7 @@ fn run(arg: ?[]const u8) void {
         tty.print("run: {s}\n", .{@errorName(err)});
         return;
     };
-    sched.waitProcess(pid);
+    _ = sched.waitProcess(pid) catch {};
 }
 
 fn cat(arg: ?[]const u8) void {
