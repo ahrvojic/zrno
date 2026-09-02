@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const ramfs = @import("sys/ramfs.zig");
 const sched = @import("sched/sched.zig");
 const tty = @import("dev/tty.zig");
 const user = @import("user.zig");
@@ -28,6 +29,8 @@ fn run(line: []const u8) void {
         tty.print("{s}\n", .{it.rest()});
     } else if (std.mem.eql(u8, cmd, "hello")) {
         hello();
+    } else if (std.mem.eql(u8, cmd, "cat")) {
+        cat(it.next());
     } else {
         tty.print("unknown command: {s}\n", .{cmd});
     }
@@ -40,6 +43,7 @@ fn help() void {
     tty.print("sleep [ms]    sleep (default 1000)\n", .{});
     tty.print("echo [text]   print arguments\n", .{});
     tty.print("hello         userspace hello\n", .{});
+    tty.print("cat [path]    print a ramfs file\n", .{});
 }
 
 fn hello() void {
@@ -48,6 +52,18 @@ fn hello() void {
         return;
     };
     sched.waitProcess(pid);
+}
+
+fn cat(arg: ?[]const u8) void {
+    const path = arg orelse {
+        tty.print("usage: cat [path]\n", .{});
+        return;
+    };
+    const data = ramfs.lookup(path) orelse {
+        tty.print("cat: NoEnt\n", .{});
+        return;
+    };
+    tty.writeBytes(data);
 }
 
 fn ps() void {

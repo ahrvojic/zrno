@@ -111,7 +111,11 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .on_proctable = false,
         .exit_code = 0,
         .user_stack_next = user_stack_top,
+        .fds = [_]proc.Fd{.empty} ** proc.max_fds,
     };
+    process.fds[0] = .tty;
+    process.fds[1] = .tty;
+    process.fds[2] = .tty;
 
     lock.lock();
     defer lock.unlock();

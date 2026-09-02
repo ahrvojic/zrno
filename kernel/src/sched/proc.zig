@@ -9,6 +9,19 @@ pub const ProcessStatus = enum {
     stopped,
 };
 
+pub const max_fds: usize = 16;
+
+pub const OpenFile = struct {
+    bytes: []const u8,
+    pos: usize,
+};
+
+pub const Fd = union(enum) {
+    empty,
+    tty,
+    file: OpenFile,
+};
+
 pub const Process = struct {
     pid: u64,
     parent: u64,
@@ -21,6 +34,8 @@ pub const Process = struct {
     exit_code: u8,
     // Exclusive top of the next user stack; grows down.
     user_stack_next: usize,
+    // 0/1/2 are TTY; fds ≥ 3 are ramfs files.
+    fds: [max_fds]Fd,
 };
 
 pub const ThreadStatus = enum {

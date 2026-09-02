@@ -5,6 +5,7 @@ const std = @import("std");
 const limine = @import("limine");
 
 const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
+const ramfs = @import("ramfs.zig");
 const panic = @import("../lib/panic.zig").panic;
 const virt = @import("../lib/virt.zig");
 
@@ -102,6 +103,7 @@ pub fn init() !void {
         info_value.kernel.virtual_base,
     });
     captureModules();
+    mountInitramfs();
 }
 
 fn captureModules() void {
@@ -129,6 +131,20 @@ fn captureModules() void {
             m.length,
             m.address,
         });
+    }
+}
+
+fn mountInitramfs() void {
+    for (modules()) |m| {
+        if (!std.mem.eql(u8, m.cmdlineSlice(), "initramfs")) continue;
+        ramfs.mount(m.bytes()) catch |err| {
+            logger.warn("initramfs: {s}", .{@errorName(err)});
+            return;
+        };
+        for (ramfs.entries()) |e| {
+            logger.info("initramfs {s} {d} bytes", .{ e.name(), e.data.len });
+        }
+        return;
     }
 }
 

@@ -79,14 +79,17 @@ user/hello.elf: user/hello.S user/user.ld
 		--name hello \
 		-femit-bin=$@
 
+user/initramfs.tar: user/hello.elf user/hello.txt
+	COPYFILE_DISABLE=1 tar --format=ustar -cf $@ -C user hello.elf hello.txt
+
 .PHONY: kernel
 kernel:
 	cd kernel && zig build $(KZIGFLAGS)
 
-$(IMAGE_NAME).iso: limine/limine kernel user/hello.elf
+$(IMAGE_NAME).iso: limine/limine kernel user/hello.elf user/initramfs.tar
 	rm -rf iso_root
 	mkdir -p iso_root/boot
-	cp -v kernel/zig-out/bin/kernel user/hello.elf iso_root/boot/
+	cp -v kernel/zig-out/bin/kernel user/hello.elf user/initramfs.tar iso_root/boot/
 	mkdir -p iso_root/boot/limine
 	cp -v limine.conf limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
 	mkdir -p iso_root/EFI/BOOT
@@ -100,14 +103,14 @@ $(IMAGE_NAME).iso: limine/limine kernel user/hello.elf
 	./limine/limine bios-install $(IMAGE_NAME).iso
 	rm -rf iso_root
 
-$(IMAGE_NAME).hdd: limine/limine kernel user/hello.elf
+$(IMAGE_NAME).hdd: limine/limine kernel user/hello.elf user/initramfs.tar
 	rm -f $(IMAGE_NAME).hdd
 	dd if=/dev/zero bs=1M count=0 seek=64 of=$(IMAGE_NAME).hdd
 	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00 -m 1
 	./limine/limine bios-install $(IMAGE_NAME).hdd
 	mformat -i $(IMAGE_NAME).hdd@@1M
 	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
-	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/zig-out/bin/kernel user/hello.elf ::/boot
+	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/zig-out/bin/kernel user/hello.elf user/initramfs.tar ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf limine/limine-bios.sys ::/boot/limine
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTIA32.EFI ::/EFI/BOOT
@@ -116,7 +119,7 @@ $(IMAGE_NAME).hdd: limine/limine kernel user/hello.elf
 clean:
 	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
 	rm -rf kernel/.zig-cache kernel/zig-cache kernel/zig-out
-	rm -f user/hello.elf
+	rm -f user/hello.elf user/initramfs.tar
 
 .PHONY: distclean
 distclean: clean
