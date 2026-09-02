@@ -81,7 +81,8 @@ pub fn main() !void {
     // Limine response goes away; pixels stay reserved via the memory map.
     video.capture();
 
-    // ACPI tables stay reserved. Limine responses are now unused.
+    // Module cmdline/address/length are already in BSS (boot.init). File
+    // bytes stay in executable_and_modules. Limine responses are now unused.
     boot.drop();
 
     try cpu.bsp().initLapic();

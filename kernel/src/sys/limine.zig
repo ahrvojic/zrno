@@ -180,3 +180,43 @@ pub const ExecutableAddressRequest = extern struct {
     revision: u64 = 0,
     response: ?*ExecutableAddressResponse = null,
 };
+
+pub const Uuid = extern struct {
+    a: u32,
+    b: u16,
+    c: u16,
+    d: [8]u8,
+};
+
+pub const File = extern struct {
+    revision: u64,
+    address: [*]u8,
+    size: u64,
+    path: [*:0]u8,
+    string: [*:0]u8,
+    media_type: u32,
+    unused: u32,
+    tftp_ip: u32,
+    tftp_port: u32,
+    partition_index: u32,
+    mbr_disk_id: u32,
+    gpt_disk_uuid: Uuid,
+    gpt_part_uuid: Uuid,
+    part_uuid: Uuid,
+};
+
+pub const ModuleResponse = extern struct {
+    revision: u64,
+    module_count: u64,
+    modules_ptr: [*]*File,
+
+    pub fn modules(self: *ModuleResponse) []*File {
+        return self.modules_ptr[0..self.module_count];
+    }
+};
+
+pub const ModuleRequest = extern struct {
+    id: [4]u64 = id(0x3e7e279702be32af, 0xca1c4f3bd1280cee),
+    revision: u64 = 0,
+    response: ?*ModuleResponse = null,
+};

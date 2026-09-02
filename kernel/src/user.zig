@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const boot = @import("sys/boot.zig");
 const elf = @import("sys/elf.zig");
 const heap = @import("mm/heap.zig");
 const pmm = @import("mm/pmm.zig");
@@ -12,16 +13,24 @@ comptime {
     std.debug.assert(vmm.user_space_end == elf.user_space_end);
 }
 
-const hello_elf = @import("hello_elf").data;
-
 pub fn spawnHello() !u64 {
+    const image = try helloImage();
     const process = try sched.startProcess(heap.kernel_heap.allocator(), true);
     errdefer sched.exitProcess(process, 1);
 
     var space: VmmSpace = .{ .vmm = &process.vmm };
-    const entry = try elf.load(&space, hello_elf);
+    const entry = try elf.load(&space, image);
     _ = try sched.startUserThread(process, entry, 0, true);
     return process.pid;
+}
+
+fn helloImage() ![]const u8 {
+    const mods = boot.modules();
+    for (mods) |m| {
+        if (std.mem.eql(u8, m.cmdlineSlice(), "hello")) return m.bytes();
+    }
+    if (mods.len != 0) return mods[0].bytes();
+    return error.NoHello;
 }
 
 const VmmSpace = struct {

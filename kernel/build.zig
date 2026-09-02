@@ -25,11 +25,6 @@ pub fn build(b: *std.Build) void {
     const options = b.addOptions();
     options.addOption([]const u8, "version", @import("build.zig.zon").version);
 
-    // Sibling of user/hello.elf; that path is outside the kernel package.
-    const hello_elf = b.createModule(.{
-        .root_source_file = b.path("../user/hello_elf.zig"),
-    });
-
     const kernel_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -42,7 +37,6 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "limine", .module = limine },
             .{ .name = "build_options", .module = options.createModule() },
-            .{ .name = "hello_elf", .module = hello_elf },
         },
     });
 
