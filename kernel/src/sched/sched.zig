@@ -328,6 +328,17 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
     dropAddressSpace(&process.vmm);
 }
 
+// Interrupt-context kill: stop the running user process and overwrite `ctx`
+// with the next thread. Kernel pid 0 is fatal.
+pub fn killCurrent(ctx: *cpu.Context, exit_code: u8) void {
+    expectInit();
+    const thread = cpu.current().thread orelse @panic("kill with no thread");
+    const process = thread.parent;
+    if (process.pid == kernel_pid) @panic("kill kernel process");
+    exitProcess(process, exit_code);
+    schedule(ctx);
+}
+
 pub fn abortProcess(process: *proc.Process, exit_code: u8) void {
     const pid = process.pid;
     exitProcess(process, exit_code);

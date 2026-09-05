@@ -36,12 +36,12 @@ comptime {
 
 export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
     switch (ctx.vector) {
-        vec_div_error => fatalException(ctx, "Divide error"),
-        vec_invalid_opcode => fatalException(ctx, "Invalid opcode"),
-        vec_device_not_available => fatalException(ctx, "Device not available"),
+        vec_div_error => handleException(ctx, "Divide error"),
+        vec_invalid_opcode => handleException(ctx, "Invalid opcode"),
+        vec_device_not_available => handleException(ctx, "Device not available"),
         vec_double_fault => fatalException(ctx, "Double fault"),
-        vec_stack_segment => fatalException(ctx, "Stack-segment fault"),
-        vec_gpf => fatalException(ctx, "General protection fault"),
+        vec_stack_segment => handleException(ctx, "Stack-segment fault"),
+        vec_gpf => handleException(ctx, "General protection fault"),
         vec_page_fault => {
             const fault_addr = asm volatile (
                 \\mov %%cr2, %[result]
@@ -56,7 +56,7 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
                 fatalException(ctx, "Kernel stack overflow");
             }
 
-            fatalException(ctx, "Unhandled page fault");
+            handleException(ctx, "Unhandled page fault");
         },
         vec_timer => {
             tty.pollSerial();
@@ -170,6 +170,39 @@ pub fn interrupt(comptime vector: u8) void {
         :
         : [vec] "i" (vector),
     );
+}
+
+fn fromUser(ctx: *const cpu.Context) bool {
+    return ctx.cs & 3 == 3;
+}
+
+// CPL 3: stop the process and switch. Kernel faults stay fatal.
+fn handleException(ctx: *cpu.Context, comptime message: []const u8) void {
+    if (!fromUser(ctx)) fatalException(ctx, message);
+    killUser(ctx, message);
+}
+
+fn killUser(ctx: *cpu.Context, comptime message: []const u8) void {
+    const thread = cpu.current().thread orelse fatalException(ctx, message);
+    const process = thread.parent;
+    if (process.pid == 0) fatalException(ctx, message);
+
+    // 128+vector: distinguishable from a normal exit(0..127).
+    const code: u8 = 128 + @as(u8, @truncate(ctx.vector));
+    if (ctx.vector == vec_page_fault) {
+        const cr2 = asm volatile (
+            \\mov %%cr2, %[result]
+            : [result] "=r" (-> u64),
+        );
+        logger.warn("pid {d} {s}: vec={d} err={x:0>16} rip={x:0>16} rsp={x:0>16} cr2={x:0>16} exit={d}", .{
+            process.pid, message, ctx.vector, ctx.error_code, ctx.rip, ctx.rsp, cr2, code,
+        });
+    } else {
+        logger.warn("pid {d} {s}: vec={d} err={x:0>16} rip={x:0>16} rsp={x:0>16} exit={d}", .{
+            process.pid, message, ctx.vector, ctx.error_code, ctx.rip, ctx.rsp, code,
+        });
+    }
+    sched.killCurrent(ctx, code);
 }
 
 fn fatalException(ctx: *cpu.Context, comptime message: []const u8) noreturn {
