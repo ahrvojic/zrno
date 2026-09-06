@@ -30,16 +30,25 @@ pub fn read(out: []u8) usize {
     if (out.len == 0) return 0;
     lock.lock();
     defer lock.unlock();
-    while (in_head == in_tail) {
-        sched.wait(&in_buf, &lock);
-    }
-    var n: usize = 0;
-    while (n < out.len and in_head != in_tail) {
-        out[n] = in_buf[in_head];
-        in_head +%= 1;
-        n += 1;
-    }
+    waitData();
+    const n = copyOut(out);
+    drop(n);
     return n;
+}
+
+/// Block until at least one byte is queued, then copy without consuming.
+pub fn peek(out: []u8) usize {
+    if (out.len == 0) return 0;
+    lock.lock();
+    defer lock.unlock();
+    waitData();
+    return copyOut(out);
+}
+
+pub fn consume(n: usize) void {
+    lock.lock();
+    defer lock.unlock();
+    drop(n);
 }
 
 pub fn print(comptime fmt: []const u8, args: anytype) void {
@@ -90,9 +99,7 @@ pub fn pollSerial() void {
 pub fn getChar() u8 {
     lock.lock();
     defer lock.unlock();
-    while (in_head == in_tail) {
-        sched.wait(&in_buf, &lock);
-    }
+    waitData();
     const ch = in_buf[in_head];
     in_head +%= 1;
     return ch;
@@ -121,6 +128,30 @@ pub fn readLine(out: []u8) []u8 {
                 }
             },
         }
+    }
+}
+
+fn waitData() void {
+    while (in_head == in_tail) {
+        sched.wait(&in_buf, &lock);
+    }
+}
+
+fn copyOut(out: []u8) usize {
+    var n: usize = 0;
+    var idx = in_head;
+    while (n < out.len and idx != in_tail) {
+        out[n] = in_buf[idx];
+        idx +%= 1;
+        n += 1;
+    }
+    return n;
+}
+
+fn drop(n: usize) void {
+    var i: usize = 0;
+    while (i < n and in_head != in_tail) : (i += 1) {
+        in_head +%= 1;
     }
 }
 

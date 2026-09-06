@@ -86,8 +86,9 @@ fn sys_read(ctx: *cpu.Context) u64 {
         .tty => {
             var tmp: [io_chunk]u8 = undefined;
             const want = @min(tmp.len, len);
-            const n = tty.read(tmp[0..want]);
+            const n = tty.peek(tmp[0..want]);
             userSpace().copyToUser(addr, tmp[0..n]) catch |err| return copyErr(err);
+            tty.consume(n);
             return n;
         },
         .file => |*f| {
