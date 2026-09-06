@@ -60,19 +60,20 @@ fn nameSlice(field: []const u8) []const u8 {
 }
 
 fn parseOctal(raw: []const u8) error{BadTar}!usize {
-    var i: usize = 0;
-    while (i < raw.len and raw[i] == ' ') : (i += 1) {}
+    var rest = raw;
+    while (rest.len > 0 and rest[0] == ' ') rest = rest[1..];
     var value: usize = 0;
-    while (i < raw.len) : (i += 1) {
-        const c = raw[i];
+    var i: usize = 0;
+    for (rest) |c| {
         if (c == 0 or c == ' ') break;
         if (c < '0' or c > '7') return error.BadTar;
         const digit: usize = c - '0';
         value = std.math.mul(usize, value, 8) catch return error.BadTar;
         value = std.math.add(usize, value, digit) catch return error.BadTar;
+        i += 1;
     }
-    while (i < raw.len) : (i += 1) {
-        if (raw[i] != 0 and raw[i] != ' ') return error.BadTar;
+    for (rest[i..]) |c| {
+        if (c != 0 and c != ' ') return error.BadTar;
     }
     return value;
 }

@@ -57,6 +57,7 @@ pub const IDT = struct {
             \\lidt (%[idtr])
             :
             : [idtr] "r" (&idtr),
+            : .{ .memory = true }
         );
     }
 };

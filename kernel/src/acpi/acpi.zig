@@ -101,11 +101,11 @@ const ACPI = struct {
     fn lookupSDTAt(self: *const ACPI, comptime T: type, signature: *const [4]u8, index: usize) !?*align(1) const SDT {
         const data = self.rsdt.getData();
         const entry_size = @sizeOf(T);
-        var offset: usize = 0;
         var index_curr = index;
 
         // XSDT entries sit at SDT+36 (4-aligned, not 8). Read them unaligned.
-        while (offset + entry_size <= data.len) : (offset += entry_size) {
+        for (0..data.len / entry_size) |n| {
+            const offset = n * entry_size;
             const entry = std.mem.readInt(T, data[offset..][0..entry_size], .little);
             const sdt = virt.toHH(*align(1) const SDT, @intCast(entry));
 

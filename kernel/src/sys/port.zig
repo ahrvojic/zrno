@@ -3,6 +3,7 @@ pub inline fn inb(port: u16) u8 {
         \\inb %[port], %[res]
         : [res] "={al}" (-> u8),
         : [port] "N{dx}" (port),
+        : .{ .memory = true }
     );
 }
 
@@ -11,6 +12,7 @@ pub inline fn inw(port: u16) u16 {
         \\inw %[port], %[res]
         : [res] "={ax}" (-> u16),
         : [port] "N{dx}" (port),
+        : .{ .memory = true }
     );
 }
 
@@ -19,6 +21,7 @@ pub inline fn inl(port: u16) u32 {
         \\inl %[port], %[res]
         : [res] "={eax}" (-> u32),
         : [port] "N{dx}" (port),
+        : .{ .memory = true }
     );
 }
 
@@ -28,5 +31,6 @@ pub inline fn outb(port: u16, value: u8) void {
         :
         : [value] "{al}" (value),
           [port] "N{dx}" (port),
+        : .{ .memory = true }
     );
 }

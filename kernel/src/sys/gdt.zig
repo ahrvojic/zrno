@@ -111,6 +111,7 @@ pub const GDT = struct {
             \\lgdt (%[gdtr])
             :
             : [gdtr] "r" (&gdtr),
+            : .{ .memory = true }
         );
 
         reload();

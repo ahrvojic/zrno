@@ -288,40 +288,16 @@ pub fn identify() void {
 }
 
 pub fn logIdentity() void {
-    if (tsc_hz_value != 0 and cpu_base_mhz != 0) {
-        logger.info("{s} family={d} model={d} tsc={d} MHz cpu={d} MHz", .{
-            vendor,
-            display_family,
-            display_model,
-            tsc_hz_value / 1_000_000,
-            cpu_base_mhz,
-        });
-    } else if (tsc_hz_value != 0) {
-        logger.info("{s} family={d} model={d} tsc={d} MHz", .{
-            vendor,
-            display_family,
-            display_model,
-            tsc_hz_value / 1_000_000,
-        });
-    } else if (tsc_ok and cpu_base_mhz != 0) {
-        logger.info("{s} family={d} model={d} tsc cpu={d} MHz", .{
-            vendor,
-            display_family,
-            display_model,
-            cpu_base_mhz,
-        });
-    } else if (tsc_ok) {
-        logger.info("{s} family={d} model={d} tsc", .{ vendor, display_family, display_model });
-    } else if (cpu_base_mhz != 0) {
-        logger.info("{s} family={d} model={d} cpu={d} MHz", .{
-            vendor,
-            display_family,
-            display_model,
-            cpu_base_mhz,
-        });
-    } else {
-        logger.info("{s} family={d} model={d}", .{ vendor, display_family, display_model });
-    }
+    const tsc_mhz: ?u64 = if (tsc_hz_value != 0) tsc_hz_value / 1_000_000 else null;
+    const cpu_mhz: ?u32 = if (cpu_base_mhz != 0) cpu_base_mhz else null;
+    logger.info("{s} family={d} model={d} tsc={} tsc_mhz={?} cpu_mhz={?}", .{
+        vendor,
+        display_family,
+        display_model,
+        tsc_ok,
+        tsc_mhz,
+        cpu_mhz,
+    });
 }
 
 pub fn nsSinceBoot() ?u64 {

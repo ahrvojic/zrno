@@ -44,10 +44,6 @@ fn expectUninit() void {
 const Bitmap = struct {
     data: []u8,
 
-    pub fn init(data: []u8) Bitmap {
-        return .{ .data = data };
-    }
-
     pub fn testBit(self: *const Bitmap, bit: usize) bool {
         return self.data[bit / 8] & (@as(u8, 1) << @as(u3, @intCast(bit % 8))) != 0;
     }
@@ -109,14 +105,10 @@ pub fn init() !void {
         }
     }
 
-    if (bitmap_region == null) {
-        return error.BitmapTooBig;
-    }
+    const region = bitmap_region orelse return error.BitmapTooBig;
+    const bitmap_base: usize = @intCast(region.base);
 
-    const bitmap_base: usize = @intCast(bitmap_region.?.base);
-
-    // 1 = non-free
-    bitmap = Bitmap.init(virt.toHH([*]u8, bitmap_base)[0..bitmap_size]);
+    bitmap = .{ .data = virt.toHH([*]u8, bitmap_base)[0..bitmap_size] };
     @memset(bitmap.data, 0xff);
 
     for (boot.info().memory_map.entries()) |entry| {

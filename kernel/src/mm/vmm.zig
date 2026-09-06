@@ -176,12 +176,16 @@ const PageTable = extern struct {
         if (entry_flags.present) {
             // User leaves need U=1 on every ancestor; never clear U for a kernel map.
             if (allocate and user and !entry_flags.user) {
-                entry.setFlags(.{ .present = true, .writable = true, .user = true });
+                var flags = entry_flags;
+                flags.user = true;
+                entry.setFlags(flags);
             }
             return virt.toHH(*PageTable, entry.getAddress());
         } else if (allocate) {
             const next_level = pmm.alloc(1) orelse return null;
             entry.setAddress(next_level);
+            // NX stays clear: NX on a PDPT/PD would make the whole subtree
+            // non-executable, including user RX leaves.
             entry.setFlags(.{ .present = true, .writable = true, .user = user });
             return virt.toHH(*PageTable, next_level);
         }

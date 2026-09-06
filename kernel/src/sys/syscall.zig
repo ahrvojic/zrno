@@ -159,10 +159,9 @@ fn sys_open(ctx: *cpu.Context) u64 {
     const path = copyUserPath(addr, &buf) catch |err| return pathErr(err);
     const data = ramfs.lookup(path) orelse return errval(ENOENT);
     const fds = &currentProcess().fds;
-    var fd: usize = 3;
-    while (fd < proc.max_fds) : (fd += 1) {
-        if (fds[fd] == .empty) {
-            fds[fd] = .{ .file = .{ .bytes = data, .pos = 0 } };
+    for (fds[3..], 3..) |*slot, fd| {
+        if (slot.* == .empty) {
+            slot.* = .{ .file = .{ .bytes = data, .pos = 0 } };
             return fd;
         }
     }
@@ -229,10 +228,10 @@ fn sys_dup(ctx: *cpu.Context) u64 {
     const fds = &currentProcess().fds;
     const i: usize = @intCast(fd);
     if (fds[i] == .empty) return errval(EBADF);
-    var new_fd: usize = 0;
-    while (new_fd < proc.max_fds) : (new_fd += 1) {
-        if (fds[new_fd] == .empty) {
-            fds[new_fd] = fds[i];
+    for (fds, 0..) |*slot, new_fd| {
+        if (slot.* == .empty) {
+            // Copy the slot; file offsets are per-fd, not a shared POSIX description.
+            slot.* = fds[i];
             return new_fd;
         }
     }
@@ -245,13 +244,11 @@ fn copyUserPath(addr: usize, buf: *[max_path]u8) error{ Fault, NameTooLong }![]c
 
 fn copyUserCString(addr: usize, buf: []u8) error{ Fault, NameTooLong }![]const u8 {
     const space = userSpace();
-    var n: usize = 0;
-    while (n < buf.len) {
+    for (0..buf.len) |n| {
         var c: [1]u8 = undefined;
         try space.copyFromUser(c[0..], addr + n);
         if (c[0] == 0) return buf[0..n];
         buf[n] = c[0];
-        n += 1;
     }
     return error.NameTooLong;
 }
@@ -282,8 +279,7 @@ fn copyUserArgv(addr: usize, path: []const u8, storage: *ArgvStorage) error{ Fau
     if (!vmm.userRange(addr, @sizeOf(u64))) return error.Fault;
 
     const space = userSpace();
-    var i: usize = 0;
-    while (i < max_argv + 1) : (i += 1) {
+    for (0..max_argv + 1) |i| {
         var ptr_bytes: [@sizeOf(u64)]u8 = undefined;
         try space.copyFromUser(&ptr_bytes, addr + i * @sizeOf(u64));
         const ptr = std.mem.readInt(u64, &ptr_bytes, .little);

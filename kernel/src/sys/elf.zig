@@ -58,8 +58,7 @@ pub fn parse(image: []const u8) error{ BadElf, WritableExecutable, OutOfRange, A
     if (phoff > image.len or image.len - phoff < ph_bytes) return error.BadElf;
 
     var result: Image = .{ .entry = std.math.cast(usize, ehdr.e_entry) orelse return error.BadElf };
-    var i: usize = 0;
-    while (i < phnum) : (i += 1) {
+    for (0..phnum) |i| {
         const phdr = try peek(std.elf.Elf64_Phdr, image, phoff + i * @sizeOf(std.elf.Elf64_Phdr));
         if (phdr.p_type == std.elf.PT_INTERP) return error.BadElf;
         if (phdr.p_type != std.elf.PT_LOAD) continue;
@@ -343,8 +342,7 @@ const Fixture = struct {
         ehdr.e_phentsize = @sizeOf(std.elf.Elf64_Phdr);
         ehdr.e_phnum = @intCast(self.nphdr);
         @memcpy(self.buf[0..@sizeOf(std.elf.Elf64_Ehdr)], std.mem.asBytes(&ehdr));
-        var i: usize = 0;
-        while (i < self.nphdr) : (i += 1) {
+        for (0..self.nphdr) |i| {
             const off = @sizeOf(std.elf.Elf64_Ehdr) + i * @sizeOf(std.elf.Elf64_Phdr);
             @memcpy(self.buf[off..][0..@sizeOf(std.elf.Elf64_Phdr)], std.mem.asBytes(&self.phdrs[i]));
         }

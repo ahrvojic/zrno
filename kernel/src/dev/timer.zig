@@ -57,29 +57,21 @@ fn calibrateHpet(bsp: *cpu.CPU) ?u32 {
 }
 
 fn calibratePm(bsp: *cpu.CPU) ?u32 {
-    return calibrateFreeRunning(bsp, pmtimer.freq_hz, pmRead, pmDelta);
-}
-
-fn pmRead() u64 {
-    return pmtimer.read();
-}
-
-fn pmDelta(now: u64, then: u64) u64 {
-    return pmtimer.delta(@truncate(now), @truncate(then));
+    return calibrateFreeRunning(bsp, pmtimer.freq_hz, pmtimer.read, pmtimer.delta);
 }
 
 fn calibrateFreeRunning(
     bsp: *cpu.CPU,
     ref_hz: u64,
-    comptime read_ref: fn () u64,
-    comptime delta_ref: fn (u64, u64) u64,
+    comptime read_ref: anytype,
+    comptime delta_ref: anytype,
 ) ?u32 {
     const want = refTicksForCal(ref_hz) orelse return null;
     bsp.lapicTimerArm(0xffff_ffff);
     const r0 = read_ref();
     const c0 = bsp.lapicTimerCurrent();
     var spins: u32 = 0;
-    while (delta_ref(read_ref(), r0) < want) {
+    while (@as(u64, delta_ref(read_ref(), r0)) < want) {
         cpu.pause();
         spins += 1;
         if (spins >= cal_spin_limit or bsp.lapicTimerCurrent() == 0) return null;
