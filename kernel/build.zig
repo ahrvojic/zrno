@@ -54,41 +54,13 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(kernel);
 
-    const heap_tests = b.addTest(.{
+    const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/mm/heap_core.zig"),
+            .root_source_file = b.path("src/unit_tests.zig"),
             .target = b.graph.host,
             .optimize = optimize,
         }),
     });
-    const run_heap_tests = b.addRunArtifact(heap_tests);
-    const elf_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/sys/elf.zig"),
-            .target = b.graph.host,
-            .optimize = optimize,
-        }),
-    });
-    const run_elf_tests = b.addRunArtifact(elf_tests);
-    const ustar_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/sys/ustar.zig"),
-            .target = b.graph.host,
-            .optimize = optimize,
-        }),
-    });
-    const run_ustar_tests = b.addRunArtifact(ustar_tests);
-    const ramfs_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/sys/ramfs.zig"),
-            .target = b.graph.host,
-            .optimize = optimize,
-        }),
-    });
-    const run_ramfs_tests = b.addRunArtifact(ramfs_tests);
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_heap_tests.step);
-    test_step.dependOn(&run_elf_tests.step);
-    test_step.dependOn(&run_ustar_tests.step);
-    test_step.dependOn(&run_ramfs_tests.step);
+    test_step.dependOn(&b.addRunArtifact(unit_tests).step);
 }
