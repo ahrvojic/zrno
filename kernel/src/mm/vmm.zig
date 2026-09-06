@@ -385,7 +385,7 @@ pub const VMM = struct {
     }
 
     // Not-present user faults are not auto-mapped. Only `map` (loader, stack,
-    // future mmap) creates user pages.
+    // brk, future mmap) creates user pages.
     pub fn handlePageFault(self: *VMM, _: usize, _: u64) bool {
         self.expectInit();
         return false;

@@ -71,12 +71,26 @@ pub fn parse(image: []const u8) error{ BadElf, WritableExecutable, OutOfRange, A
     return result;
 }
 
+pub const Loaded = struct {
+    entry: usize,
+    // Page-aligned exclusive end of PT_LOAD; initial program break.
+    brk: usize,
+};
+
+fn imageBrk(segs: []const Load) usize {
+    var end: usize = 0;
+    for (segs) |seg| {
+        end = @max(end, seg.map_vaddr + seg.map_size);
+    }
+    return end;
+}
+
 /// Map each `PT_LOAD` into `space`. `space` must provide:
 ///   alloc(self, pages: usize) error{OutOfMemory}!Alloc  // Alloc.bytes: []u8
 ///   free(self, alloc: Alloc) void
 ///   map(self, vaddr: usize, alloc: Alloc, flags: MapFlags) !void
 ///   unmap(self, vaddr: usize, size: usize) void
-pub fn load(space: anytype, image: []const u8) !usize {
+pub fn load(space: anytype, image: []const u8) !Loaded {
     const parsed = try parse(image);
     const segs = parsed.constSlice();
     const Alloc = @typeInfo(@TypeOf(space.alloc(@as(usize, 1)))).error_union.payload;
@@ -105,7 +119,7 @@ pub fn load(space: anytype, image: []const u8) !usize {
         done[mapped] = .{ .vaddr = seg.map_vaddr, .size = seg.map_size, .alloc = mem };
         mapped += 1;
     }
-    return parsed.entry;
+    return .{ .entry = parsed.entry, .brk = imageBrk(segs) };
 }
 
 fn Mapped(comptime Alloc: type) type {
@@ -430,8 +444,9 @@ test "load copies filesz, zeros BSS, maps R/W/X" {
 
     var backing: [page_size * 4]u8 = undefined;
     var space: MockSpace = .{ .backing = &backing };
-    const entry = try load(&space, image);
-    try std.testing.expectEqual(@as(usize, 0x400000), entry);
+    const loaded = try load(&space, image);
+    try std.testing.expectEqual(@as(usize, 0x400000), loaded.entry);
+    try std.testing.expectEqual(@as(usize, 0x402000), loaded.brk);
     try std.testing.expectEqual(@as(usize, 2), space.nmaps);
 
     const t = space.at(0x400000).?;
@@ -455,8 +470,9 @@ test "load page-aligns unaligned p_vaddr and zeros the lead" {
 
     var backing: [page_size * 2]u8 = undefined;
     var space: MockSpace = .{ .backing = &backing };
-    const entry = try load(&space, image);
-    try std.testing.expectEqual(@as(usize, 0x400010), entry);
+    const loaded = try load(&space, image);
+    try std.testing.expectEqual(@as(usize, 0x400010), loaded.entry);
+    try std.testing.expectEqual(@as(usize, 0x401000), loaded.brk);
     const t = space.at(0x400000).?;
     try std.testing.expectEqual(page_size, t.bytes.len);
     try std.testing.expectEqualSlices(u8, &[_]u8{0} ** 0x10, t.bytes[0..0x10]);

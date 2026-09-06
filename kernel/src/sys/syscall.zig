@@ -19,12 +19,13 @@ pub const nr_yield: u64 = 3;
 pub const nr_sleep: u64 = 4;
 pub const nr_open: u64 = 5;
 pub const nr_close: u64 = 6;
-pub const nr_spawn: u64 = 7; // new pid; nr 7 was historically called exec
+pub const nr_spawn: u64 = 7;
 pub const nr_wait: u64 = 8; // rdi=pid, 0 = any child
 pub const nr_getpid: u64 = 9;
 pub const nr_getppid: u64 = 10;
 pub const nr_exec: u64 = 11; // replace image, keep pid/fds; rsi=argv or 0
 pub const nr_dup: u64 = 12;
+pub const nr_brk: u64 = 13; // rdi=0 query; else set program break, return it
 
 const max_io: usize = pmm.page_size;
 const io_chunk: usize = 256;
@@ -64,6 +65,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_getppid => sys_getppid(),
         nr_exec => sys_exec(ctx),
         nr_dup => sys_dup(ctx),
+        nr_brk => sys_brk(ctx),
         else => errval(ENOSYS),
     };
 }
@@ -211,6 +213,15 @@ fn sys_exec(ctx: *cpu.Context) u64 {
     return 0;
 }
 
+fn sys_brk(ctx: *cpu.Context) u64 {
+    const addr: usize = @intCast(ctx.rdi);
+    const brk = sched.setBrk(addr) catch |err| return switch (err) {
+        error.Invalid => errval(EINVAL),
+        error.OutOfMemory => errval(ENOMEM),
+    };
+    return brk;
+}
+
 fn sys_dup(ctx: *cpu.Context) u64 {
     const fd = ctx.rdi;
     if (fd >= proc.max_fds) return errval(EBADF);
@@ -249,7 +260,7 @@ const ArgvStorage = struct {
     bufs: [max_argv][max_arg]u8 = undefined,
     ptrs: [max_argv][]const u8 = undefined,
 
-    fn add(self: *ArgvStorage, s: []const u8) error{TooMany, NameTooLong}!void {
+    fn add(self: *ArgvStorage, s: []const u8) error{ TooMany, NameTooLong }!void {
         if (self.n >= max_argv) return error.TooMany;
         if (s.len >= max_arg) return error.NameTooLong;
         @memcpy(self.bufs[self.n][0..s.len], s);

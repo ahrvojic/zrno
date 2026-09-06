@@ -30,6 +30,9 @@ const user_stack_top: usize = elf.user_stack_top;
 const kstack_region_base: usize = 0xffff_ff00_0000_0000;
 const kstack_region_end: usize = kstack_region_base + (1024 * 1024 * 1024);
 const kstack_slot: usize = stack_size + pmm.page_size;
+// Cap on `brk - brk_start`. Prevents a single call from allocating up to the stacks.
+const max_heap: usize = 32 * 1024 * 1024;
+const heap_flags = vmm.Flags{ .present = true, .writable = true, .user = true, .noexec = true };
 
 comptime {
     std.debug.assert(stack_size == elf.user_stack_window);
@@ -114,6 +117,8 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .exit_code = 0,
         .orphaned = false,
         .user_stack_next = user_stack_top,
+        .brk_start = 0,
+        .brk = 0,
         .fds = [_]proc.Fd{.empty} ** proc.max_fds,
     };
 
@@ -311,6 +316,7 @@ pub fn execReplace(
     ctx: *cpu.Context,
     new_vmm: vmm.VMM,
     entry: usize,
+    image_brk: usize,
     argv: []const []const u8,
 ) !void {
     expectInit();
@@ -344,6 +350,8 @@ pub fn execReplace(
     var old = process.vmm;
     process.vmm = space;
     process.user_stack_next = user_stack_base;
+    process.brk_start = image_brk;
+    process.brk = image_brk;
     applyUserRegs(ctx, entry, frame);
     thread.ctx = ctx.*;
     lock.unlock();
@@ -357,8 +365,89 @@ fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
     defer lock.unlock();
     if (parent.user_stack_next < stack_size) return error.OutOfMemory;
     const base = parent.user_stack_next - stack_size;
+    if (base < parent.brk) return error.OutOfMemory;
     parent.user_stack_next = base;
     return base;
+}
+
+const BrkChange = struct {
+    old: usize,
+    addr: usize,
+    page_addr: usize,
+    page_size: usize,
+    grow: bool,
+};
+
+// Linux-style `brk`: rdi=0 returns the current break; otherwise set it.
+// The stored break is byte-granular; mapping is page-aligned.
+pub fn setBrk(addr: usize) error{ Invalid, OutOfMemory }!usize {
+    expectInit();
+    const thread = cpu.current().thread orelse @panic("brk with no thread");
+    const process = thread.parent;
+
+    lock.lock();
+    if (addr == 0) {
+        const cur = process.brk;
+        lock.unlock();
+        return cur;
+    }
+    const change: ?BrkChange = blk: {
+        defer lock.unlock();
+        const old = process.brk;
+        if (process.brk_start == 0 or addr < process.brk_start) return error.Invalid;
+        if (addr > process.user_stack_next or addr - process.brk_start > max_heap) {
+            return error.OutOfMemory;
+        }
+        const old_pg = std.mem.alignForward(usize, old, pmm.page_size);
+        const new_pg = std.mem.alignForward(usize, addr, pmm.page_size);
+        process.brk = addr;
+        if (old_pg == new_pg) break :blk null;
+        break :blk .{
+            .old = old,
+            .addr = addr,
+            .page_addr = if (addr > old) old_pg else new_pg,
+            .page_size = if (addr > old) new_pg - old_pg else old_pg - new_pg,
+            .grow = addr > old,
+        };
+    };
+
+    const c = change orelse return addr;
+
+    if (c.grow) {
+        mapHeapPages(&process.vmm, c.page_addr, c.page_size) catch {
+            lock.lock();
+            if (process.brk == c.addr) process.brk = c.old;
+            lock.unlock();
+            return error.OutOfMemory;
+        };
+    } else {
+        unmapHeapPages(&process.vmm, c.page_addr, c.page_size);
+    }
+    return c.addr;
+}
+
+fn mapHeapPages(space: *vmm.VMM, addr: usize, size: usize) error{OutOfMemory}!void {
+    var mapped: usize = 0;
+    errdefer unmapHeapPages(space, addr, mapped);
+    while (mapped < size) : (mapped += pmm.page_size) {
+        const phys = pmm.alloc(1) orelse return error.OutOfMemory;
+        space.map(addr + mapped, phys, pmm.page_size, heap_flags) catch |err| {
+            pmm.free(phys, 1);
+            switch (err) {
+                error.AlreadyMapped => @panic("brk already mapped"),
+                else => return error.OutOfMemory,
+            }
+        };
+    }
+}
+
+fn unmapHeapPages(space: *vmm.VMM, addr: usize, size: usize) void {
+    var off: usize = 0;
+    while (off < size) : (off += pmm.page_size) {
+        const phys = space.virtToPhys(addr + off) catch @panic("brk unmap");
+        space.unmap(addr + off, pmm.page_size) catch @panic("brk unmap");
+        pmm.free(std.mem.alignBackward(usize, phys, pmm.page_size), 1);
+    }
 }
 
 const ArgvFrame = struct {

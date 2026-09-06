@@ -26,8 +26,10 @@ pub fn spawnPathArgv(path: []const u8, argv: []const []const u8) !u64 {
     errdefer sched.abortProcess(process, 1);
 
     var space: VmmSpace = .{ .vmm = &process.vmm };
-    const entry = try elf.load(&space, image);
-    _ = try sched.startUserThread(process, entry, argv, true);
+    const loaded = try elf.load(&space, image);
+    process.brk_start = loaded.brk;
+    process.brk = loaded.brk;
+    _ = try sched.startUserThread(process, loaded.entry, argv, true);
     return process.pid;
 }
 
@@ -37,8 +39,8 @@ pub fn execPath(process: *proc.Process, ctx: *cpu.Context, path: []const u8, arg
     errdefer new_vmm.destroy();
 
     var space: VmmSpace = .{ .vmm = &new_vmm };
-    const entry = try elf.load(&space, image);
-    try sched.execReplace(process, ctx, new_vmm, entry, argv);
+    const loaded = try elf.load(&space, image);
+    try sched.execReplace(process, ctx, new_vmm, loaded.entry, loaded.brk, argv);
 }
 
 const VmmSpace = struct {

@@ -67,7 +67,7 @@ limine/limine:
 		LDFLAGS="$(HOST_LDFLAGS)" \
 		LIBS="$(HOST_LIBS)"
 
-USER_PROGS := hello init fault
+USER_PROGS := hello init fault brk
 
 user/%.elf: user/%.S user/user.ld
 	zig build-exe $< \

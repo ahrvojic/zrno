@@ -36,6 +36,10 @@ pub const Process = struct {
     orphaned: bool,
     // Exclusive top of the next user stack; grows down.
     user_stack_next: usize,
+    // Program break: exclusive end of the data/heap segment. `brk_start` is
+    // the page-aligned end of the loaded image; `brk` may grow up to the stacks.
+    brk_start: usize,
+    brk: usize,
     // 0/1/2 are TTY; fds ≥ 3 are ramfs files.
     fds: [max_fds]Fd,
 };
