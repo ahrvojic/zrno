@@ -57,6 +57,8 @@ var tid_next: u64 = 0;
 
 var lock: Lock.SpinLock = .{};
 var initialized = false;
+// First `switchLocked` still runs on the Limine stack (`thread == null`).
+var limine_stack = true;
 
 // Kernel stack of a thread that died while running on it. Unmapped and
 // freed on the next `switchLocked` that is no longer executing on that stack.
@@ -654,6 +656,10 @@ fn switchLocked(ctx: *cpu.Context) void {
     reapDoomedStack();
     reapDoomedPt();
     const this_cpu = cpu.current();
+    if (limine_stack and this_cpu.thread != null) {
+        limine_stack = false;
+        pmm.reclaimBootloader();
+    }
     var start: ?*std.DoublyLinkedList.Node = null;
 
     if (this_cpu.thread) |curr_thread| {

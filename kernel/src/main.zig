@@ -54,6 +54,7 @@ export fn _start() callconv(.c) noreturn {
         debug.printTo(&writer, "Kernel init failed: {s}", .{@errorName(err)});
         @panic(writer.buffered());
     };
+    // IF still off: `int` works, a timer cannot run on the Limine stack.
     // Not a scheduled thread: yield discards this context and never returns.
     sched.yield();
     unreachable;
@@ -61,7 +62,6 @@ export fn _start() callconv(.c) noreturn {
 
 pub fn main() !void {
     cpu.interruptsOff();
-    defer cpu.interruptsOn();
 
     // Port I/O only: no heap, paging, or ACPI. First so boot panics print.
     serial.init();
@@ -99,10 +99,6 @@ pub fn main() !void {
     }
 
     _ = try sched.spawnKernelThread(@intFromPtr(&runInit), 0);
-
-    // Reclaim frees the Limine boot stack we are still on; do not pmm.alloc
-    // again until yield has left it.
-    pmm.reclaimBootloader();
 
     logger.info("ready", .{});
     tty.print("Zrno kernel {s}\n", .{build_options.version});

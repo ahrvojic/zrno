@@ -153,9 +153,8 @@ fn pagesToMiB(pages: usize) usize {
 }
 
 /// Mark previously reserved bootloader_reclaimable pages free. Call after
-/// Limine responses have been copied out and `boot.drop()` has run. The
-/// Limine boot stack lives in this memory; do not allocate until the
-/// first schedule has abandoned it.
+/// Limine responses have been copied out, `boot.drop()` has run, and the
+/// CPU has left the Limine boot stack (see `sched.switchLocked`).
 pub fn reclaimBootloader() void {
     expectInit();
     if (bootloader_reclaimed) @panic("bootloader already reclaimed");
