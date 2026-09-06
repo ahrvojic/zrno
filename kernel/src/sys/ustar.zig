@@ -83,44 +83,50 @@ fn paddedSize(size: usize) error{BadTar}!usize {
     return sum & ~add;
 }
 
-pub const Fixture = struct {
-    buf: [block_size * 16]u8 = @splat(0),
-    used: usize = 0,
+pub fn Archive(comptime max_blocks: usize) type {
+    return struct {
+        const Self = @This();
 
-    pub fn addFile(self: *Fixture, name: []const u8, data: []const u8) void {
-        self.addMember(name, data, '0');
-    }
+        buf: [block_size * max_blocks]u8 = @splat(0),
+        used: usize = 0,
 
-    pub fn addDir(self: *Fixture, name: []const u8) void {
-        self.addMember(name, "", '5');
-    }
-
-    pub fn addMember(self: *Fixture, name: []const u8, data: []const u8, typeflag: u8) void {
-        std.debug.assert(name.len <= max_name);
-        const padded = paddedSize(data.len) catch unreachable;
-        std.debug.assert(self.used + block_size + padded <= self.buf.len);
-
-        const hdr = self.buf[self.used..][0..block_size];
-        @memset(hdr, 0);
-        @memcpy(hdr[0..name.len], name);
-        writeOctal(hdr[124..136], data.len);
-        hdr[156] = typeflag;
-        @memcpy(hdr[257..263], "ustar\x00");
-        @memcpy(hdr[263..265], "00");
-        self.used += block_size;
-
-        if (data.len != 0) {
-            @memcpy(self.buf[self.used..][0..data.len], data);
+        pub fn addFile(self: *Self, name: []const u8, data: []const u8) void {
+            self.addMember(name, data, '0');
         }
-        self.used += padded;
-    }
 
-    pub fn finish(self: *Fixture) []const u8 {
-        std.debug.assert(self.used + block_size * 2 <= self.buf.len);
-        self.used += block_size * 2;
-        return self.buf[0..self.used];
-    }
-};
+        pub fn addDir(self: *Self, name: []const u8) void {
+            self.addMember(name, "", '5');
+        }
+
+        pub fn addMember(self: *Self, name: []const u8, data: []const u8, typeflag: u8) void {
+            std.debug.assert(name.len <= max_name);
+            const padded = paddedSize(data.len) catch unreachable;
+            std.debug.assert(self.used + block_size + padded <= self.buf.len);
+
+            const hdr = self.buf[self.used..][0..block_size];
+            @memset(hdr, 0);
+            @memcpy(hdr[0..name.len], name);
+            writeOctal(hdr[124..136], data.len);
+            hdr[156] = typeflag;
+            @memcpy(hdr[257..263], "ustar\x00");
+            @memcpy(hdr[263..265], "00");
+            self.used += block_size;
+
+            if (data.len != 0) {
+                @memcpy(self.buf[self.used..][0..data.len], data);
+            }
+            self.used += padded;
+        }
+
+        pub fn finish(self: *Self) []const u8 {
+            std.debug.assert(self.used + block_size * 2 <= self.buf.len);
+            self.used += block_size * 2;
+            return self.buf[0..self.used];
+        }
+    };
+}
+
+pub const Fixture = Archive(16);
 
 fn writeOctal(dst: []u8, value: usize) void {
     const digits = dst.len - 1;

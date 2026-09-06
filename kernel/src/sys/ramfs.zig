@@ -19,12 +19,12 @@ pub const Table = struct {
     files: [max_files]Entry = undefined,
     nfiles: usize = 0,
 
-    pub fn mount(self: *Table, archive: []const u8) error{BadTar}!void {
+    pub fn mount(self: *Table, archive: []const u8) error{BadTar, TooManyFiles}!void {
         self.nfiles = 0;
         var it = ustar.walk(archive);
         while (try it.next()) |file| {
             if (file.name.len == 0) continue;
-            if (self.nfiles >= max_files) return;
+            if (self.nfiles >= max_files) return error.TooManyFiles;
             const n = @min(file.name.len, max_name);
             var e: Entry = .{ .data = file.data, .name_len = n };
             @memcpy(e.name_buf[0..n], file.name[0..n]);
@@ -49,7 +49,7 @@ pub const Table = struct {
 
 var table: Table = .{};
 
-pub fn mount(archive: []const u8) error{BadTar}!void {
+pub fn mount(archive: []const u8) error{BadTar, TooManyFiles}!void {
     try table.mount(archive);
 }
 
@@ -107,4 +107,17 @@ test "empty archive is no files" {
     var t: Table = .{};
     try t.mount(tar.finish());
     try std.testing.expectEqual(@as(usize, 0), t.entries().len);
+}
+
+test "mount rejects more than max_files" {
+    // One header per empty file plus two trailing zero blocks.
+    var tar: ustar.Archive(max_files + 3) = .{};
+    var names: [max_files + 1][2]u8 = undefined;
+    for (&names, 0..) |*name, i| {
+        name.* = .{ @intCast('a' + i / 26), @intCast('a' + i % 26) };
+        tar.addFile(name, "");
+    }
+    var t: Table = .{};
+    try std.testing.expectError(error.TooManyFiles, t.mount(tar.finish()));
+    try std.testing.expectEqual(@as(usize, max_files), t.entries().len);
 }
