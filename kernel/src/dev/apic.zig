@@ -89,12 +89,10 @@ const IOApic = struct {
 pub fn init() !void {
     expectUninit();
 
-    // Dual 8259 is still live only when MADT PCAT_COMPAT is set.
-    // Mask it so IRQs only arrive through the I/O APIC.
-    if (madt.pcatCompat()) {
-        port.outb(pic1_data, 0xff);
-        port.outb(pic2_data, 0xff);
-    }
+    // Mask the 8259 even when MADT PCAT_COMPAT is clear: firmware can
+    // leave the PIC live, and ISA IRQs would then hit IDT 0-15 (#NM/#DF).
+    port.outb(pic1_data, 0xff);
+    port.outb(pic2_data, 0xff);
 
     if (madt.ioApics().len == 0) {
         return error.NoIoApic;
@@ -116,11 +114,12 @@ pub fn init() !void {
         gsi_lo = @min(gsi_lo, io_apic.gsi_base);
         gsi_hi = @max(gsi_hi, io_apic.gsiMax());
     }
-    if (madt.pcatCompat()) {
-        logger.info("ioapics={d} gsi {d}-{d}; 8259 masked", .{ io_apics.len, gsi_lo, gsi_hi });
-    } else {
-        logger.info("ioapics={d} gsi {d}-{d}", .{ io_apics.len, gsi_lo, gsi_hi });
-    }
+    logger.info("ioapics={d} gsi {d}-{d}; 8259 masked pcat={}", .{
+        io_apics.len,
+        gsi_lo,
+        gsi_hi,
+        madt.pcatCompat(),
+    });
 }
 
 pub fn routeIrq(lapic_id: u32, vector: u8, irq: u8) void {
