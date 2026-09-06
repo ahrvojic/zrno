@@ -2,6 +2,7 @@ const logger = std.log.scoped(.sched);
 
 const std = @import("std");
 
+const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
 const cpu = @import("../sys/cpu.zig");
 const elf = @import("../sys/elf.zig");
 const gdt = @import("../sys/gdt.zig");
@@ -62,6 +63,9 @@ var initialized = false;
 const DoomedStack = struct { phys: usize, base: usize };
 var doomed_stack: ?DoomedStack = null;
 var kstack_next: usize = kstack_region_base;
+// Recycled stack VAs. `kstack_next` is the high-water mark (guard-page check).
+const max_kstack_free = 256;
+var kstack_free: BoundedArray(usize, max_kstack_free) = .{};
 
 // Unique PML4 of a process that died while CR3 still pointed at it.
 // Freed on the next `switchLocked` that is no longer using that root.
@@ -251,6 +255,7 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, argv: []const []const u
     const user_stack_phys = pmm.alloc(stack_pages) orelse return error.OutOfMemory;
     errdefer pmm.free(user_stack_phys, stack_pages);
     const user_stack_base = try takeUserStack(parent);
+    errdefer giveUserStack(parent, user_stack_base);
     try parent.vmm.map(
         user_stack_base,
         user_stack_phys,
@@ -342,6 +347,14 @@ fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
     if (base < parent.brk) return error.OutOfMemory;
     parent.user_stack_next = base;
     return base;
+}
+
+fn giveUserStack(parent: *proc.Process, base: usize) void {
+    lock.lock();
+    defer lock.unlock();
+    if (parent.user_stack_next == base) {
+        parent.user_stack_next = base + stack_size;
+    }
 }
 
 const BrkChange = struct {
@@ -732,7 +745,7 @@ fn stopThread(thread: *proc.Thread) void {
     if (is_current) {
         deferStackFree(stack_phys, stack_base);
     } else {
-        freeKernelStack(stack_phys, stack_base);
+        freeKernelStackLocked(stack_phys, stack_base);
     }
 }
 
@@ -746,7 +759,7 @@ fn dropAddressSpace(space: *vmm.VMM) void {
 
 fn deferStackFree(stack_phys: usize, stack_base: usize) void {
     if (doomed_stack) |old| {
-        freeKernelStack(old.phys, old.base);
+        freeKernelStackLocked(old.phys, old.base);
     }
     doomed_stack = .{ .phys = stack_phys, .base = stack_base };
 }
@@ -755,7 +768,7 @@ fn reapDoomedStack() void {
     const doomed = doomed_stack orelse return;
     if (rspInStack(doomed.base)) return;
     doomed_stack = null;
-    freeKernelStack(doomed.phys, doomed.base);
+    freeKernelStackLocked(doomed.phys, doomed.base);
 }
 
 fn deferPtFree(pt_phys: usize) void {
@@ -785,7 +798,11 @@ const KernelStack = struct { phys: usize, base: usize };
 fn allocKernelStack() !KernelStack {
     const phys = pmm.alloc(stack_pages) orelse return error.OutOfMemory;
     errdefer pmm.free(phys, stack_pages);
-    const base = try takeKernelStackSlot();
+
+    lock.lock();
+    defer lock.unlock();
+    const base = try takeKernelStackSlotLocked();
+    errdefer releaseKernelStackSlotLocked(base);
     try vmm.kernel_vmm.map(base, phys, stack_size, .{
         .present = true,
         .writable = true,
@@ -795,19 +812,37 @@ fn allocKernelStack() !KernelStack {
 }
 
 fn freeKernelStack(phys: usize, base: usize) void {
+    unmapKernelStack(phys, base);
+    lock.lock();
+    defer lock.unlock();
+    releaseKernelStackSlotLocked(base);
+}
+
+fn freeKernelStackLocked(phys: usize, base: usize) void {
+    unmapKernelStack(phys, base);
+    releaseKernelStackSlotLocked(base);
+}
+
+fn unmapKernelStack(phys: usize, base: usize) void {
     vmm.kernel_vmm.unmap(base, stack_size) catch @panic("unmap kernel stack");
     pmm.free(phys, stack_pages);
 }
 
-fn takeKernelStackSlot() error{OutOfMemory}!usize {
-    lock.lock();
-    defer lock.unlock();
+fn takeKernelStackSlotLocked() error{OutOfMemory}!usize {
+    if (kstack_free.pop()) |base| return base;
     if (kstack_next >= kstack_region_end or kstack_region_end - kstack_next < kstack_slot) {
         return error.OutOfMemory;
     }
     const slot = kstack_next;
     kstack_next += kstack_slot;
     return slot + pmm.page_size;
+}
+
+fn releaseKernelStackSlotLocked(base: usize) void {
+    kstack_free.append(base) catch {
+        const slot = base - pmm.page_size;
+        if (slot + kstack_slot == kstack_next) kstack_next = slot;
+    };
 }
 
 /// True when `addr` is the unmapped page under a kernel stack.

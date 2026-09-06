@@ -16,6 +16,12 @@ pub fn BoundedArray(comptime T: type, comptime capacity: usize) type {
             self.len += 1;
         }
 
+        pub fn pop(self: *Self) ?T {
+            if (self.len == 0) return null;
+            self.len -= 1;
+            return self.buffer[self.len];
+        }
+
         pub fn get(self: *const Self, i: usize) T {
             return self.buffer[i];
         }
