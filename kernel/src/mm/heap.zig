@@ -5,10 +5,6 @@ const Lock = @import("../lib/lock.zig");
 const pmm = @import("pmm.zig");
 const virt = @import("../lib/virt.zig");
 
-comptime {
-    std.debug.assert(pmm.page_size == core.page_size);
-}
-
 const KernelPages = struct {
     pub fn alloc(_: KernelPages, pages: usize, align_pages: usize) ?[*]u8 {
         const phys = pmm.allocAligned(pages, align_pages) orelse return null;

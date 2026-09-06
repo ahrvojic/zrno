@@ -1,7 +1,7 @@
 const std = @import("std");
 
-pub const page_size: usize = 4096;
-pub const user_space_end: usize = 0x0000_8000_0000_0000;
+pub const page_size = @import("../lib/mem.zig").page_size;
+pub const user_space_end = @import("../lib/mem.zig").user_space_end;
 /// Exclusive top of user stacks; stacks grow down from here.
 pub const user_stack_top: usize = 0x0000_0000_8000_0000;
 /// Reserved for `startUserThread` stacks; PT_LOAD must not overlap it.

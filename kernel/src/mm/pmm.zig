@@ -6,9 +6,10 @@ const limine = @import("limine");
 const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
 const boot = @import("../sys/boot.zig");
 const Lock = @import("../lib/lock.zig");
+const mem = @import("../lib/mem.zig");
 const virt = @import("../lib/virt.zig");
 
-pub const page_size: usize = 4096;
+pub const page_size = mem.page_size;
 
 const ReclaimRange = struct {
     base: usize,

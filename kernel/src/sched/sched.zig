@@ -38,7 +38,7 @@ const heap_flags = vmm.Flags{ .present = true, .writable = true, .user = true, .
 comptime {
     std.debug.assert(stack_size == elf.user_stack_window);
     std.debug.assert(user_stack_top % pmm.page_size == 0);
-    std.debug.assert(user_stack_top < 0x0000_8000_0000_0000);
+    std.debug.assert(user_stack_top < vmm.user_space_end);
     std.debug.assert(kstack_region_base % pmm.page_size == 0);
     std.debug.assert(kstack_slot % pmm.page_size == 0);
     std.debug.assert(kstack_region_base >= 0xffff_8000_0000_0000);

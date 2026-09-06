@@ -1,7 +1,9 @@
 const std = @import("std");
 
+const mem = @import("../lib/mem.zig");
+
 pub const min_size: usize = 16;
-pub const page_size: usize = 4096;
+pub const page_size = mem.page_size;
 pub const max_size: usize = 1024 * 1024 * 1024;
 
 const min_log2 = std.math.log2_int(usize, min_size);

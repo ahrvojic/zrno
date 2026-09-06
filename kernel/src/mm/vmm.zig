@@ -4,6 +4,7 @@ const std = @import("std");
 
 const boot = @import("../sys/boot.zig");
 const Lock = @import("../lib/lock.zig");
+const mem = @import("../lib/mem.zig");
 const pmm = @import("pmm.zig");
 const virt = @import("../lib/virt.zig");
 
@@ -62,7 +63,7 @@ const page_table_index_mask = page_table_entries - 1;
 // Canonical higher half: PML4 indices [256, 512).
 const kernel_pml4_start = page_table_entries / 2;
 
-pub const user_space_end: usize = 0x0000_8000_0000_0000;
+pub const user_space_end = mem.user_space_end;
 
 pub fn userRange(addr: usize, len: usize) bool {
     if (len == 0) return true;

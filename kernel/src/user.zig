@@ -10,11 +10,6 @@ const sched = @import("sched/sched.zig");
 const virt = @import("lib/virt.zig");
 const vmm = @import("mm/vmm.zig");
 
-comptime {
-    std.debug.assert(pmm.page_size == elf.page_size);
-    std.debug.assert(vmm.user_space_end == elf.user_space_end);
-}
-
 pub fn spawnPath(path: []const u8) !u64 {
     const argv = [_][]const u8{path};
     return spawnPathArgv(path, &argv);
