@@ -293,7 +293,7 @@ pub const VMM = struct {
     }
 
     // Copy through the HHDM so a kernel #PF cannot deadlock on the VMM lock.
-    pub fn copyFromUser(self: *VMM, dest: []u8, user_addr: usize) error{ Fault, OutOfMemory }!void {
+    pub fn copyFromUser(self: *VMM, dest: []u8, user_addr: usize) error{Fault}!void {
         if (dest.len == 0) return;
         if (!userRange(user_addr, dest.len)) return error.Fault;
 
@@ -313,7 +313,7 @@ pub const VMM = struct {
         }
     }
 
-    pub fn copyToUser(self: *VMM, user_addr: usize, src: []const u8) error{ Fault, OutOfMemory }!void {
+    pub fn copyToUser(self: *VMM, user_addr: usize, src: []const u8) error{Fault}!void {
         if (src.len == 0) return;
         if (!userRange(user_addr, src.len)) return error.Fault;
 
@@ -382,13 +382,6 @@ pub const VMM = struct {
         self.initialized = false;
         destroyPhys(phys);
         self.lock.unlock();
-    }
-
-    // Not-present user faults are not auto-mapped. Only `map` (loader, stack,
-    // brk, future mmap) creates user pages.
-    pub fn handlePageFault(self: *VMM, _: usize, _: u64) bool {
-        self.expectInit();
-        return false;
     }
 
     fn expectInit(self: *const VMM) void {

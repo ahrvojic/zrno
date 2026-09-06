@@ -87,14 +87,14 @@ fn sys_read(ctx: *cpu.Context) u64 {
             var tmp: [io_chunk]u8 = undefined;
             const want = @min(tmp.len, len);
             const n = tty.peek(tmp[0..want]);
-            userSpace().copyToUser(addr, tmp[0..n]) catch |err| return copyErr(err);
+            userSpace().copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
             tty.consume(n);
             return n;
         },
         .file => |*f| {
             if (f.pos >= f.bytes.len) return 0;
             const n = @min(len, f.bytes.len - f.pos);
-            userSpace().copyToUser(addr, f.bytes[f.pos..][0..n]) catch |err| return copyErr(err);
+            userSpace().copyToUser(addr, f.bytes[f.pos..][0..n]) catch return errval(EFAULT);
             f.pos += n;
             return n;
         },
@@ -122,8 +122,8 @@ fn sys_write(ctx: *cpu.Context) u64 {
     const space = userSpace();
     while (copied < len) {
         const n = @min(tmp.len, len - copied);
-        space.copyFromUser(tmp[0..n], addr + copied) catch |err| {
-            if (copied == 0) return copyErr(err);
+        space.copyFromUser(tmp[0..n], addr + copied) catch {
+            if (copied == 0) return errval(EFAULT);
             return copied;
         };
         tty.writeBytes(tmp[0..n]);
@@ -239,11 +239,11 @@ fn sys_dup(ctx: *cpu.Context) u64 {
     return errval(EMFILE);
 }
 
-fn copyUserPath(addr: usize, buf: *[max_path]u8) error{ Fault, OutOfMemory, NameTooLong }![]const u8 {
+fn copyUserPath(addr: usize, buf: *[max_path]u8) error{ Fault, NameTooLong }![]const u8 {
     return copyUserCString(addr, buf);
 }
 
-fn copyUserCString(addr: usize, buf: []u8) error{ Fault, OutOfMemory, NameTooLong }![]const u8 {
+fn copyUserCString(addr: usize, buf: []u8) error{ Fault, NameTooLong }![]const u8 {
     const space = userSpace();
     var n: usize = 0;
     while (n < buf.len) {
@@ -274,7 +274,7 @@ const ArgvStorage = struct {
     }
 };
 
-fn copyUserArgv(addr: usize, path: []const u8, storage: *ArgvStorage) error{ Fault, OutOfMemory, NameTooLong, TooMany }![]const []const u8 {
+fn copyUserArgv(addr: usize, path: []const u8, storage: *ArgvStorage) error{ Fault, NameTooLong, TooMany }![]const []const u8 {
     if (addr == 0) {
         try storage.add(path);
         return storage.slice();
@@ -308,25 +308,16 @@ fn userSpace() *vmm.VMM {
     return &currentProcess().vmm;
 }
 
-fn copyErr(err: error{ Fault, OutOfMemory }) u64 {
+fn pathErr(err: error{ Fault, NameTooLong }) u64 {
     return switch (err) {
         error.Fault => errval(EFAULT),
-        error.OutOfMemory => errval(ENOMEM),
-    };
-}
-
-fn pathErr(err: error{ Fault, OutOfMemory, NameTooLong }) u64 {
-    return switch (err) {
-        error.Fault => errval(EFAULT),
-        error.OutOfMemory => errval(ENOMEM),
         error.NameTooLong => errval(ENAMETOOLONG),
     };
 }
 
-fn argvErr(err: error{ Fault, OutOfMemory, NameTooLong, TooMany }) u64 {
+fn argvErr(err: error{ Fault, NameTooLong, TooMany }) u64 {
     return switch (err) {
         error.Fault => errval(EFAULT),
-        error.OutOfMemory => errval(ENOMEM),
         error.NameTooLong => errval(ENAMETOOLONG),
         error.TooMany => errval(E2BIG),
     };

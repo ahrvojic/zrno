@@ -114,7 +114,7 @@ pub const CPU = struct {
 
         // IDT IST n uses TSS.ist[n - 1]. Set before LTR so #DF / #PF are
         // safe from the moment the TSS is loaded. #PF has its own stack
-        // so the handler (log + map) does not run on a nearly-full kernel stack.
+        // so the handler does not run on a nearly-full kernel stack.
         self.tss.ist[ivt.ist_double_fault - 1] = @intFromPtr(&self.df_stack) + self.df_stack.len;
         self.tss.ist[ivt.ist_page_fault - 1] = @intFromPtr(&self.pf_stack) + self.pf_stack.len;
 
