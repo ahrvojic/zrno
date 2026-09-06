@@ -9,6 +9,7 @@ PHDRS
 {
     text   PT_LOAD FLAGS(0x05); /* PF_X | PF_R */
     rodata PT_LOAD FLAGS(0x04); /* PF_R */
+    data   PT_LOAD FLAGS(0x06); /* PF_W | PF_R */
 }
 
 SECTIONS
@@ -25,6 +26,19 @@ SECTIONS
     .rodata : {
         *(.rodata .rodata.*)
     } :rodata
+
+    /* Page-align so R and RW never share a mapping. */
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
+
+    .data : {
+        *(.data .data.*)
+    } :data
+
+    /* Last in :data so the file is not padded with BSS zeros (memsz > filesz). */
+    .bss : {
+        *(.bss .bss.*)
+        *(COMMON)
+    } :data
 
     /DISCARD/ : {
         *(.eh_frame*)

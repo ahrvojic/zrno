@@ -16,9 +16,9 @@ const pmm = @import("mm/pmm.zig");
 const ps2 = @import("dev/ps2.zig");
 const sched = @import("sched/sched.zig");
 const serial = @import("dev/serial.zig");
-const shell = @import("shell.zig");
 const timer = @import("dev/timer.zig");
 const tty = @import("dev/tty.zig");
+const user = @import("user.zig");
 const video = @import("dev/video.zig");
 const vmm = @import("mm/vmm.zig");
 
@@ -98,7 +98,7 @@ pub fn main() !void {
         logger.warn("no 8042; skip PS/2", .{});
     }
 
-    _ = try sched.spawnKernelThread(@intFromPtr(&shell.thread), 0);
+    _ = try sched.spawnKernelThread(@intFromPtr(&runInit), 0);
 
     // Reclaim frees the Limine boot stack we are still on; do not pmm.alloc
     // again until yield has left it.
@@ -107,4 +107,17 @@ pub fn main() !void {
     logger.info("ready", .{});
     tty.print("Zrno kernel {s}\n", .{build_options.version});
     tty.print("READY.\n", .{});
+}
+
+fn runInit(_: usize) callconv(.c) noreturn {
+    const pid = user.spawnPath("/init") catch |err| {
+        logger.err("spawn /init: {s}", .{@errorName(err)});
+        @panic("spawn /init");
+    };
+    const code = sched.waitProcess(pid) catch |err| {
+        logger.err("wait /init: {s}", .{@errorName(err)});
+        @panic("wait /init");
+    };
+    logger.err("init exited {d}", .{code});
+    @panic("init exited");
 }

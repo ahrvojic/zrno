@@ -69,15 +69,22 @@ limine/limine:
 
 USER_PROGS := hello init fault brk
 
-user/%.elf: user/%.S user/user.ld
-	zig build-exe $< \
-		-target x86_64-freestanding-none \
-		-T user/user.ld \
-		-fentry=_start \
-		-fno-PIE \
-		-fno-compiler-rt \
-		-fstrip \
-		-fno-stack-protector \
+# ReleaseSmall: Debug/ReleaseSafe pull Zig's panic formatter (ubsan_rt +
+# compiler-rt float helpers). No SSE: #NM is fatal until FXSAVE/XRSTOR.
+USER_ZFLAGS := \
+	-target x86_64-freestanding-none \
+	-T user/user.ld \
+	-fentry=_start \
+	-fno-PIE \
+	-fno-compiler-rt \
+	-fstrip \
+	-fno-stack-protector \
+	-O ReleaseSmall \
+	-fno-stack-check \
+	-mcpu=x86_64+soft_float-mmx-sse-sse2-avx-avx2
+
+user/%.elf: user/%.zig user/sys.zig user/user.ld
+	zig build-exe $< $(USER_ZFLAGS) \
 		--name $* \
 		-femit-bin=$@
 
