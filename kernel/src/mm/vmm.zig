@@ -503,3 +503,25 @@ test "Flags construction" {
     const mmio = Flags{ .present = true, .writable = true, .cache_disable = true, .noexec = true };
     try std.testing.expectEqual(@as(u64, 0x8000_0000_0000_0013), @as(u64, @bitCast(mmio)));
 }
+
+test "userRange rejects the null page" {
+    try std.testing.expect(!userRange(0, 1));
+    try std.testing.expect(!userRange(pmm.page_size - 1, 1));
+    try std.testing.expect(userRange(pmm.page_size, 1));
+}
+
+test "userRange rejects the kernel half" {
+    try std.testing.expect(!userRange(user_space_end, 1));
+    try std.testing.expect(!userRange(user_space_end - 1, 2));
+    try std.testing.expect(userRange(user_space_end - 1, 1));
+}
+
+test "userRange empty length is always in range" {
+    try std.testing.expect(userRange(0, 0));
+    try std.testing.expect(userRange(user_space_end, 0));
+}
+
+test "userRange rejects a span past the user half" {
+    try std.testing.expect(!userRange(pmm.page_size, user_space_end - pmm.page_size + 1));
+    try std.testing.expect(userRange(pmm.page_size, user_space_end - pmm.page_size));
+}

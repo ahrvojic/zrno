@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub fn BoundedArray(comptime T: type, comptime capacity: usize) type {
     return struct {
         const Self = @This();
@@ -30,4 +32,31 @@ pub fn BoundedArray(comptime T: type, comptime capacity: usize) type {
             self.len = new_len;
         }
     };
+}
+
+test "append pop slice" {
+    var a = BoundedArray(u8, 4){};
+    try a.append(1);
+    try a.append(2);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2 }, a.constSlice());
+    try std.testing.expectEqual(@as(u8, 2), a.pop().?);
+    try std.testing.expectEqualSlices(u8, &.{1}, a.slice());
+    try std.testing.expectEqual(@as(u8, 1), a.pop().?);
+    try std.testing.expect(a.pop() == null);
+}
+
+test "append at capacity is Overflow" {
+    var a = BoundedArray(u8, 2){};
+    try a.append(1);
+    try a.append(2);
+    try std.testing.expectError(error.Overflow, a.append(3));
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2 }, a.constSlice());
+}
+
+test "resize zero clears; overflow is rejected" {
+    var a = BoundedArray(u8, 2){};
+    try a.append(1);
+    try a.resize(0);
+    try std.testing.expectEqual(@as(usize, 0), a.constSlice().len);
+    try std.testing.expectError(error.Overflow, a.resize(3));
 }
