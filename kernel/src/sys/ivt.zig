@@ -101,6 +101,7 @@ export fn interruptStub() callconv(.naked) void {
         \\push %r14
         \\push %r15
         \\
+        \\cld // DF=0 so user `std` cannot reverse kernel memcpy/memset
         \\mov %rsp, %rdi
         \\call interruptDispatch
         \\
