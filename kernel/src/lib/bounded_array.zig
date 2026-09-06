@@ -5,11 +5,6 @@ pub fn BoundedArray(comptime T: type, comptime capacity: usize) type {
         buffer: [capacity]T = undefined,
         len: usize = 0,
 
-        pub fn init(len: usize) error{Overflow}!Self {
-            if (len > capacity) return error.Overflow;
-            return .{ .len = len };
-        }
-
         pub fn append(self: *Self, item: T) error{Overflow}!void {
             if (self.len >= capacity) return error.Overflow;
             self.buffer[self.len] = item;
@@ -20,10 +15,6 @@ pub fn BoundedArray(comptime T: type, comptime capacity: usize) type {
             if (self.len == 0) return null;
             self.len -= 1;
             return self.buffer[self.len];
-        }
-
-        pub fn get(self: *const Self, i: usize) T {
-            return self.buffer[i];
         }
 
         pub fn slice(self: *Self) []T {

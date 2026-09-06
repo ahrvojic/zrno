@@ -406,13 +406,9 @@ pub inline fn pause() void {
     asm volatile ("pause");
 }
 
-pub inline fn idle() void {
-    asm volatile ("hlt");
-}
-
 pub inline fn halt() noreturn {
     while (true) {
-        idle();
+        asm volatile ("hlt");
     }
 }
 

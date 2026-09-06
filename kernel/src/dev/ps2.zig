@@ -8,7 +8,6 @@ const cpu = @import("../sys/cpu.zig");
 const ivt = @import("../sys/ivt.zig");
 const Lock = @import("../lib/lock.zig");
 const port = @import("../sys/port.zig");
-const sched = @import("../sched/sched.zig");
 const tty = @import("tty.zig");
 
 const Decode = struct {
@@ -46,7 +45,7 @@ const resp_port_ok: u8 = 0x00;
 
 const io_spins: u32 = 0xfffff;
 
-pub const Key = enum {
+const Key = enum {
     esc,
     f1,
     f2,
@@ -122,12 +121,12 @@ pub const Key = enum {
     rctrl,
 };
 
-pub const KeyEvent = struct {
+const KeyEvent = struct {
     key: Key,
     pressed: bool,
 };
 
-pub const KeyModifier = enum(u2) {
+const KeyModifier = enum(u2) {
     alt,
     ctrl,
     shift,
@@ -163,16 +162,6 @@ const KeyboardState = struct {
 // Longest AT scan sequence is Pause (8 bytes in set 2).
 const max_scan_bytes = 8;
 var code_buffer: BoundedArray(u8, max_scan_bytes) = .{};
-
-// Wrapping indices fill the ring iff maxInt(KbIndex)+1 == kb_capacity.
-const kb_capacity = 256;
-const KbIndex = std.math.IntFittingRange(0, kb_capacity - 1);
-comptime {
-    std.debug.assert(@as(usize, std.math.maxInt(KbIndex)) + 1 == kb_capacity);
-}
-var kb_buffer: [kb_capacity]KeyEvent = undefined;
-var kb_head: KbIndex = 0;
-var kb_tail: KbIndex = 0;
 
 var keyboard_state: KeyboardState = .{ .modifiers = std.StaticBitSet(4).initEmpty() };
 var lock: Lock.SpinLock = .{};
@@ -316,24 +305,7 @@ pub fn handleInterrupt() bool {
     return known;
 }
 
-pub fn isPressed(modifier: KeyModifier) bool {
-    lock.lock();
-    defer lock.unlock();
-    return keyboard_state.modifiers.isSet(@intFromEnum(modifier));
-}
-
-pub fn getKey() KeyEvent {
-    lock.lock();
-    defer lock.unlock();
-    while (kb_head == kb_tail) {
-        sched.wait(&kb_buffer, &lock);
-    }
-    const event = kb_buffer[kb_head];
-    kb_head +%= 1;
-    return event;
-}
-
-pub fn toAscii(key: Key, shift: bool) ?u8 {
+fn toAscii(key: Key, shift: bool) ?u8 {
     return switch (key) {
         .enter => '\n',
         .backspace => '\x08',
@@ -402,13 +374,6 @@ fn putKey(code: u8, extended: bool) Decode {
     };
 
     keyboard_state.notify(event);
-
-    const next = kb_tail +% 1;
-    if (next != kb_head) {
-        kb_buffer[kb_tail] = event;
-        kb_tail = next;
-        sched.wakeup(&kb_buffer);
-    }
 
     if (!event.pressed) return .{};
     const shift = keyboard_state.modifiers.isSet(@intFromEnum(KeyModifier.shift));

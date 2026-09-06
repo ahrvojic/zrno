@@ -26,16 +26,6 @@ pub fn writeBytes(string: []const u8) void {
     write(string);
 }
 
-pub fn read(out: []u8) usize {
-    if (out.len == 0) return 0;
-    lock.lock();
-    defer lock.unlock();
-    waitData();
-    const n = copyOut(out);
-    drop(n);
-    return n;
-}
-
 /// Block until at least one byte is queued, then copy without consuming.
 pub fn peek(out: []u8) usize {
     if (out.len == 0) return 0;
@@ -70,13 +60,7 @@ pub fn printUnsafe(comptime fmt: []const u8, args: anytype) void {
     write(writer.buffered());
 }
 
-pub fn putChar(ch: u8) void {
-    lock.lock();
-    defer lock.unlock();
-    putCharUnlocked(ch);
-}
-
-// IRQ-safe: enqueue only. Echo is `putChar` from thread context.
+// IRQ-safe: enqueue only.
 pub fn enqueue(ch: u8) void {
     if (!isInputChar(ch)) return;
     lock.lock();
@@ -93,41 +77,6 @@ pub fn pollSerial() void {
         const raw = serial.readByte() orelse break;
         const ch = mapSerialByte(raw) orelse continue;
         enqueueUnlocked(ch);
-    }
-}
-
-pub fn getChar() u8 {
-    lock.lock();
-    defer lock.unlock();
-    waitData();
-    const ch = in_buf[in_head];
-    in_head +%= 1;
-    return ch;
-}
-
-pub fn readLine(out: []u8) []u8 {
-    var n: usize = 0;
-    while (true) {
-        const ch = getChar();
-        switch (ch) {
-            '\n' => {
-                putChar('\n');
-                return out[0..n];
-            },
-            '\x08' => {
-                if (n > 0) {
-                    n -= 1;
-                    putChar('\x08');
-                }
-            },
-            else => {
-                if (n < out.len) {
-                    out[n] = ch;
-                    n += 1;
-                    putChar(ch);
-                }
-            },
-        }
     }
 }
 

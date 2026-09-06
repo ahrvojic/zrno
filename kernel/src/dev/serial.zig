@@ -1,4 +1,4 @@
-//! 16550 UART. COM1 (0x3f8) first; SPCR can re-init via `initIo` later.
+//! 16550 UART on COM1 (0x3f8).
 
 const logger = std.log.scoped(.serial);
 
@@ -30,11 +30,7 @@ var present = false;
 var initialized = false;
 
 pub fn init() void {
-    initIo(com1_io);
-}
-
-/// Program a legacy 16550 at an I/O-port base. COM1 is 0x3f8.
-pub fn initIo(base: u16) void {
+    const base = com1_io;
     io_base = base;
     present = false;
     initialized = true;
@@ -52,7 +48,7 @@ pub fn initIo(base: u16) void {
     port.outb(base + mcr, mcr_dtr_rts_out2);
 
     present = true;
-    logger.info("{s} 0x{x} {d} 8N1", .{ ioName(base), base, baud });
+    logger.info("COM1 0x{x} {d} 8N1", .{ base, baud });
 }
 
 pub fn write(bytes: []const u8) void {
@@ -68,16 +64,6 @@ pub fn readByte() ?u8 {
     if (!present) return null;
     if (port.inb(io_base + lsr) & lsr_dr == 0) return null;
     return port.inb(io_base + data);
-}
-
-fn ioName(base: u16) []const u8 {
-    return switch (base) {
-        0x3f8 => "COM1",
-        0x2f8 => "COM2",
-        0x3e8 => "COM3",
-        0x2e8 => "COM4",
-        else => "uart",
-    };
 }
 
 fn scratchOk(base: u16) bool {
