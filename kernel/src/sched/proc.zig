@@ -32,6 +32,8 @@ pub const Process = struct {
     node: std.DoublyLinkedList.Node,
     on_proctable: bool,
     exit_code: u8,
+    // Reparented to pid 0 after the original parent exited; auto-reaped.
+    orphaned: bool,
     // Exclusive top of the next user stack; grows down.
     user_stack_next: usize,
     // 0/1/2 are TTY; fds ≥ 3 are ramfs files.

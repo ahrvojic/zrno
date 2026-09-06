@@ -19,18 +19,26 @@ pub const nr_yield: u64 = 3;
 pub const nr_sleep: u64 = 4;
 pub const nr_open: u64 = 5;
 pub const nr_close: u64 = 6;
-pub const nr_exec: u64 = 7;
-pub const nr_wait: u64 = 8;
+pub const nr_spawn: u64 = 7; // new pid; nr 7 was historically called exec
+pub const nr_wait: u64 = 8; // rdi=pid, 0 = any child
+pub const nr_getpid: u64 = 9;
+pub const nr_getppid: u64 = 10;
+pub const nr_exec: u64 = 11; // replace image, keep pid/fds; rsi=argv or 0
+pub const nr_dup: u64 = 12;
 
 const max_io: usize = pmm.page_size;
 const io_chunk: usize = 256;
 const max_path: usize = 128;
+const max_argv: usize = 32;
+const max_arg: usize = 128;
 
 const ENOENT: i64 = 2;
+const E2BIG: i64 = 7;
 const ENOEXEC: i64 = 8;
 const EBADF: i64 = 9;
 const ECHILD: i64 = 10;
 const ENOMEM: i64 = 12;
+const EACCES: i64 = 13;
 const EFAULT: i64 = 14;
 const EINVAL: i64 = 22;
 const EMFILE: i64 = 24;
@@ -50,8 +58,12 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_sleep => sys_sleep(ctx),
         nr_open => sys_open(ctx),
         nr_close => sys_close(ctx),
-        nr_exec => sys_exec(ctx),
+        nr_spawn => sys_spawn(ctx),
         nr_wait => sys_wait(ctx),
+        nr_getpid => sys_getpid(),
+        nr_getppid => sys_getppid(),
+        nr_exec => sys_exec(ctx),
+        nr_dup => sys_dup(ctx),
         else => errval(ENOSYS),
     };
 }
@@ -70,7 +82,6 @@ fn sys_read(ctx: *cpu.Context) u64 {
     switch (slot.*) {
         .empty => return errval(EBADF),
         .tty => {
-            if (i != 0) return errval(EBADF);
             var tmp: [io_chunk]u8 = undefined;
             const want = @min(tmp.len, len);
             const n = tty.read(tmp[0..want]);
@@ -91,10 +102,17 @@ fn sys_write(ctx: *cpu.Context) u64 {
     const fd = ctx.rdi;
     const addr: usize = @intCast(ctx.rsi);
     const len: usize = @intCast(ctx.rdx);
-    if (fd != 1 and fd != 2) return errval(EBADF);
     if (len == 0) return 0;
     if (len > max_io) return errval(EINVAL);
     if (!vmm.userRange(addr, len)) return errval(EFAULT);
+    if (fd >= proc.max_fds) return errval(EBADF);
+
+    const i: usize = @intCast(fd);
+    switch (currentProcess().fds[i]) {
+        .empty => return errval(EBADF),
+        .file => return errval(EACCES),
+        .tty => {},
+    }
 
     var tmp: [io_chunk]u8 = undefined;
     var copied: usize = 0;
@@ -153,18 +171,17 @@ fn sys_close(ctx: *cpu.Context) u64 {
     if (fd >= proc.max_fds) return errval(EBADF);
     const i: usize = @intCast(fd);
     const slot = &currentProcess().fds[i];
-    switch (slot.*) {
-        .file => slot.* = .empty,
-        else => return errval(EBADF),
-    }
+    if (slot.* == .empty) return errval(EBADF);
+    slot.* = .empty;
     return 0;
 }
 
-fn sys_exec(ctx: *cpu.Context) u64 {
+fn sys_spawn(ctx: *cpu.Context) u64 {
     const addr: usize = @intCast(ctx.rdi);
     var buf: [max_path]u8 = undefined;
     const path = copyUserPath(addr, &buf) catch |err| return pathErr(err);
-    const pid = user.spawnPath(path) catch |err| return spawnErr(err);
+    const argv = [_][]const u8{path};
+    const pid = user.spawnPathArgv(path, &argv) catch |err| return spawnErr(err);
     return pid;
 }
 
@@ -176,7 +193,45 @@ fn sys_wait(ctx: *cpu.Context) u64 {
     return code;
 }
 
+fn sys_getpid() u64 {
+    return currentProcess().pid;
+}
+
+fn sys_getppid() u64 {
+    return currentProcess().parent;
+}
+
+fn sys_exec(ctx: *cpu.Context) u64 {
+    const addr: usize = @intCast(ctx.rdi);
+    var buf: [max_path]u8 = undefined;
+    const path = copyUserPath(addr, &buf) catch |err| return pathErr(err);
+    var storage: ArgvStorage = .{};
+    const argv = copyUserArgv(ctx.rsi, path, &storage) catch |err| return argvErr(err);
+    user.execPath(currentProcess(), ctx, path, argv) catch |err| return spawnErr(err);
+    return 0;
+}
+
+fn sys_dup(ctx: *cpu.Context) u64 {
+    const fd = ctx.rdi;
+    if (fd >= proc.max_fds) return errval(EBADF);
+    const fds = &currentProcess().fds;
+    const i: usize = @intCast(fd);
+    if (fds[i] == .empty) return errval(EBADF);
+    var new_fd: usize = 0;
+    while (new_fd < proc.max_fds) : (new_fd += 1) {
+        if (fds[new_fd] == .empty) {
+            fds[new_fd] = fds[i];
+            return new_fd;
+        }
+    }
+    return errval(EMFILE);
+}
+
 fn copyUserPath(addr: usize, buf: *[max_path]u8) error{ Fault, OutOfMemory, NameTooLong }![]const u8 {
+    return copyUserCString(addr, buf);
+}
+
+fn copyUserCString(addr: usize, buf: []u8) error{ Fault, OutOfMemory, NameTooLong }![]const u8 {
     const space = userSpace();
     var n: usize = 0;
     while (n < buf.len) {
@@ -187,6 +242,49 @@ fn copyUserPath(addr: usize, buf: *[max_path]u8) error{ Fault, OutOfMemory, Name
         n += 1;
     }
     return error.NameTooLong;
+}
+
+const ArgvStorage = struct {
+    n: usize = 0,
+    bufs: [max_argv][max_arg]u8 = undefined,
+    ptrs: [max_argv][]const u8 = undefined,
+
+    fn add(self: *ArgvStorage, s: []const u8) error{TooMany, NameTooLong}!void {
+        if (self.n >= max_argv) return error.TooMany;
+        if (s.len >= max_arg) return error.NameTooLong;
+        @memcpy(self.bufs[self.n][0..s.len], s);
+        self.ptrs[self.n] = self.bufs[self.n][0..s.len];
+        self.n += 1;
+    }
+
+    fn slice(self: *ArgvStorage) []const []const u8 {
+        return self.ptrs[0..self.n];
+    }
+};
+
+fn copyUserArgv(addr: usize, path: []const u8, storage: *ArgvStorage) error{ Fault, OutOfMemory, NameTooLong, TooMany }![]const []const u8 {
+    if (addr == 0) {
+        try storage.add(path);
+        return storage.slice();
+    }
+    if (!vmm.userRange(addr, @sizeOf(u64))) return error.Fault;
+
+    const space = userSpace();
+    var i: usize = 0;
+    while (i < max_argv + 1) : (i += 1) {
+        var ptr_bytes: [@sizeOf(u64)]u8 = undefined;
+        try space.copyFromUser(&ptr_bytes, addr + i * @sizeOf(u64));
+        const ptr = std.mem.readInt(u64, &ptr_bytes, .little);
+        if (ptr == 0) {
+            if (i == 0) try storage.add(path);
+            return storage.slice();
+        }
+        if (i == max_argv) return error.TooMany;
+        var tmp: [max_arg]u8 = undefined;
+        const s = try copyUserCString(@intCast(ptr), &tmp);
+        try storage.add(s);
+    }
+    return error.TooMany;
 }
 
 fn currentProcess() *proc.Process {
@@ -210,6 +308,15 @@ fn pathErr(err: error{ Fault, OutOfMemory, NameTooLong }) u64 {
         error.Fault => errval(EFAULT),
         error.OutOfMemory => errval(ENOMEM),
         error.NameTooLong => errval(ENAMETOOLONG),
+    };
+}
+
+fn argvErr(err: error{ Fault, OutOfMemory, NameTooLong, TooMany }) u64 {
+    return switch (err) {
+        error.Fault => errval(EFAULT),
+        error.OutOfMemory => errval(ENOMEM),
+        error.NameTooLong => errval(ENAMETOOLONG),
+        error.TooMany => errval(E2BIG),
     };
 }
 

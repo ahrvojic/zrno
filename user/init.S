@@ -1,5 +1,5 @@
 /* Userspace ET_EXEC. Syscall numbers match kernel/src/sys/syscall.zig
-   (exec=7, wait=8, exit=2). */
+   (spawn=7, wait=8, exit=2). */
         .code64
         .section .text
         .global _start

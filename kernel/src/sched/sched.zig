@@ -10,6 +10,7 @@ const ivt = @import("../sys/ivt.zig");
 const Lock = @import("../lib/lock.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
+const virt = @import("../lib/virt.zig");
 const vmm = @import("../mm/vmm.zig");
 
 pub const tick_hz: u64 = 1000;
@@ -90,11 +91,11 @@ pub fn spawnKernelThread(pc: usize, arg: usize) !*proc.Thread {
     return startKernelThread(parent, pc, arg, true);
 }
 
-pub fn spawnUserThread(pc: usize, arg: usize) !*proc.Thread {
+pub fn spawnUserThread(pc: usize, argv: []const []const u8) !*proc.Thread {
     expectInit();
     const process = try startProcess(heap.kernel_heap.allocator(), true);
     errdefer abortProcess(process, 1);
-    return startUserThread(process, pc, arg, true);
+    return startUserThread(process, pc, argv, true);
 }
 
 pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process {
@@ -111,6 +112,7 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .node = .{},
         .on_proctable = false,
         .exit_code = 0,
+        .orphaned = false,
         .user_stack_next = user_stack_top,
         .fds = [_]proc.Fd{.empty} ** proc.max_fds,
     };
@@ -148,31 +150,50 @@ fn findProcessLocked(pid: u64) ?*proc.Process {
     return null;
 }
 
-// Park until `pid` has exited, then reap it and return its exit code.
-// Pid 0 is the kernel process and never exits.
+// Park until a child has exited, then reap it and return its exit code.
+// `pid == 0` waits for any child. Unrelated pids are ECHILD, not a hang.
 pub fn waitProcess(pid: u64) error{ NoChild, Invalid }!u8 {
     expectInit();
-    if (pid == kernel_pid) return error.Invalid;
-    if (cpu.current().thread) |thread| {
-        if (thread.parent.pid == pid) return error.Invalid;
-    }
+    const thread = cpu.current().thread orelse @panic("wait with no thread");
+    const waiter = thread.parent;
+    if (pid == waiter.pid) return error.Invalid;
+
+    lock.lock();
+    defer lock.unlock();
 
     while (true) {
-        lock.lock();
-        if (findProcessLocked(pid)) |process| {
-            if (process.status == .stopped) {
-                const code = process.exit_code;
-                reapLocked(process);
-                lock.unlock();
-                return code;
+        if (pid == 0) {
+            var live = false;
+            var node = processes.first;
+            while (node) |n| {
+                const process: *proc.Process = @fieldParentPtr("node", n);
+                node = n.next;
+                if (!isWaitableChild(process, waiter.pid)) continue;
+                if (process.status == .stopped) {
+                    const code = process.exit_code;
+                    reapLocked(process);
+                    return code;
+                }
+                live = true;
             }
-            lock.unlock();
-            yield();
+            if (!live) return error.NoChild;
+            waitLocked(waiter);
             continue;
         }
-        lock.unlock();
-        return error.NoChild;
+
+        const process = findProcessLocked(pid) orelse return error.NoChild;
+        if (!isWaitableChild(process, waiter.pid)) return error.NoChild;
+        if (process.status == .stopped) {
+            const code = process.exit_code;
+            reapLocked(process);
+            return code;
+        }
+        waitLocked(process);
     }
+}
+
+fn isWaitableChild(process: *const proc.Process, parent_pid: u64) bool {
+    return process.parent == parent_pid and !process.orphaned;
 }
 
 pub const ThreadInfo = struct {
@@ -241,7 +262,7 @@ pub fn startKernelThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: 
     return thread;
 }
 
-pub fn startUserThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bool) !*proc.Thread {
+pub fn startUserThread(parent: *proc.Process, pc: usize, argv: []const []const u8, enqueue: bool) !*proc.Thread {
     const thread = try parent.heap.create(proc.Thread);
     errdefer parent.heap.destroy(thread);
 
@@ -257,6 +278,9 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bo
         stack_size,
         .{ .present = true, .writable = true, .user = true, .noexec = true },
     );
+    errdefer parent.vmm.unmap(user_stack_base, stack_size) catch {};
+
+    const frame = try setupUserArgv(user_stack_phys, user_stack_base, argv);
 
     thread.* = .{
         .tid = 0,
@@ -269,12 +293,7 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bo
         .on_runqueue = false,
     };
 
-    thread.ctx.rflags = 0x202;
-    thread.ctx.cs = gdt.user_code_sel | 3;
-    thread.ctx.ss = gdt.user_data_sel | 3;
-    thread.ctx.rip = @intCast(pc);
-    thread.ctx.rdi = @intCast(arg);
-    thread.ctx.rsp = @intCast(user_stack_base + stack_size);
+    applyUserRegs(&thread.ctx, pc, frame);
 
     lock.lock();
     defer lock.unlock();
@@ -285,6 +304,54 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bo
     return thread;
 }
 
+// Replace the calling process image. Keeps pid, parent, and fds. `new_vmm`
+// is taken on success; the caller must not destroy it.
+pub fn execReplace(
+    process: *proc.Process,
+    ctx: *cpu.Context,
+    new_vmm: vmm.VMM,
+    entry: usize,
+    argv: []const []const u8,
+) !void {
+    expectInit();
+    const thread = cpu.current().thread orelse @panic("exec with no thread");
+    if (thread.parent != process) @panic("exec of other process");
+    if (process.pid == kernel_pid) @panic("exec kernel process");
+
+    const user_stack_phys = pmm.alloc(stack_pages) orelse return error.OutOfMemory;
+    errdefer pmm.free(user_stack_phys, stack_pages);
+
+    var space = new_vmm;
+    const user_stack_base = user_stack_top - stack_size;
+    try space.map(
+        user_stack_base,
+        user_stack_phys,
+        stack_size,
+        .{ .present = true, .writable = true, .user = true, .noexec = true },
+    );
+    errdefer space.unmap(user_stack_base, stack_size) catch {};
+
+    const frame = try setupUserArgv(user_stack_phys, user_stack_base, argv);
+
+    lock.lock();
+    var node = process.threads.first;
+    while (node) |n| {
+        const t: *proc.Thread = @fieldParentPtr("proc_node", n);
+        node = n.next;
+        if (t != thread) stopThread(t);
+    }
+
+    var old = process.vmm;
+    process.vmm = space;
+    process.user_stack_next = user_stack_base;
+    applyUserRegs(ctx, entry, frame);
+    thread.ctx = ctx.*;
+    lock.unlock();
+
+    process.vmm.switchTo();
+    dropAddressSpace(&old);
+}
+
 fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
     lock.lock();
     defer lock.unlock();
@@ -292,6 +359,70 @@ fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
     const base = parent.user_stack_next - stack_size;
     parent.user_stack_next = base;
     return base;
+}
+
+const ArgvFrame = struct {
+    rsp: u64,
+    argc: u64,
+    argv_va: u64,
+};
+
+fn applyUserRegs(ctx: *cpu.Context, pc: usize, frame: ArgvFrame) void {
+    ctx.* = .{};
+    ctx.rflags = 0x202;
+    ctx.cs = gdt.user_code_sel | 3;
+    ctx.ss = gdt.user_data_sel | 3;
+    ctx.rip = @intCast(pc);
+    ctx.rdi = frame.argc;
+    ctx.rsi = frame.argv_va;
+    ctx.rsp = frame.rsp;
+}
+
+// SysV `_start`: rsp % 16 == 8, argc then argv pointers, NULL, envp NULL.
+fn setupUserArgv(stack_phys: usize, stack_va: usize, argv: []const []const u8) error{OutOfMemory}!ArgvFrame {
+    const mem = virt.toHH([*]u8, stack_phys)[0..stack_size];
+    var off: usize = stack_size;
+
+    var str_va: [32]usize = undefined;
+    if (argv.len > str_va.len) return error.OutOfMemory;
+    for (argv, 0..) |arg, i| {
+        const n = arg.len + 1;
+        if (off < n) return error.OutOfMemory;
+        off -= n;
+        @memcpy(mem[off..][0..arg.len], arg);
+        mem[off + arg.len] = 0;
+        str_va[i] = stack_va + off;
+    }
+
+    off &= ~@as(usize, 15);
+    const words = argv.len + 3;
+    const bytes = words * @sizeOf(u64);
+    if (off < bytes) return error.OutOfMemory;
+    off -= bytes;
+    if ((stack_va + off) % 16 != 8) {
+        if (off < @sizeOf(u64)) return error.OutOfMemory;
+        off -= @sizeOf(u64);
+    }
+
+    writeU64(mem, off, argv.len);
+    var p = off + @sizeOf(u64);
+    const argv_va = stack_va + p;
+    for (0..argv.len) |i| {
+        writeU64(mem, p, str_va[i]);
+        p += @sizeOf(u64);
+    }
+    writeU64(mem, p, 0);
+    writeU64(mem, p + @sizeOf(u64), 0);
+
+    return .{
+        .rsp = @intCast(stack_va + off),
+        .argc = argv.len,
+        .argv_va = @intCast(argv_va),
+    };
+}
+
+fn writeU64(mem: []u8, off: usize, value: usize) void {
+    std.mem.writeInt(u64, mem[off..][0..8], @intCast(value), .little);
 }
 
 pub fn schedule(ctx: *cpu.Context) void {
@@ -326,6 +457,26 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
     }
 
     dropAddressSpace(&process.vmm);
+
+    var pnode = processes.first;
+    while (pnode) |n| {
+        const child: *proc.Process = @fieldParentPtr("node", n);
+        pnode = n.next;
+        if (child.parent != process.pid or child == process) continue;
+        if (child.status == .stopped) {
+            reapLocked(child);
+        } else {
+            child.parent = kernel_pid;
+            child.orphaned = true;
+        }
+    }
+
+    wakeupLocked(process);
+    if (findProcessLocked(process.parent)) |parent| {
+        wakeupLocked(parent);
+    }
+
+    if (process.orphaned) reapLocked(process);
 }
 
 // Interrupt-context kill: stop the running user process and overwrite `ctx`
@@ -398,7 +549,20 @@ pub fn wakeup(chan: *const anyopaque) void {
     expectInit();
     lock.lock();
     defer lock.unlock();
+    wakeupLocked(chan);
+}
 
+// Caller holds `lock`. Parks, then reacquires `lock` on resume.
+fn waitLocked(chan: *const anyopaque) void {
+    const thread = cpu.current().thread orelse @panic("wait with no thread");
+    thread.wait_chan = chan;
+    thread.status = .waiting;
+    lock.unlock();
+    yield();
+    lock.lock();
+}
+
+fn wakeupLocked(chan: *const anyopaque) void {
     var node = threads.first;
     while (node) |n| {
         const thread: *proc.Thread = @fieldParentPtr("sched_node", n);

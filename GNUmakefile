@@ -67,6 +67,8 @@ limine/limine:
 		LDFLAGS="$(HOST_LDFLAGS)" \
 		LIBS="$(HOST_LIBS)"
 
+USER_PROGS := hello init fault
+
 user/%.elf: user/%.S user/user.ld
 	zig build-exe $< \
 		-target x86_64-freestanding-none \
@@ -79,15 +81,11 @@ user/%.elf: user/%.S user/user.ld
 		--name $* \
 		-femit-bin=$@
 
-user/initramfs.tar: user/hello.elf user/init.elf user/fault.elf user/ud.elf user/hello.txt
+user/initramfs.tar: $(addprefix user/,$(addsuffix .elf,$(USER_PROGS)))
 	rm -rf user/.initramfs
 	mkdir user/.initramfs
-	cp -f user/hello.elf user/.initramfs/hello
-	cp -f user/init.elf user/.initramfs/init
-	cp -f user/fault.elf user/.initramfs/fault
-	cp -f user/ud.elf user/.initramfs/ud
-	cp -f user/hello.txt user/.initramfs/hello.txt
-	COPYFILE_DISABLE=1 tar --format=ustar -cf $@ -C user/.initramfs hello init fault ud hello.txt
+	for p in $(USER_PROGS); do cp -f user/$$p.elf user/.initramfs/$$p; done
+	COPYFILE_DISABLE=1 tar --format=ustar -cf $@ -C user/.initramfs $(USER_PROGS)
 	rm -rf user/.initramfs
 
 .PHONY: kernel
@@ -128,7 +126,7 @@ clean:
 	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
 	rm -rf kernel/.zig-cache kernel/zig-cache kernel/zig-out
 	rm -rf user/.initramfs
-	rm -f user/hello.elf user/init.elf user/fault.elf user/ud.elf user/initramfs.tar
+	rm -f $(addprefix user/,$(addsuffix .elf,$(USER_PROGS))) user/initramfs.tar
 
 .PHONY: distclean
 distclean: clean

@@ -1,8 +1,10 @@
 const std = @import("std");
 
+const cpu = @import("sys/cpu.zig");
 const elf = @import("sys/elf.zig");
 const heap = @import("mm/heap.zig");
 const pmm = @import("mm/pmm.zig");
+const proc = @import("sched/proc.zig");
 const ramfs = @import("sys/ramfs.zig");
 const sched = @import("sched/sched.zig");
 const virt = @import("lib/virt.zig");
@@ -14,14 +16,29 @@ comptime {
 }
 
 pub fn spawnPath(path: []const u8) !u64 {
+    const argv = [_][]const u8{path};
+    return spawnPathArgv(path, &argv);
+}
+
+pub fn spawnPathArgv(path: []const u8, argv: []const []const u8) !u64 {
     const image = ramfs.lookup(path) orelse return error.NoEnt;
     const process = try sched.startProcess(heap.kernel_heap.allocator(), true);
     errdefer sched.abortProcess(process, 1);
 
     var space: VmmSpace = .{ .vmm = &process.vmm };
     const entry = try elf.load(&space, image);
-    _ = try sched.startUserThread(process, entry, 0, true);
+    _ = try sched.startUserThread(process, entry, argv, true);
     return process.pid;
+}
+
+pub fn execPath(process: *proc.Process, ctx: *cpu.Context, path: []const u8, argv: []const []const u8) !void {
+    const image = ramfs.lookup(path) orelse return error.NoEnt;
+    var new_vmm = try vmm.VMM.cloneKernel();
+    errdefer new_vmm.destroy();
+
+    var space: VmmSpace = .{ .vmm = &new_vmm };
+    const entry = try elf.load(&space, image);
+    try sched.execReplace(process, ctx, new_vmm, entry, argv);
 }
 
 const VmmSpace = struct {
