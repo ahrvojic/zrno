@@ -17,7 +17,6 @@ const ps2 = @import("dev/ps2.zig");
 const sched = @import("sched/sched.zig");
 const serial = @import("dev/serial.zig");
 const timer = @import("dev/timer.zig");
-const tty = @import("dev/tty.zig");
 const user = @import("user.zig");
 const video = @import("dev/video.zig");
 const vmm = @import("mm/vmm.zig");
@@ -100,10 +99,7 @@ pub fn main() !void {
 
     // First user process is pid 1. `_start` yield()s onto it; if it
     // exits, `exitProcess` panics.
+    logger.info("run /init as init process", .{});
     const init_pid = try user.spawnPath("/init");
     if (init_pid != 1) @panic("init is not pid 1");
-
-    logger.info("ready", .{});
-    tty.print("Zrno kernel {s}\n", .{build_options.version});
-    tty.print("READY.\n", .{});
 }

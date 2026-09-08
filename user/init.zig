@@ -1,6 +1,7 @@
 const sys = @import("sys.zig");
 
 export fn _start() callconv(.c) noreturn {
+    writeStr("READY.\n");
     writeStr("type 'help'\n");
     var buf: [128]u8 = undefined;
     while (true) {
