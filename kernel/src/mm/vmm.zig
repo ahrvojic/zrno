@@ -275,12 +275,8 @@ pub const VMM = struct {
         std.debug.assert(size > 0);
         self.lock.lock();
         defer self.lock.unlock();
-        try mapHhdmRange(self.pt, phys_addr, phys_addr + size, .{
-            .present = true,
-            .writable = true,
-            .cache_disable = true,
-            .noexec = true,
-        });
+        // reserved_mapped (and overlaps) are already in the HHDM as writeback.
+        try mapHhdmRange(self.pt, phys_addr, phys_addr + size, mmio_flags, .remap);
     }
 
     pub fn virtToPhys(self: *VMM, virt_addr: usize) !usize {
@@ -429,7 +425,7 @@ pub fn init() !void {
         const start = std.mem.alignBackward(usize, base, pmm.page_size);
         const end = std.mem.alignForward(usize, top, pmm.page_size);
         hhdm_bytes += end - start;
-        try mapHhdmRange(kernel_vmm.pt, base, top, .{ .present = true, .writable = true, .noexec = true });
+        try mapHhdmRange(kernel_vmm.pt, base, top, .{ .present = true, .writable = true, .noexec = true }, .keep);
     }
 
     const text = try mapKernelSection(&kernel_vmm, "text", .{ .present = true });
@@ -446,12 +442,22 @@ pub fn init() !void {
     });
 }
 
-fn mapHhdmRange(pt: *PageTable, base: usize, top: usize, flags: Flags) !void {
+const mmio_flags = Flags{ .present = true, .writable = true, .cache_disable = true, .noexec = true };
+
+fn mapHhdmRange(pt: *PageTable, base: usize, top: usize, flags: Flags, existing: enum { keep, remap }) !void {
     var addr = std.mem.alignBackward(usize, base, pmm.page_size);
     const end = std.mem.alignForward(usize, top, pmm.page_size);
     while (addr < end) : (addr += pmm.page_size) {
-        pt.mapPage(virt.toHH(usize, addr), addr, flags) catch |err| switch (err) {
-            error.AlreadyMapped => {},
+        const va = virt.toHH(usize, addr);
+        pt.mapPage(va, addr, flags) catch |err| switch (err) {
+            error.AlreadyMapped => switch (existing) {
+                .keep => {},
+                .remap => {
+                    const pte = try pt.virtToPTE(va, false, false);
+                    if (pte.getAddress() != addr) @panic("HHDM phys mismatch");
+                    pt.remapPage(va, addr, flags) catch @panic("remap of mapped page");
+                },
+            },
             else => return err,
         };
     }
@@ -500,8 +506,7 @@ test "Flags construction" {
     const flags = Flags{ .present = true, .writable = true, .noexec = true };
     try std.testing.expectEqual(@as(u64, 0x8000_0000_0000_0003), @as(u64, @bitCast(flags)));
 
-    const mmio = Flags{ .present = true, .writable = true, .cache_disable = true, .noexec = true };
-    try std.testing.expectEqual(@as(u64, 0x8000_0000_0000_0013), @as(u64, @bitCast(mmio)));
+    try std.testing.expectEqual(@as(u64, 0x8000_0000_0000_0013), @as(u64, @bitCast(mmio_flags)));
 }
 
 test "userRange rejects the null page" {
