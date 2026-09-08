@@ -98,22 +98,12 @@ pub fn main() !void {
         logger.warn("no 8042; skip PS/2", .{});
     }
 
-    _ = try sched.spawnKernelThread(@intFromPtr(&runInit), 0);
+    // First user process is pid 1. `_start` yield()s onto it; if it
+    // exits, `exitProcess` panics.
+    const init_pid = try user.spawnPath("/init");
+    if (init_pid != 1) @panic("init is not pid 1");
 
     logger.info("ready", .{});
     tty.print("Zrno kernel {s}\n", .{build_options.version});
     tty.print("READY.\n", .{});
-}
-
-fn runInit(_: usize) callconv(.c) noreturn {
-    const pid = user.spawnPath("/init") catch |err| {
-        logger.err("spawn /init: {s}", .{@errorName(err)});
-        @panic("spawn /init");
-    };
-    const code = sched.waitProcess(pid) catch |err| {
-        logger.err("wait /init: {s}", .{@errorName(err)});
-        @panic("wait /init");
-    };
-    logger.err("init exited {d}", .{code});
-    @panic("init exited");
 }

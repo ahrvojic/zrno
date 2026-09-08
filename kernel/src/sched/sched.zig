@@ -21,6 +21,7 @@ pub const tick_hz: u64 = 1000;
 const stack_size: usize = 16 * pmm.page_size;
 const stack_pages: usize = stack_size / pmm.page_size;
 const kernel_pid: u64 = 0;
+const init_pid: u64 = 1;
 // Exclusive top of the first user stack. Later threads grow down one
 // stack_size at a time. Canonical low half (2 GiB).
 const user_stack_top: usize = elf.user_stack_top;
@@ -526,6 +527,11 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
 
     process.exit_code = exit_code;
     process.status = .stopped;
+
+    if (process.pid == init_pid) {
+        logger.err("init exited {d}", .{exit_code});
+        @panic("init exited");
+    }
 
     var node = process.threads.first;
     while (node) |n| {
