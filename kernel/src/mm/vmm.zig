@@ -87,7 +87,7 @@ const PageTable = extern struct {
         }
     }
 
-    pub fn remapPage(self: *PageTable, virt_addr: usize, phys_addr: usize, flags: Flags) !void {
+    fn remapPage(self: *PageTable, virt_addr: usize, phys_addr: usize, flags: Flags) !void {
         const entry = try self.virtToPTE(virt_addr, false, false);
         const entry_flags = entry.getFlags();
 
@@ -239,22 +239,6 @@ pub const VMM = struct {
 
         while (mapped < size) : (mapped += pmm.page_size) {
             try self.pt.mapPage(virt_addr + mapped, phys_addr + mapped, flags);
-        }
-    }
-
-    pub fn remap(self: *VMM, virt_addr: usize, phys_addr: usize, size: usize, flags: Flags) !void {
-        self.expectInit();
-        std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
-        std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
-        std.debug.assert(std.mem.isAligned(size, pmm.page_size));
-
-        self.lock.lock();
-        defer self.lock.unlock();
-
-        try self.pt.expectMappedRange(virt_addr, size);
-        var off: usize = 0;
-        while (off < size) : (off += pmm.page_size) {
-            self.pt.remapPage(virt_addr + off, phys_addr + off, flags) catch @panic("remap of mapped page");
         }
     }
 

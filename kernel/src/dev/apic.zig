@@ -135,7 +135,7 @@ pub fn routeIrq(lapic_id: u32, vector: u8, irq: u8) void {
     routeGsi(lapic_id, vector, gsi, flags);
 }
 
-pub fn routeGsi(lapic_id: u32, vector: u8, gsi: u32, flags: u16) void {
+fn routeGsi(lapic_id: u32, vector: u8, gsi: u32, flags: u16) void {
     expectInit();
     lock.lock();
     defer lock.unlock();

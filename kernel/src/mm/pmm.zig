@@ -186,10 +186,6 @@ pub fn alloc(pages: usize) ?usize {
     return allocAligned(pages, 1);
 }
 
-pub fn allocNoZero(pages: usize) ?usize {
-    return allocAlignedNoZero(pages, 1);
-}
-
 /// Allocate `pages` consecutive pages whose start index is 0 mod `align_pages`.
 /// `align_pages` must be a power of two ≥ 1; otherwise returns null.
 pub fn allocAligned(pages: usize, align_pages: usize) ?usize {
@@ -204,7 +200,7 @@ pub fn allocAligned(pages: usize, align_pages: usize) ?usize {
     return res;
 }
 
-pub fn allocAlignedNoZero(pages: usize, align_pages: usize) ?usize {
+fn allocAlignedNoZero(pages: usize, align_pages: usize) ?usize {
     expectInit();
     if (pages == 0) return null;
     if (align_pages == 0 or !std.math.isPowerOfTwo(align_pages)) return null;

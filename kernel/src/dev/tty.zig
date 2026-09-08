@@ -41,17 +41,6 @@ pub fn consume(n: usize) void {
     drop(n);
 }
 
-pub fn print(comptime fmt: []const u8, args: anytype) void {
-    var print_buffer: [1024]u8 = undefined;
-    var writer: std.Io.Writer = .fixed(&print_buffer);
-
-    writer.print(fmt, args) catch {};
-
-    lock.lock();
-    defer lock.unlock();
-    write(writer.buffered());
-}
-
 pub fn printUnsafe(comptime fmt: []const u8, args: anytype) void {
     var print_buffer: [1024]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&print_buffer);

@@ -68,11 +68,6 @@ pub fn present() bool {
     return kind != null;
 }
 
-pub fn bits() u8 {
-    expectPresent();
-    return bits_value;
-}
-
 pub fn read() u32 {
     expectPresent();
     return readVerified();

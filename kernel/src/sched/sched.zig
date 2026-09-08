@@ -95,19 +95,6 @@ pub fn init() !void {
     logger.info("kernel pid={d} idle tid={d}", .{ kernel_process.pid, idle_thread.tid });
 }
 
-pub fn spawnKernelThread(pc: usize, arg: usize) !*proc.Thread {
-    expectInit();
-    const parent = findProcess(kernel_pid) orelse @panic("kernel process missing");
-    return startKernelThread(parent, pc, arg, true);
-}
-
-pub fn spawnUserThread(pc: usize, argv: []const []const u8) !*proc.Thread {
-    expectInit();
-    const process = try startProcess(heap.kernel_heap.allocator(), true);
-    errdefer abortProcess(process, 1);
-    return startUserThread(process, pc, argv, true);
-}
-
 pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process {
     const process = try allocator.create(proc.Process);
     errdefer allocator.destroy(process);
@@ -143,13 +130,6 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
     pid_next += 1;
     if (enqueue) enqueueProcess(process);
     return process;
-}
-
-pub fn findProcess(pid: u64) ?*proc.Process {
-    expectInit();
-    lock.lock();
-    defer lock.unlock();
-    return findProcessLocked(pid);
 }
 
 fn findProcessLocked(pid: u64) ?*proc.Process {
@@ -208,7 +188,7 @@ fn isWaitableChild(process: *const proc.Process, parent_pid: u64) bool {
     return process.parent == parent_pid and !process.orphaned;
 }
 
-pub fn startKernelThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bool) !*proc.Thread {
+fn startKernelThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bool) !*proc.Thread {
     const thread = try parent.heap.create(proc.Thread);
     errdefer parent.heap.destroy(thread);
 
@@ -578,19 +558,6 @@ pub fn abortProcess(process: *proc.Process, exit_code: u8) void {
     const pid = process.pid;
     exitProcess(process, exit_code);
     _ = waitProcess(pid) catch {};
-}
-
-pub fn exitThread() noreturn {
-    expectInit();
-    const this_cpu = cpu.current();
-    lock.lock();
-    if (this_cpu.thread) |thread| {
-        stopThread(thread);
-    }
-    this_cpu.thread = null;
-    lock.unlock();
-    yield();
-    unreachable;
 }
 
 pub fn yield() void {
