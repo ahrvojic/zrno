@@ -4,7 +4,6 @@ const std = @import("std");
 
 const cpu = @import("cpu.zig");
 const debug = @import("../lib/debug.zig");
-const panic = @import("../lib/panic.zig").panic;
 const ps2 = @import("../dev/ps2.zig");
 const sched = @import("../sched/sched.zig");
 const tty = @import("../dev/tty.zig");
@@ -19,6 +18,7 @@ pub const vec_double_fault = 8;
 pub const vec_stack_segment = 12;
 pub const vec_gpf = 13;
 pub const vec_page_fault = 14;
+pub const vec_machine_check = 18;
 pub const vec_timer = 32; // local APIC timer, not ISA IRQ 0
 pub const vec_keyboard = 33;
 // Software only: must not overlap IOAPIC GSIs (32 + pin) or APIC spurious.
@@ -37,13 +37,9 @@ comptime {
 
 export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
     switch (ctx.vector) {
-        vec_div_error => handleException(ctx, "Divide error"),
         vec_nmi => fatalException(ctx, "NMI"),
-        vec_invalid_opcode => handleException(ctx, "Invalid opcode"),
-        vec_device_not_available => handleException(ctx, "Device not available"),
         vec_double_fault => fatalException(ctx, "Double fault"),
-        vec_stack_segment => handleException(ctx, "Stack-segment fault"),
-        vec_gpf => handleException(ctx, "General protection fault"),
+        vec_machine_check => fatalException(ctx, "Machine check"),
         vec_page_fault => {
             const fault_addr = asm volatile (
                 \\mov %%cr2, %[result]
@@ -78,7 +74,14 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
             logger.info("APIC spurious interrupt", .{});
             // No EOI
         },
-        else => fatalException(ctx, "Unexpected interrupt"),
+        else => {
+            // INT3, TF/#DB, BOUND, INTO, AC, x87/SSE: no IDT DPL check.
+            if (ctx.vector <= 31) {
+                handleException(ctx, exceptionName(ctx.vector));
+            } else {
+                fatalException(ctx, "Unexpected interrupt");
+            }
+        },
     }
 }
 
@@ -176,13 +179,39 @@ fn fromUser(ctx: *const cpu.Context) bool {
     return ctx.cs & 3 == 3;
 }
 
+fn exceptionName(vector: u64) []const u8 {
+    return switch (vector) {
+        vec_div_error => "Divide error",
+        1 => "Debug exception",
+        3 => "Breakpoint",
+        4 => "Overflow",
+        5 => "BOUND range exceeded",
+        vec_invalid_opcode => "Invalid opcode",
+        vec_device_not_available => "Device not available",
+        9 => "Coprocessor segment overrun",
+        10 => "Invalid TSS",
+        11 => "Segment not present",
+        vec_stack_segment => "Stack-segment fault",
+        vec_gpf => "General protection fault",
+        16 => "x87 floating-point exception",
+        17 => "Alignment check",
+        19 => "SIMD floating-point exception",
+        20 => "Virtualization exception",
+        21 => "Control protection exception",
+        28 => "Hypervisor injection exception",
+        29 => "VMM communication exception",
+        30 => "Security exception",
+        else => "Exception",
+    };
+}
+
 // CPL 3: stop the process and switch. Kernel faults stay fatal.
-fn handleException(ctx: *cpu.Context, comptime message: []const u8) void {
+fn handleException(ctx: *cpu.Context, message: []const u8) void {
     if (!fromUser(ctx)) fatalException(ctx, message);
     killUser(ctx, message);
 }
 
-fn killUser(ctx: *cpu.Context, comptime message: []const u8) void {
+fn killUser(ctx: *cpu.Context, message: []const u8) void {
     const thread = cpu.current().thread orelse fatalException(ctx, message);
     const process = thread.parent;
     if (process.pid == 0) fatalException(ctx, message);
@@ -205,9 +234,9 @@ fn killUser(ctx: *cpu.Context, comptime message: []const u8) void {
     sched.killCurrent(ctx, code);
 }
 
-fn fatalException(ctx: *cpu.Context, comptime message: []const u8) noreturn {
+fn fatalException(ctx: *cpu.Context, message: []const u8) noreturn {
     printRegisters(ctx);
-    panic(message);
+    @panic(message);
 }
 
 fn printRegisters(ctx: *cpu.Context) void {
