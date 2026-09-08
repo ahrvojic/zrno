@@ -33,10 +33,17 @@ const Type5Override = extern struct {
     address: u64 align(1),
 };
 
-const LapicNMI = extern struct {
+// Type 4 processor_id 0xff: NMI applies to every local APIC.
+const nmi_all_processors: u8 = 0xff;
+
+pub const LapicNMI = extern struct {
     processor_id: u8 align(1),
     flags: u16 align(1),
     lint: u8 align(1),
+
+    pub fn appliesTo(self: LapicNMI, acpi_id: u32) bool {
+        return self.processor_id == nmi_all_processors or self.processor_id == acpi_id;
+    }
 };
 
 const IOApic = extern struct {
@@ -250,4 +257,16 @@ test "findEnabled skips disabled and prefers matching mode" {
     };
     const fallback = findEnabled(&only_x2, 5, false).?;
     try std.testing.expectEqual(@as(u32, 9), fallback.processor_id);
+}
+
+test "LapicNMI appliesTo all-processors and matching ACPI id" {
+    const all: LapicNMI = .{ .processor_id = 0xff, .flags = 0, .lint = 1 };
+    try std.testing.expect(all.appliesTo(0));
+    try std.testing.expect(all.appliesTo(255));
+    try std.testing.expect(all.appliesTo(256));
+
+    const one: LapicNMI = .{ .processor_id = 1, .flags = 0, .lint = 1 };
+    try std.testing.expect(one.appliesTo(1));
+    try std.testing.expect(!one.appliesTo(0));
+    try std.testing.expect(!one.appliesTo(256));
 }

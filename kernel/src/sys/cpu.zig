@@ -24,17 +24,23 @@ const lapic_reg_id = 0x20;
 const lapic_reg_eoi = 0xb0;
 const lapic_reg_spurious = 0xf0;
 const lapic_reg_lvt_timer = 0x320;
+const lapic_reg_lvt_lint0 = 0x350;
+const lapic_reg_lvt_lint1 = 0x360;
 const lapic_reg_timer_icr = 0x380;
 const lapic_reg_timer_ccr = 0x390;
 const lapic_reg_timer_dcr = 0x3e0;
 const lapic_lvt_masked: u32 = 1 << 16;
 const lapic_lvt_periodic: u32 = 1 << 17;
+// Delivery mode NMI (bits 8-10). Vector field is ignored.
+const lapic_lvt_nmi: u32 = 0b100 << 8;
 const lapic_timer_div16: u32 = 0b0011;
 comptime {
     std.debug.assert(x2apic_msr_base + (lapic_reg_id >> 4) == 0x802);
     std.debug.assert(x2apic_msr_base + (lapic_reg_eoi >> 4) == 0x80b);
     std.debug.assert(x2apic_msr_base + (lapic_reg_spurious >> 4) == 0x80f);
     std.debug.assert(x2apic_msr_base + (lapic_reg_lvt_timer >> 4) == 0x832);
+    std.debug.assert(x2apic_msr_base + (lapic_reg_lvt_lint0 >> 4) == 0x835);
+    std.debug.assert(x2apic_msr_base + (lapic_reg_lvt_lint1 >> 4) == 0x836);
     std.debug.assert(x2apic_msr_base + (lapic_reg_timer_icr >> 4) == 0x838);
     std.debug.assert(x2apic_msr_base + (lapic_reg_timer_ccr >> 4) == 0x839);
     std.debug.assert(x2apic_msr_base + (lapic_reg_timer_dcr >> 4) == 0x83e);
@@ -162,6 +168,8 @@ pub const CPU = struct {
             if (!lapic.enabled()) disabled += 1;
         }
 
+        self.programLintNmis(entry.processor_id);
+
         self.lapic_initialized = true;
         if (self.x2apic) {
             logger.info("lapic x2apic id={d} cpu={d} disabled={d}", .{ id, entry.processor_id, disabled });
@@ -210,6 +218,25 @@ pub const CPU = struct {
         // - Set lowest byte to interrupt vector
         // - Set bit 8 to enable local APIC
         self.lapicWrite(lapic_reg_spurious, self.lapicRead(lapic_reg_spurious) | ivt.vec_apic_spurious | 0x100);
+    }
+
+    fn programLintNmis(self: *const CPU, acpi_id: u32) void {
+        // Firmware leaves LINT0 as ExtINT (virtual 8259). I/O APIC owns IRQs.
+        self.lapicWrite(lapic_reg_lvt_lint0, lapic_lvt_masked);
+        self.lapicWrite(lapic_reg_lvt_lint1, lapic_lvt_masked);
+
+        for (madt.lapicNmis()) |nmi| {
+            if (nmi.lint > 1) {
+                logger.warn("nmi lint={d} ignored", .{nmi.lint});
+                continue;
+            }
+            if (!nmi.appliesTo(acpi_id)) continue;
+            const reg: u32 = if (nmi.lint == 0) lapic_reg_lvt_lint0 else lapic_reg_lvt_lint1;
+            // MPS INTI: bit 1 active-low (LVT 13), bit 3 level (LVT 15). Same packing as I/O APIC.
+            const value = lapic_lvt_nmi | (@as(u32, nmi.flags & 0b1010) << 12);
+            self.lapicWrite(reg, value);
+            logger.info("nmi lint={d} flags=0x{x}", .{ nmi.lint, nmi.flags });
+        }
     }
 
     fn lapicRead(self: *const CPU, reg: u32) u32 {

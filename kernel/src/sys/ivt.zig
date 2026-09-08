@@ -12,6 +12,7 @@ const syscall = @import("syscall.zig");
 const vmm = @import("../mm/vmm.zig");
 
 pub const vec_div_error = 0;
+pub const vec_nmi = 2;
 pub const vec_invalid_opcode = 6;
 pub const vec_device_not_available = 7;
 pub const vec_double_fault = 8;
@@ -37,6 +38,7 @@ comptime {
 export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
     switch (ctx.vector) {
         vec_div_error => handleException(ctx, "Divide error"),
+        vec_nmi => fatalException(ctx, "NMI"),
         vec_invalid_opcode => handleException(ctx, "Invalid opcode"),
         vec_device_not_available => handleException(ctx, "Device not available"),
         vec_double_fault => fatalException(ctx, "Double fault"),
