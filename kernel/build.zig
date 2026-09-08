@@ -25,6 +25,10 @@ pub fn build(b: *std.Build) void {
     const options = b.addOptions();
     options.addOption([]const u8, "version", @import("build.zig.zon").version);
 
+    const font = b.createModule(.{
+        .root_source_file = b.path("assets/437_US.F16"),
+    });
+
     const kernel_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -37,6 +41,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "limine", .module = limine },
             .{ .name = "build_options", .module = options.createModule() },
+            .{ .name = "437_US.F16", .module = font },
         },
     });
 
@@ -59,6 +64,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/unit_tests.zig"),
             .target = b.graph.host,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "437_US.F16", .module = font },
+            },
         }),
     });
     const test_step = b.step("test", "Run unit tests");
