@@ -67,7 +67,7 @@ limine/limine:
 		LDFLAGS="$(HOST_LDFLAGS)" \
 		LIBS="$(HOST_LIBS)"
 
-USER_PROGS := hello init fault brk args mmap
+USER_PROGS := hello init fault brk args mmap heap
 
 # ReleaseSmall: Debug/ReleaseSafe pull Zig's panic formatter (ubsan_rt +
 # compiler-rt float helpers). No SSE: #NM is fatal until FXSAVE/XRSTOR.
@@ -83,7 +83,7 @@ USER_ZFLAGS := \
 	-fno-stack-check \
 	-mcpu=x86_64+soft_float-mmx-sse-sse2-avx-avx2
 
-user/%.elf: user/%.zig user/sys.zig user/user.ld
+user/%.elf: user/%.zig user/sys.zig user/malloc.zig user/user.ld
 	zig build-exe $< $(USER_ZFLAGS) \
 		--name $* \
 		-femit-bin=$@
