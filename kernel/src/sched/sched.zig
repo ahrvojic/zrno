@@ -66,7 +66,7 @@ var limine_stack = true;
 const DoomedStack = struct { phys: usize, base: usize };
 var doomed_stack: ?DoomedStack = null;
 var kstack_next: usize = kstack_region_base;
-// Recycled stack VAs. `kstack_next` is the high-water mark (guard-page check).
+// Recycled stack VAs below `kstack_next` (high-water; guard-page check).
 const max_kstack_free = 256;
 var kstack_free: BoundedArray(usize, max_kstack_free) = .{};
 
@@ -833,10 +833,28 @@ fn takeKernelStackSlotLocked() error{OutOfMemory}!usize {
 }
 
 fn releaseKernelStackSlotLocked(base: usize) void {
-    kstack_free.append(base) catch {
-        const slot = base - pmm.page_size;
-        if (slot + kstack_slot == kstack_next) kstack_next = slot;
-    };
+    const slot = base - pmm.page_size;
+    if (slot + kstack_slot == kstack_next) {
+        kstack_next = slot;
+        while (kstack_next > kstack_region_base) {
+            const top = kstack_next - kstack_slot + pmm.page_size;
+            if (!removeKstackFree(top)) break;
+            kstack_next -= kstack_slot;
+        }
+        return;
+    }
+    // Holes under a live high stack. Overflow used to drop the VA.
+    kstack_free.append(base) catch @panic("kstack free list full");
+}
+
+fn removeKstackFree(base: usize) bool {
+    for (kstack_free.constSlice(), 0..) |b, i| {
+        if (b == base) {
+            _ = kstack_free.swapRemove(i);
+            return true;
+        }
+    }
+    return false;
 }
 
 /// True when `addr` is the unmapped page under a kernel stack.
