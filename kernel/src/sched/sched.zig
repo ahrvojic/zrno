@@ -554,10 +554,25 @@ pub fn killCurrent(ctx: *cpu.Context, exit_code: u8) void {
     schedule(ctx);
 }
 
+// Spawn failed before the process ran. Not exitProcess: that panics on pid 1
+// ("init exited") and only reaps if orphaned. Nobody is wait()ing.
 pub fn abortProcess(process: *proc.Process, exit_code: u8) void {
-    const pid = process.pid;
-    exitProcess(process, exit_code);
-    _ = waitProcess(pid) catch {};
+    expectInit();
+    lock.lock();
+    defer lock.unlock();
+
+    process.exit_code = exit_code;
+    process.status = .stopped;
+
+    var node = process.threads.first;
+    while (node) |n| {
+        const thread: *proc.Thread = @fieldParentPtr("proc_node", n);
+        node = n.next;
+        stopThread(thread);
+    }
+
+    dropAddressSpace(&process.vmm);
+    reapLocked(process);
 }
 
 pub fn yield() void {
