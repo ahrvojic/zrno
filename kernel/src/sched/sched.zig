@@ -16,7 +16,7 @@ const vmm = @import("../mm/vmm.zig");
 
 pub const tick_hz: u64 = 1000;
 
-// Kernel threads and TSS.rsp[0] (syscall/IRQ). 16 KiB covers a 1 KiB
+// Kernel threads and TSS.rsp[0] (syscall/IRQ). 64 KiB covers a 1 KiB
 // print buffer plus a nested IRQ frame (int 0x80 → 0x90, or timer during print).
 const stack_size: usize = 16 * pmm.page_size;
 const stack_pages: usize = stack_size / pmm.page_size;
@@ -843,7 +843,7 @@ fn releaseKernelStackSlotLocked(base: usize) void {
         }
         return;
     }
-    // Holes under a live high stack. Overflow used to drop the VA.
+    // Holes under a live high-water slot. Dropping the VA would leak the slot.
     kstack_free.append(base) catch @panic("kstack free list full");
 }
 
