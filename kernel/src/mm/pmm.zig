@@ -20,7 +20,6 @@ const ReclaimRange = struct {
 const max_reclaim_ranges = 64;
 
 var usable_pages: usize = 0;
-var used_pages: usize = 0;
 var reserved_pages: usize = 0;
 var bad_pages: usize = 0;
 
@@ -129,7 +128,6 @@ pub fn init() !void {
     for (0..bitmap_pages) |i| {
         bitmap.setBit(bitmap_page + i);
     }
-    used_pages += bitmap_pages;
     initialized = true;
 
     logger.info("{d} MiB usable, {d} MiB reserved, {d} bad pages; bitmap {d} KiB", .{
@@ -220,7 +218,6 @@ fn allocInner(start: usize, pages: usize, align_pages: usize) ?usize {
         bitmap.setBit(i);
     }
     last_used_index = end;
-    used_pages += pages;
     return idx * page_size;
 }
 
@@ -270,5 +267,4 @@ pub fn free(address: usize, pages: usize) void {
     }
 
     last_used_index = @min(last_used_index, start);
-    used_pages -= pages;
 }

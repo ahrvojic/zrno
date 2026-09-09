@@ -5,7 +5,6 @@ const vmm = @import("../mm/vmm.zig");
 
 pub const ProcessStatus = enum {
     ready,
-    running,
     stopped,
 };
 
