@@ -29,7 +29,8 @@ pub const Process = struct {
     exit_code: u8,
     // Reparented to pid 0 after the original parent exited; auto-reaped.
     orphaned: bool,
-    // Exclusive top of the next user stack; grows down.
+    // Exclusive top of the next user-stack slot (mapped pages + guard
+    // below). Grows down from `elf.user_stack_top`.
     user_stack_next: usize,
     // Program break: exclusive end of the data/heap segment. `brk_start` is
     // the page-aligned end of the loaded image; `brk` may grow up to the stacks.

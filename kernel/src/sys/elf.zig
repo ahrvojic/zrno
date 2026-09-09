@@ -4,8 +4,20 @@ pub const page_size = @import("../lib/mem.zig").page_size;
 pub const user_space_end = @import("../lib/mem.zig").user_space_end;
 /// Exclusive top of user stacks; stacks grow down from here.
 pub const user_stack_top: usize = 0x0000_0000_8000_0000;
-/// Reserved for `startUserThread` stacks; PT_LOAD must not overlap it.
+/// Mapped length of one user stack.
 pub const user_stack_window: usize = 16 * page_size;
+/// Not-present page below each mapped user stack.
+pub const user_stack_guard: usize = page_size;
+/// One mapped stack plus its guard. PT_LOAD must not overlap the first
+/// slot below `user_stack_top`.
+pub const user_stack_slot: usize = user_stack_window + user_stack_guard;
+
+comptime {
+    std.debug.assert(user_stack_guard == page_size);
+    std.debug.assert(user_stack_slot == user_stack_window + user_stack_guard);
+    std.debug.assert(user_stack_top % page_size == 0);
+    std.debug.assert(user_stack_top >= user_stack_slot);
+}
 
 pub const max_loads: usize = 8;
 
@@ -180,7 +192,7 @@ fn checkUserImageRange(addr: usize, len: usize) error{OutOfRange}!void {
     if (addr >= user_space_end) return error.OutOfRange;
     if (len > user_space_end - addr) return error.OutOfRange;
 
-    const stack_lo = user_stack_top - user_stack_window;
+    const stack_lo = user_stack_top - user_stack_slot;
     if (addr < user_stack_top and addr + len > stack_lo) return error.OutOfRange;
 }
 
@@ -394,10 +406,22 @@ test "reject writable+executable" {
     try std.testing.expectError(error.WritableExecutable, parse(f.finish(.EXEC, .X86_64, 0x400000)));
 }
 
-test "reject stack window under 0x80000000" {
+test "reject first user stack slot including guard" {
     var f: Fixture = .{};
     f.addLoad(user_stack_top - page_size, rx(), "code", 0, page_size);
     try std.testing.expectError(error.OutOfRange, parse(f.finish(.EXEC, .X86_64, user_stack_top - page_size)));
+
+    var g: Fixture = .{};
+    g.addLoad(user_stack_top - user_stack_slot, rx(), "code", 0, page_size);
+    try std.testing.expectError(error.OutOfRange, parse(g.finish(.EXEC, .X86_64, user_stack_top - user_stack_slot)));
+}
+
+test "allow PT_LOAD just below the first stack slot" {
+    const vaddr = user_stack_top - user_stack_slot - page_size;
+    var f: Fixture = .{};
+    f.addLoad(vaddr, rx(), "code", 0, page_size);
+    const parsed = try parse(f.finish(.EXEC, .X86_64, vaddr));
+    try std.testing.expectEqual(vaddr, parsed.entry);
 }
 
 test "reject kernel half" {

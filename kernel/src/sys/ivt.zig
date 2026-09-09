@@ -49,9 +49,11 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
             const reason: vmm.FaultReason = @bitCast(ctx.error_code);
             if (!reason.user and sched.isKernelStackGuard(fault_addr)) {
                 fatalException(ctx, "Kernel stack overflow");
+            } else if (reason.user and sched.isUserStackGuard(fault_addr)) {
+                handleException(ctx, "User stack overflow");
+            } else {
+                handleException(ctx, "Unhandled page fault");
             }
-
-            handleException(ctx, "Unhandled page fault");
         },
         vec_timer => {
             tty.pollSerial();

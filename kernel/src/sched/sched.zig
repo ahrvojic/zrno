@@ -22,9 +22,10 @@ const stack_size: usize = 16 * pmm.page_size;
 const stack_pages: usize = stack_size / pmm.page_size;
 const kernel_pid: u64 = 0;
 const init_pid: u64 = 1;
-// Exclusive top of the first user stack. Later threads grow down one
-// stack_size at a time. Canonical low half (2 GiB).
+// Exclusive top of the first user-stack slot. Later threads grow down
+// one slot (mapped stack + guard) at a time. Canonical low half (2 GiB).
 const user_stack_top: usize = elf.user_stack_top;
+const user_stack_slot: usize = elf.user_stack_slot;
 
 // Kernel stacks live in the cloned higher half (not HHDM) so an unmapped
 // guard page under each stack is possible. PML4 510: below the kernel
@@ -38,6 +39,7 @@ const heap_flags = vmm.Flags{ .present = true, .writable = true, .user = true, .
 
 comptime {
     std.debug.assert(stack_size == elf.user_stack_window);
+    std.debug.assert(user_stack_slot == stack_size + pmm.page_size);
     std.debug.assert(user_stack_top % pmm.page_size == 0);
     std.debug.assert(user_stack_top < vmm.user_space_end);
     std.debug.assert(kstack_region_base % pmm.page_size == 0);
@@ -239,6 +241,7 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, argv: []const []const u
     errdefer pmm.free(user_stack_phys, stack_pages);
     const user_stack_base = try takeUserStack(parent);
     errdefer giveUserStack(parent, user_stack_base);
+    // Page below `user_stack_base` is the slot guard; left unmapped.
     try parent.vmm.map(
         user_stack_base,
         user_stack_phys,
@@ -291,6 +294,7 @@ pub fn execReplace(
 
     var space = new_vmm;
     const user_stack_base = user_stack_top - stack_size;
+    // Page below `user_stack_base` is the slot guard; left unmapped.
     try space.map(
         user_stack_base,
         user_stack_phys,
@@ -311,7 +315,7 @@ pub fn execReplace(
 
     var old = process.vmm;
     process.vmm = space;
-    process.user_stack_next = user_stack_base;
+    process.user_stack_next = user_stack_top - user_stack_slot;
     process.brk_start = image_brk;
     process.brk = image_brk;
     applyUserRegs(ctx, entry, frame);
@@ -325,17 +329,17 @@ pub fn execReplace(
 fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
     lock.lock();
     defer lock.unlock();
-    if (parent.user_stack_next < stack_size) return error.OutOfMemory;
-    const base = parent.user_stack_next - stack_size;
-    if (base < parent.brk) return error.OutOfMemory;
-    parent.user_stack_next = base;
-    return base;
+    if (parent.user_stack_next < user_stack_slot) return error.OutOfMemory;
+    const slot_lo = parent.user_stack_next - user_stack_slot;
+    if (slot_lo < parent.brk) return error.OutOfMemory;
+    parent.user_stack_next = slot_lo;
+    return slot_lo + pmm.page_size;
 }
 
 fn giveUserStack(parent: *proc.Process, base: usize) void {
     lock.lock();
     defer lock.unlock();
-    if (parent.user_stack_next == base) {
+    if (parent.user_stack_next == base - pmm.page_size) {
         parent.user_stack_next = base + stack_size;
     }
 }
@@ -862,6 +866,17 @@ pub fn isKernelStackGuard(addr: usize) bool {
     if (addr < kstack_region_base or addr >= kstack_next) return false;
     const off = addr - kstack_region_base;
     return off % kstack_slot < pmm.page_size;
+}
+
+/// True when `addr` is the unmapped guard under a mapped user stack of
+/// the current process.
+pub fn isUserStackGuard(addr: usize) bool {
+    const thread = cpu.current().thread orelse return false;
+    const lo = thread.parent.user_stack_next;
+    if (addr < lo or addr >= user_stack_top) return false;
+    const aligned = std.mem.alignBackward(usize, addr, pmm.page_size);
+    if (aligned < lo) return false;
+    return (user_stack_top - aligned) % user_stack_slot == 0;
 }
 
 fn nextReadyThread(start: ?*std.DoublyLinkedList.Node) ?*proc.Thread {
