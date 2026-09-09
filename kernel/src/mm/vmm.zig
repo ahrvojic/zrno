@@ -82,6 +82,8 @@ const PageTable = extern struct {
         if (!entry_flags.present) {
             entry.setAddress(phys_addr);
             entry.setFlags(flags);
+            // Not-present translations may be cached (SDM 4.10.4).
+            flushTLB(virt_addr);
         } else {
             return error.AlreadyMapped;
         }
