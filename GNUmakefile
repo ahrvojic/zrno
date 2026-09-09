@@ -67,7 +67,7 @@ limine/limine:
 		LDFLAGS="$(HOST_LDFLAGS)" \
 		LIBS="$(HOST_LIBS)"
 
-USER_PROGS := hello init fault brk
+USER_PROGS := hello init fault brk args mmap
 
 # ReleaseSmall: Debug/ReleaseSafe pull Zig's panic formatter (ubsan_rt +
 # compiler-rt float helpers). No SSE: #NM is fatal until FXSAVE/XRSTOR.

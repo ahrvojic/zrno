@@ -13,6 +13,11 @@ pub const nr_getppid: u64 = 10;
 pub const nr_exec: u64 = 11;
 pub const nr_dup: u64 = 12;
 pub const nr_brk: u64 = 13;
+pub const nr_mmap: u64 = 14;
+
+pub const prot_read: u64 = 1;
+pub const prot_write: u64 = 2;
+pub const prot_exec: u64 = 4;
 
 pub fn syscall3(n: u64, a: u64, b: u64, c: u64) i64 {
     const ret = asm volatile ("int $0x80"
@@ -63,8 +68,8 @@ pub fn close(fd: u64) i64 {
     return syscall3(nr_close, fd, 0, 0);
 }
 
-pub fn spawn(path: [*:0]const u8) i64 {
-    return syscall3(nr_spawn, @intFromPtr(path), 0, 0);
+pub fn spawn(path: [*:0]const u8, argv: u64) i64 {
+    return syscall3(nr_spawn, @intFromPtr(path), argv, 0);
 }
 
 pub fn wait(pid: u64) i64 {
@@ -89,4 +94,8 @@ pub fn dup(fd: u64) i64 {
 
 pub fn brk(addr: usize) i64 {
     return syscall3(nr_brk, addr, 0, 0);
+}
+
+pub fn mmap(addr: usize, len: usize, prot: u64) i64 {
+    return syscall3(nr_mmap, addr, len, prot);
 }

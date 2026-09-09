@@ -123,7 +123,7 @@ fn help() void {
     writeStr("yield         yield the CPU\n");
     writeStr("sleep [ms]    sleep (default 1000)\n");
     writeStr("echo [text]   print arguments\n");
-    writeStr("run [path]    spawn a ramfs ELF\n");
+    writeStr("run [path] [args...]  spawn a ramfs ELF\n");
     writeStr("cat [path]    print a ramfs file\n");
 }
 
@@ -135,12 +135,24 @@ fn doSleep(arg: ?[*:0]u8) void {
     sys.sleep(ms);
 }
 
-fn doRun(path: ?[*:0]u8) void {
-    const p = path orelse {
-        writeStr("usage: run [path]\n");
+fn doRun(ps: *[*:0]u8) void {
+    const path = nextTok(ps) orelse {
+        writeStr("usage: run [path] [args...]\n");
         return;
     };
-    const pid = sys.spawn(p);
+    var ptrs: [33]u64 = undefined;
+    ptrs[0] = @intFromPtr(path);
+    var n: usize = 1;
+    while (nextTok(ps)) |tok| {
+        if (n >= ptrs.len - 1) {
+            writeStr("run: too many args\n");
+            return;
+        }
+        ptrs[n] = @intFromPtr(tok);
+        n += 1;
+    }
+    ptrs[n] = 0;
+    const pid = sys.spawn(path, @intFromPtr(&ptrs));
     if (pid < 0) {
         writeErr("run: err ", pid);
         return;
@@ -186,7 +198,7 @@ fn dispatch(buf: *[128]u8) void {
         writeStr(skipSpaces(rest));
         writeStr("\n");
     } else if (streq(cmd, "run")) {
-        doRun(nextTok(&rest));
+        doRun(&rest);
     } else if (streq(cmd, "cat")) {
         doCat(nextTok(&rest));
     } else {

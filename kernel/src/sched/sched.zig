@@ -26,6 +26,7 @@ const init_pid: u64 = 1;
 // one slot (mapped stack + guard) at a time. Canonical low half (2 GiB).
 const user_stack_top: usize = elf.user_stack_top;
 const user_stack_slot: usize = elf.user_stack_slot;
+const user_mmap_top: usize = elf.user_mmap_top;
 
 // Kernel stacks live in the cloned higher half (not HHDM) so an unmapped
 // guard page under each stack is possible. PML4 510: below the kernel
@@ -33,8 +34,9 @@ const user_stack_slot: usize = elf.user_stack_slot;
 const kstack_region_base: usize = 0xffff_ff00_0000_0000;
 const kstack_region_end: usize = kstack_region_base + (1024 * 1024 * 1024);
 const kstack_slot: usize = stack_size + pmm.page_size;
-// Cap on `brk - brk_start`. Prevents a single call from allocating up to the stacks.
+// Cap on `brk - brk_start`. Prevents a single call from allocating up to mmap.
 const max_heap: usize = 32 * 1024 * 1024;
+const max_mmap: usize = 32 * 1024 * 1024;
 const heap_flags = vmm.Flags{ .present = true, .writable = true, .user = true, .noexec = true };
 
 comptime {
@@ -42,6 +44,8 @@ comptime {
     std.debug.assert(user_stack_slot == stack_size + pmm.page_size);
     std.debug.assert(user_stack_top % pmm.page_size == 0);
     std.debug.assert(user_stack_top < vmm.user_space_end);
+    std.debug.assert(user_mmap_top % pmm.page_size == 0);
+    std.debug.assert(user_mmap_top < user_stack_top);
     std.debug.assert(kstack_region_base % pmm.page_size == 0);
     std.debug.assert(kstack_slot % pmm.page_size == 0);
     std.debug.assert(kstack_region_base >= 0xffff_8000_0000_0000);
@@ -113,6 +117,7 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .exit_code = 0,
         .orphaned = false,
         .user_stack_next = user_stack_top,
+        .mmap_next = user_mmap_top,
         .brk_start = 0,
         .brk = 0,
         .fds = [_]proc.Fd{.empty} ** proc.max_fds,
@@ -316,6 +321,7 @@ pub fn execReplace(
     var old = process.vmm;
     process.vmm = space;
     process.user_stack_next = user_stack_top - user_stack_slot;
+    process.mmap_next = user_mmap_top;
     process.brk_start = image_brk;
     process.brk = image_brk;
     applyUserRegs(ctx, entry, frame);
@@ -331,7 +337,7 @@ fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
     defer lock.unlock();
     if (parent.user_stack_next < user_stack_slot) return error.OutOfMemory;
     const slot_lo = parent.user_stack_next - user_stack_slot;
-    if (slot_lo < parent.brk) return error.OutOfMemory;
+    if (slot_lo < parent.brk or slot_lo < user_mmap_top) return error.OutOfMemory;
     parent.user_stack_next = slot_lo;
     return slot_lo + pmm.page_size;
 }
@@ -369,7 +375,9 @@ pub fn setBrk(addr: usize) error{ Invalid, OutOfMemory }!usize {
         defer lock.unlock();
         const old = process.brk;
         if (process.brk_start == 0 or addr < process.brk_start) return error.Invalid;
-        if (addr > process.user_stack_next or addr - process.brk_start > max_heap) {
+        if (addr > process.mmap_next or addr > process.user_stack_next or
+            addr - process.brk_start > max_heap)
+        {
             return error.OutOfMemory;
         }
         const old_pg = std.mem.alignForward(usize, old, pmm.page_size);
@@ -421,6 +429,59 @@ fn unmapHeapPages(space: *vmm.VMM, addr: usize, size: usize) void {
         const phys = space.virtToPhys(addr + off) catch @panic("brk unmap");
         space.unmap(addr + off, pmm.page_size) catch @panic("brk unmap");
         pmm.free(std.mem.alignBackward(usize, phys, pmm.page_size), 1);
+    }
+}
+
+// Anonymous mmap: kernel picks the address (`addr` hint must be 0 at the
+// syscall). Eager map, NX. Grows down from `user_mmap_top`.
+pub fn mapAnon(len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
+    expectInit();
+    if (len == 0) return error.Invalid;
+    const thread = cpu.current().thread orelse @panic("mmap with no thread");
+    const process = thread.parent;
+    if (process.pid == kernel_pid) @panic("mmap kernel process");
+
+    const size = std.mem.alignForward(usize, len, pmm.page_size);
+    if (size < len) return error.Invalid;
+
+    lock.lock();
+    const old = process.mmap_next;
+    if (old < size) {
+        lock.unlock();
+        return error.OutOfMemory;
+    }
+    const base = old - size;
+    if (base < process.brk or user_mmap_top - base > max_mmap) {
+        lock.unlock();
+        return error.OutOfMemory;
+    }
+    process.mmap_next = base;
+    lock.unlock();
+
+    const flags = vmm.Flags{
+        .present = true,
+        .writable = writable,
+        .user = true,
+        .noexec = true,
+    };
+    mapAnonPages(&process.vmm, base, size, flags) catch {
+        lock.lock();
+        if (process.mmap_next == base) process.mmap_next = old;
+        lock.unlock();
+        return error.OutOfMemory;
+    };
+    return base;
+}
+
+fn mapAnonPages(space: *vmm.VMM, addr: usize, size: usize, flags: vmm.Flags) error{OutOfMemory}!void {
+    var mapped: usize = 0;
+    errdefer unmapHeapPages(space, addr, mapped);
+    while (mapped < size) : (mapped += pmm.page_size) {
+        const phys = pmm.alloc(1) orelse return error.OutOfMemory;
+        space.map(addr + mapped, phys, pmm.page_size, flags) catch {
+            pmm.free(phys, 1);
+            return error.OutOfMemory;
+        };
     }
 }
 

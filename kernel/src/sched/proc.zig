@@ -32,8 +32,11 @@ pub const Process = struct {
     // Exclusive top of the next user-stack slot (mapped pages + guard
     // below). Grows down from `elf.user_stack_top`.
     user_stack_next: usize,
+    // Exclusive top of the next anonymous mmap. Grows down from
+    // `elf.user_mmap_top`.
+    mmap_next: usize,
     // Program break: exclusive end of the data/heap segment. `brk_start` is
-    // the page-aligned end of the loaded image; `brk` may grow up to the stacks.
+    // the page-aligned end of the loaded image; `brk` may grow up to mmap.
     brk_start: usize,
     brk: usize,
     // 0/1/2 are TTY; fds ≥ 3 are ramfs files.

@@ -11,12 +11,17 @@ pub const user_stack_guard: usize = page_size;
 /// One mapped stack plus its guard. PT_LOAD must not overlap the first
 /// slot below `user_stack_top`.
 pub const user_stack_slot: usize = user_stack_window + user_stack_guard;
+/// Exclusive top of anonymous mmap; mappings grow down from here,
+/// below the user stacks.
+pub const user_mmap_top: usize = 0x0000_0000_7000_0000;
 
 comptime {
     std.debug.assert(user_stack_guard == page_size);
     std.debug.assert(user_stack_slot == user_stack_window + user_stack_guard);
     std.debug.assert(user_stack_top % page_size == 0);
     std.debug.assert(user_stack_top >= user_stack_slot);
+    std.debug.assert(user_mmap_top % page_size == 0);
+    std.debug.assert(user_mmap_top + user_stack_slot <= user_stack_top);
 }
 
 pub const max_loads: usize = 8;

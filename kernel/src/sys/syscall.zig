@@ -19,13 +19,18 @@ pub const nr_yield: u64 = 3;
 pub const nr_sleep: u64 = 4;
 pub const nr_open: u64 = 5;
 pub const nr_close: u64 = 6;
-pub const nr_spawn: u64 = 7;
+pub const nr_spawn: u64 = 7; // rdi=path, rsi=argv or 0
 pub const nr_wait: u64 = 8; // rdi=pid, 0 = any child
 pub const nr_getpid: u64 = 9;
 pub const nr_getppid: u64 = 10;
 pub const nr_exec: u64 = 11; // replace image, keep pid/fds; rsi=argv or 0
 pub const nr_dup: u64 = 12;
 pub const nr_brk: u64 = 13; // rdi=0 query; else set program break, return it
+pub const nr_mmap: u64 = 14; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX
+
+pub const prot_read: u64 = 1;
+pub const prot_write: u64 = 2;
+pub const prot_exec: u64 = 4;
 
 const max_io: usize = pmm.page_size;
 const io_chunk: usize = 256;
@@ -66,6 +71,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_exec => sys_exec(ctx),
         nr_dup => sys_dup(ctx),
         nr_brk => sys_brk(ctx),
+        nr_mmap => sys_mmap(ctx),
         else => errval(ENOSYS),
     };
 }
@@ -182,8 +188,9 @@ fn sys_spawn(ctx: *cpu.Context) u64 {
     const addr: usize = @intCast(ctx.rdi);
     var buf: [max_path]u8 = undefined;
     const path = copyUserPath(addr, &buf) catch |err| return pathErr(err);
-    const argv = [_][]const u8{path};
-    const pid = user.spawnPathArgv(path, &argv) catch |err| return spawnErr(err);
+    var storage: ArgvStorage = .{};
+    const argv = copyUserArgv(ctx.rsi, path, &storage) catch |err| return argvErr(err);
+    const pid = user.spawnPathArgv(path, argv) catch |err| return spawnErr(err);
     return pid;
 }
 
@@ -220,6 +227,21 @@ fn sys_brk(ctx: *cpu.Context) u64 {
         error.OutOfMemory => errval(ENOMEM),
     };
     return brk;
+}
+
+fn sys_mmap(ctx: *cpu.Context) u64 {
+    const addr: usize = @intCast(ctx.rdi);
+    const len: usize = @intCast(ctx.rsi);
+    const prot = ctx.rdx;
+    if (addr != 0) return errval(EINVAL);
+    if (len == 0) return errval(EINVAL);
+    if (prot & prot_exec != 0) return errval(EINVAL);
+    if (prot & (prot_read | prot_write) == 0) return errval(EINVAL);
+    const va = sched.mapAnon(len, prot & prot_write != 0) catch |err| return switch (err) {
+        error.Invalid => errval(EINVAL),
+        error.OutOfMemory => errval(ENOMEM),
+    };
+    return va;
 }
 
 fn sys_dup(ctx: *cpu.Context) u64 {
