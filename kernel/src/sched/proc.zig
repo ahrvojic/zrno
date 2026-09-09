@@ -3,11 +3,6 @@ const std = @import("std");
 const cpu = @import("../sys/cpu.zig");
 const vmm = @import("../mm/vmm.zig");
 
-pub const ProcessStatus = enum {
-    ready,
-    stopped,
-};
-
 pub const max_fds: usize = 16;
 
 pub const OpenFile = struct {
@@ -24,7 +19,8 @@ pub const Fd = union(enum) {
 pub const Process = struct {
     pid: u64,
     parent: u64,
-    status: ProcessStatus,
+    // Exited; stays on the table until wait/reap.
+    zombie: bool,
     heap: std.mem.Allocator,
     vmm: vmm.VMM,
     threads: std.DoublyLinkedList,

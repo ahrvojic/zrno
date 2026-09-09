@@ -102,7 +102,7 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
     process.* = .{
         .pid = 0,
         .parent = 0,
-        .status = .ready,
+        .zombie = false,
         .heap = allocator,
         .vmm = try vmm.VMM.cloneKernel(),
         .threads = .{},
@@ -161,7 +161,7 @@ pub fn waitProcess(pid: u64) error{ NoChild, Invalid }!u8 {
                 const process: *proc.Process = @fieldParentPtr("node", n);
                 node = n.next;
                 if (!isWaitableChild(process, waiter.pid)) continue;
-                if (process.status == .stopped) {
+                if (process.zombie) {
                     const code = process.exit_code;
                     reapLocked(process);
                     return code;
@@ -175,7 +175,7 @@ pub fn waitProcess(pid: u64) error{ NoChild, Invalid }!u8 {
 
         const process = findProcessLocked(pid) orelse return error.NoChild;
         if (!isWaitableChild(process, waiter.pid)) return error.NoChild;
-        if (process.status == .stopped) {
+        if (process.zombie) {
             const code = process.exit_code;
             reapLocked(process);
             return code;
@@ -506,7 +506,7 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
     defer lock.unlock();
 
     process.exit_code = exit_code;
-    process.status = .stopped;
+    process.zombie = true;
 
     if (process.pid == init_pid) {
         logger.err("init exited {d}", .{exit_code});
@@ -527,7 +527,7 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
         const child: *proc.Process = @fieldParentPtr("node", n);
         pnode = n.next;
         if (child.parent != process.pid or child == process) continue;
-        if (child.status == .stopped) {
+        if (child.zombie) {
             reapLocked(child);
         } else {
             child.parent = kernel_pid;
@@ -562,7 +562,7 @@ pub fn abortProcess(process: *proc.Process, exit_code: u8) void {
     defer lock.unlock();
 
     process.exit_code = exit_code;
-    process.status = .stopped;
+    process.zombie = true;
 
     var node = process.threads.first;
     while (node) |n| {
