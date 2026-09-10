@@ -5,11 +5,11 @@ export fn _start(argc: u64, argv: [*]const [*:0]const u8) callconv(.c) noreturn 
 }
 
 fn main(argc: usize, argv: []const [*:0]const u8) u64 {
-    lib.print("Hello from userspace!\n");
-    var i: usize = 0;
+    var i: usize = 1;
     while (i < argc) : (i += 1) {
+        if (i > 1) lib.print(" ");
         lib.print(lib.slice(argv[i]));
-        lib.print("\n");
     }
+    lib.print("\n");
     return 0;
 }
