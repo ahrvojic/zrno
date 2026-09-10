@@ -65,8 +65,9 @@ fn help() void {
     lib.print("yield         yield the CPU\n");
     lib.print("sleep [ms]    sleep (default 1000)\n");
     lib.print("echo [text]   print arguments\n");
-    lib.print("run [path] [args...]  spawn a ramfs ELF\n");
     lib.print("cat [path]    print a ramfs file\n");
+    lib.print("run [path] [args...]  spawn a ramfs ELF\n");
+    lib.print("[name] [args] spawn /name\n");
 }
 
 fn doSleep(arg: ?[*:0]u8) void {
@@ -77,17 +78,13 @@ fn doSleep(arg: ?[*:0]u8) void {
     sys.sleep(ms);
 }
 
-fn doRun(ps: *[*:0]u8) void {
-    const path = nextTok(ps) orelse {
-        lib.print("usage: run [path] [args...]\n");
-        return;
-    };
+fn spawnWait(path: [*:0]const u8, ps: *[*:0]u8) void {
     var ptrs: [33]u64 = undefined;
     ptrs[0] = @intFromPtr(path);
     var n: usize = 1;
     while (nextTok(ps)) |tok| {
         if (n >= ptrs.len - 1) {
-            lib.print("run: too many args\n");
+            lib.print("too many args\n");
             return;
         }
         ptrs[n] = @intFromPtr(tok);
@@ -96,11 +93,20 @@ fn doRun(ps: *[*:0]u8) void {
     ptrs[n] = 0;
     const pid = sys.spawn(path, @intFromPtr(&ptrs));
     if (pid < 0) {
-        lib.printErr("run: err ", pid);
+        lib.print(lib.slice(path));
+        lib.printErr(": err ", pid);
         return;
     }
     const code = sys.wait(@intCast(pid));
     if (code < 0) lib.printErr("wait: err ", code);
+}
+
+fn doRun(ps: *[*:0]u8) void {
+    const path = nextTok(ps) orelse {
+        lib.print("usage: run [path] [args...]\n");
+        return;
+    };
+    spawnWait(path, ps);
 }
 
 fn doCat(path: ?[*:0]u8) void {
@@ -144,8 +150,6 @@ fn dispatch(buf: *[128]u8) void {
     } else if (lib.eql(cmd, "cat")) {
         doCat(nextTok(&rest));
     } else {
-        lib.print("unknown command: ");
-        lib.print(lib.slice(cmd));
-        lib.print("\n");
+        spawnWait(cmd, &rest);
     }
 }
