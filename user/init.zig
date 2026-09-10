@@ -1,7 +1,7 @@
-const lib = @import("lib.zig");
-const sys = @import("sys.zig");
+const lib = @import("lib");
+const sys = lib.sys;
 
-export fn _start() callconv(.c) noreturn {
+pub fn main(_: usize, _: []const [*:0]const u8) u64 {
     lib.print("READY.\n");
     lib.print("type 'help'\n");
     var buf: [128]u8 = undefined;

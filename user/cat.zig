@@ -1,11 +1,7 @@
-const lib = @import("lib.zig");
-const sys = @import("sys.zig");
+const lib = @import("lib");
+const sys = lib.sys;
 
-export fn _start(argc: u64, argv: [*]const [*:0]const u8) callconv(.c) noreturn {
-    lib.exitMain(argc, argv, &main);
-}
-
-fn main(argc: usize, argv: []const [*:0]const u8) u64 {
+pub fn main(argc: usize, argv: []const [*:0]const u8) u64 {
     if (argc < 2) {
         lib.print("usage: cat [path...]\n");
         return 1;

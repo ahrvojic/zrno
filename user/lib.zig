@@ -1,4 +1,4 @@
-const sys = @import("sys.zig");
+pub const sys = @import("sys.zig");
 
 pub fn strlen(s: [*:0]const u8) usize {
     // Volatile so LLVM does not turn this into a `strlen` libcall.
@@ -66,10 +66,4 @@ pub fn parseU64(s: [*:0]const u8) ?u64 {
         v = n;
     }
     return v;
-}
-
-// Kernel `_start`: rdi=argc, rsi=argv.
-pub fn exitMain(argc: u64, argv: [*]const [*:0]const u8, mainFn: *const fn (usize, []const [*:0]const u8) u64) noreturn {
-    const n: usize = @intCast(argc);
-    sys.exit(mainFn(n, argv[0..n]));
 }

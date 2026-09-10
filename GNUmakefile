@@ -68,7 +68,7 @@ limine/limine:
 		LIBS="$(HOST_LIBS)"
 
 USER_PROGS := hello init echo cat
-USER_LIB := user/sys.zig user/lib.zig user/malloc.zig user/user.ld
+USER_LIB := user/start.zig user/sys.zig user/lib.zig user/malloc.zig user/user.ld
 
 # ReleaseSmall: Debug/ReleaseSafe pull Zig's panic formatter (ubsan_rt +
 # compiler-rt float helpers). No SSE: #NM is fatal until FXSAVE/XRSTOR.
@@ -84,8 +84,15 @@ USER_ZFLAGS := \
 	-fno-stack-check \
 	-mcpu=x86_64+soft_float-mmx-sse-sse2-avx-avx2
 
+# start.zig is crt (`_start`). lib.zig is the user library. %.zig is main.
+# Zig only emits exports from the root module.
 user/%.elf: user/%.zig $(USER_LIB)
-	zig build-exe $< $(USER_ZFLAGS) \
+	zig build-exe $(USER_ZFLAGS) \
+		--dep app --dep lib -Mroot=user/start.zig \
+		$(USER_ZFLAGS) \
+		--dep lib -Mapp=$< \
+		$(USER_ZFLAGS) \
+		-Mlib=user/lib.zig \
 		--name $* \
 		-femit-bin=$@
 
