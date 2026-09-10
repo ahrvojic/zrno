@@ -20,6 +20,8 @@ pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
 pub const prot_exec: u64 = 4;
 
+pub const Argv = [*:null]const ?[*:0]const u8;
+
 pub fn syscall3(n: u64, a: u64, b: u64, c: u64) i64 {
     const ret = asm volatile ("syscall"
         : [ret] "={rax}" (-> u64),
@@ -69,8 +71,8 @@ pub fn close(fd: u64) i64 {
     return syscall3(nr_close, fd, 0, 0);
 }
 
-pub fn spawn(path: [*:0]const u8, argv: u64) i64 {
-    return syscall3(nr_spawn, @intFromPtr(path), argv, 0);
+pub fn spawn(path: [*:0]const u8, argv: Argv) i64 {
+    return syscall3(nr_spawn, @intFromPtr(path), @intFromPtr(argv), 0);
 }
 
 pub fn wait(pid: u64) i64 {
@@ -85,8 +87,8 @@ pub fn getppid() i64 {
     return syscall3(nr_getppid, 0, 0, 0);
 }
 
-pub fn exec(path: [*:0]const u8, argv: u64) i64 {
-    return syscall3(nr_exec, @intFromPtr(path), argv, 0);
+pub fn exec(path: [*:0]const u8, argv: Argv) i64 {
+    return syscall3(nr_exec, @intFromPtr(path), @intFromPtr(argv), 0);
 }
 
 pub fn dup(fd: u64) i64 {

@@ -106,20 +106,21 @@ fn moreCore(need: usize) bool {
     return true;
 }
 
-pub fn malloc(n: usize) ?[*]u8 {
+pub fn malloc(n: usize) ?[]u8 {
     if (n == 0) return null;
     const payload_n = alignUp(n);
     if (payload_n < n) return null;
     const need = header_size + payload_n;
     if (need < payload_n) return null;
 
-    if (take(payload_n)) |h| return payload(h);
-    if (!moreCore(need)) return null;
-    const h = take(payload_n) orelse return null;
-    return payload(h);
+    const h = take(payload_n) orelse blk: {
+        if (!moreCore(need)) return null;
+        break :blk take(payload_n) orelse return null;
+    };
+    return payload(h)[0..n];
 }
 
-pub fn free(ptr: ?[*]u8) void {
-    const p = ptr orelse return;
-    insertFree(headerOf(p));
+pub fn free(mem: ?[]u8) void {
+    const m = mem orelse return;
+    insertFree(headerOf(m.ptr));
 }

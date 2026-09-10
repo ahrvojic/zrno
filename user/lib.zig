@@ -1,3 +1,4 @@
+pub const malloc = @import("malloc.zig");
 pub const sys = @import("sys.zig");
 
 pub fn strlen(s: [*:0]const u8) usize {
@@ -25,26 +26,16 @@ pub fn print(bytes: []const u8) void {
 }
 
 pub fn printU64(v0: u64) void {
-    var v = v0;
     var tmp: [20]u8 = undefined;
-    var n: usize = 0;
-    if (v == 0) {
-        tmp[0] = '0';
-        n = 1;
-    } else {
-        while (v != 0) {
-            tmp[n] = '0' + @as(u8, @intCast(v % 10));
-            n += 1;
-            v /= 10;
-        }
-        var i: usize = 0;
-        while (i < n / 2) : (i += 1) {
-            const t = tmp[i];
-            tmp[i] = tmp[n - 1 - i];
-            tmp[n - 1 - i] = t;
-        }
+    var v = v0;
+    var i: usize = tmp.len;
+    while (true) {
+        i -= 1;
+        tmp[i] = '0' + @as(u8, @intCast(v % 10));
+        v /= 10;
+        if (v == 0) break;
     }
-    print(tmp[0..n]);
+    print(tmp[i..]);
 }
 
 pub fn printErr(prefix: []const u8, err: i64) void {
@@ -61,9 +52,18 @@ pub fn parseU64(s: [*:0]const u8) ?u64 {
     while (s[i] != 0) : (i += 1) {
         const ch = s[i];
         if (ch < '0' or ch > '9') return null;
-        const n = v *% 10 +% (ch - '0');
-        if (n < v) return null;
-        v = n;
+        const digit: u64 = ch - '0';
+        if (v > (~@as(u64, 0) - digit) / 10) return null;
+        v = v * 10 + digit;
     }
     return v;
+}
+
+pub fn copyFd(fd: u64) i64 {
+    var buf: [256]u8 = undefined;
+    while (true) {
+        const n = sys.read(fd, &buf);
+        if (n <= 0) return n;
+        sys.writeAll(1, buf[0..@intCast(n)]);
+    }
 }

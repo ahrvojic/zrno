@@ -1,10 +1,10 @@
 const lib = @import("lib");
 const sys = lib.sys;
 
-pub fn main(_: usize, _: []const [*:0]const u8) u64 {
+pub fn main() u64 {
     lib.print("READY.\n");
     lib.print("type 'help'\n");
-    var buf: [128]u8 = undefined;
+    var buf: [128:0]u8 = undefined;
     while (true) {
         lib.print("> ");
         readLine(&buf);
@@ -34,7 +34,7 @@ fn nextTok(ps: *[*:0]u8) ?[*:0]u8 {
     return tok;
 }
 
-fn readLine(buf: *[128]u8) void {
+fn readLine(buf: *[128:0]u8) void {
     var n: usize = 0;
     while (true) {
         var ch: [1]u8 = undefined;
@@ -64,9 +64,6 @@ fn help() void {
     lib.print("help          commands\n");
     lib.print("yield         yield the CPU\n");
     lib.print("sleep [ms]    sleep (default 1000)\n");
-    lib.print("echo [text]   print arguments\n");
-    lib.print("cat [path]    print a ramfs file\n");
-    lib.print("run [path] [args...]  spawn a ramfs ELF\n");
     lib.print("[name] [args] spawn /name\n");
 }
 
@@ -79,19 +76,19 @@ fn doSleep(arg: ?[*:0]u8) void {
 }
 
 fn spawnWait(path: [*:0]const u8, ps: *[*:0]u8) void {
-    var ptrs: [33]u64 = undefined;
-    ptrs[0] = @intFromPtr(path);
+    var ptrs: [32:null]?[*:0]const u8 = undefined;
+    ptrs[0] = path;
     var n: usize = 1;
     while (nextTok(ps)) |tok| {
-        if (n >= ptrs.len - 1) {
+        if (n >= ptrs.len) {
             lib.print("too many args\n");
             return;
         }
-        ptrs[n] = @intFromPtr(tok);
+        ptrs[n] = tok;
         n += 1;
     }
-    ptrs[n] = 0;
-    const pid = sys.spawn(path, @intFromPtr(&ptrs));
+    ptrs[n] = null;
+    const pid = sys.spawn(path, &ptrs);
     if (pid < 0) {
         lib.print(lib.slice(path));
         lib.printErr(": err ", pid);
@@ -101,40 +98,8 @@ fn spawnWait(path: [*:0]const u8, ps: *[*:0]u8) void {
     if (code < 0) lib.printErr("wait: err ", code);
 }
 
-fn doRun(ps: *[*:0]u8) void {
-    const path = nextTok(ps) orelse {
-        lib.print("usage: run [path] [args...]\n");
-        return;
-    };
-    spawnWait(path, ps);
-}
-
-fn doCat(path: ?[*:0]u8) void {
-    const p = path orelse {
-        lib.print("usage: cat [path]\n");
-        return;
-    };
-    const fd = sys.open(p);
-    if (fd < 0) {
-        lib.printErr("cat: err ", fd);
-        return;
-    }
-    const fdu: u64 = @intCast(fd);
-    var buf: [256]u8 = undefined;
-    while (true) {
-        const n = sys.read(fdu, &buf);
-        if (n < 0) {
-            lib.printErr("cat: err ", n);
-            break;
-        }
-        if (n == 0) break;
-        sys.writeAll(1, buf[0..@intCast(n)]);
-    }
-    _ = sys.close(fdu);
-}
-
-fn dispatch(buf: *[128]u8) void {
-    var rest: [*:0]u8 = @ptrCast(buf);
+fn dispatch(buf: *[128:0]u8) void {
+    var rest: [*:0]u8 = buf;
     const cmd = nextTok(&rest) orelse return;
     if (lib.eql(cmd, "help")) {
         help();
@@ -142,13 +107,6 @@ fn dispatch(buf: *[128]u8) void {
         sys.yield();
     } else if (lib.eql(cmd, "sleep")) {
         doSleep(nextTok(&rest));
-    } else if (lib.eql(cmd, "echo")) {
-        lib.print(lib.slice(skipSpaces(rest)));
-        lib.print("\n");
-    } else if (lib.eql(cmd, "run")) {
-        doRun(&rest);
-    } else if (lib.eql(cmd, "cat")) {
-        doCat(nextTok(&rest));
     } else {
         spawnWait(cmd, &rest);
     }
