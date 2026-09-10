@@ -23,7 +23,7 @@ const stack_pages: usize = stack_size / pmm.page_size;
 const kernel_pid: u64 = 0;
 const init_pid: u64 = 1;
 // Exclusive top of the first user-stack slot. Later threads grow down
-// one slot (mapped stack + guard) at a time. Canonical low half (2 GiB).
+// one slot (mapped stack + guard) at a time, from the top of the user half.
 const user_stack_top: usize = elf.user_stack_top;
 const user_stack_slot: usize = elf.user_stack_slot;
 const user_mmap_top: usize = elf.user_mmap_top;
@@ -43,7 +43,7 @@ comptime {
     std.debug.assert(stack_size == elf.user_stack_window);
     std.debug.assert(user_stack_slot == stack_size + pmm.page_size);
     std.debug.assert(user_stack_top % pmm.page_size == 0);
-    std.debug.assert(user_stack_top < vmm.user_space_end);
+    std.debug.assert(user_stack_top <= vmm.user_space_end);
     std.debug.assert(user_mmap_top % pmm.page_size == 0);
     std.debug.assert(user_mmap_top < user_stack_top);
     std.debug.assert(kstack_region_base % pmm.page_size == 0);

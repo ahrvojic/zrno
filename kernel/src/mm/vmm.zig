@@ -507,6 +507,12 @@ test "userRange rejects the kernel half" {
     try std.testing.expect(userRange(user_space_end - 1, 1));
 }
 
+test "userRange omits the last canonical page" {
+    const canonical_end: usize = 1 << 47;
+    try std.testing.expectEqual(canonical_end - pmm.page_size, user_space_end);
+    try std.testing.expect(!userRange(canonical_end - pmm.page_size, 1));
+}
+
 test "userRange empty length is always in range" {
     try std.testing.expect(userRange(0, 0));
     try std.testing.expect(userRange(user_space_end, 0));

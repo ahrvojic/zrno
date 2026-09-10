@@ -3,7 +3,7 @@ const std = @import("std");
 pub const page_size = @import("../lib/mem.zig").page_size;
 pub const user_space_end = @import("../lib/mem.zig").user_space_end;
 /// Exclusive top of user stacks; stacks grow down from here.
-pub const user_stack_top: usize = 0x0000_0000_8000_0000;
+pub const user_stack_top: usize = user_space_end;
 /// Mapped length of one user stack.
 pub const user_stack_window: usize = 16 * page_size;
 /// Not-present page below each mapped user stack.
@@ -11,15 +11,18 @@ pub const user_stack_guard: usize = page_size;
 /// One mapped stack plus its guard. PT_LOAD must not overlap the first
 /// slot below `user_stack_top`.
 pub const user_stack_slot: usize = user_stack_window + user_stack_guard;
+/// Stack slots reserved below `user_stack_top` before anonymous mmap.
+const user_stack_region: usize = 0x1000_0000;
 /// Exclusive top of anonymous mmap; mappings grow down from here,
 /// below the user stacks.
-pub const user_mmap_top: usize = 0x0000_0000_7000_0000;
+pub const user_mmap_top: usize = user_stack_top - user_stack_region;
 
 comptime {
     std.debug.assert(user_stack_guard == page_size);
     std.debug.assert(user_stack_slot == user_stack_window + user_stack_guard);
     std.debug.assert(user_stack_top % page_size == 0);
     std.debug.assert(user_stack_top >= user_stack_slot);
+    std.debug.assert(user_stack_top <= user_space_end);
     std.debug.assert(user_mmap_top % page_size == 0);
     std.debug.assert(user_mmap_top + user_stack_slot <= user_stack_top);
 }
