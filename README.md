@@ -14,7 +14,7 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 - I/O APIC, PS/2 keyboard, and framebuffer TTY
 - 1 kHz local APIC timer, calibrated from HPET, ACPI PM timer, or PIT channel 2
 - Processes, threads, and a preemptive round-robin scheduler
-- Userspace with a handful of int 0x80 syscalls
+- Userspace with a handful of SYSCALL/SYSRET syscalls
 - Boot spawns `/init` as pid 1; the shell is a user program
 
 ## Requirements

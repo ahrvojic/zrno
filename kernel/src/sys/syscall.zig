@@ -11,7 +11,8 @@ const tty = @import("../dev/tty.zig");
 const user = @import("../user.zig");
 const vmm = @import("../mm/vmm.zig");
 
-// int 0x80: rax = number / return, rdi/rsi/rdx = args. Negative rax is -errno.
+// SYSCALL (int 0x80 still accepted): rax = number / return, rdi/rsi/rdx = args.
+// RCX/R11 are clobbered (RIP/RFLAGS). Negative rax is -errno.
 pub const nr_read: u64 = 0;
 pub const nr_write: u64 = 1;
 pub const nr_exit: u64 = 2;

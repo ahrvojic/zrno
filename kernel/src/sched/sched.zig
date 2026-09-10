@@ -16,8 +16,8 @@ const vmm = @import("../mm/vmm.zig");
 
 pub const tick_hz: u64 = 1000;
 
-// Kernel threads and TSS.rsp[0] (syscall/IRQ). 64 KiB covers a 1 KiB
-// print buffer plus a nested IRQ frame (int 0x80 → 0x90, or timer during print).
+// Kernel threads and TSS.rsp[0] (SYSCALL/IRQ). 64 KiB covers a 1 KiB
+// print buffer plus a nested IRQ frame (SYSCALL → int 0x90, or timer during print).
 const stack_size: usize = 16 * pmm.page_size;
 const stack_pages: usize = stack_size / pmm.page_size;
 const kernel_pid: u64 = 0;
@@ -730,8 +730,9 @@ fn switchLocked(ctx: *cpu.Context) void {
     this_cpu.thread = thread;
     thread.parent.vmm.switchTo();
     reapDoomedPt();
-    // CPL 3 → 0 loads RSP from here. Absolute top; ctx.rsp is the thread's SP.
-    this_cpu.tss.rsp[0] = @intCast(thread.stack_base + stack_size);
+    // CPL 3 → 0 (IRQ) and SYSCALL both load this as the kernel stack top.
+    // Absolute top; ctx.rsp is the thread's SP.
+    this_cpu.setIrqStack(@intCast(thread.stack_base + stack_size));
     ctx.* = thread.ctx;
 }
 

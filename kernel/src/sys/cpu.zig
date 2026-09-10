@@ -12,7 +12,19 @@ const virt = @import("../lib/virt.zig");
 const vmm = @import("../mm/vmm.zig");
 
 const msr_lapic = 0x1b;
+const msr_efer = 0xc0000080;
+const msr_star = 0xc0000081;
+const msr_lstar = 0xc0000082;
+const msr_fmask = 0xc0000084;
+const efer_sce: u64 = 1 << 0;
+const syscall_feature: u32 = 1 << 11;
+const rflags_tf: u64 = 1 << 8;
 const rflags_if: u64 = 1 << 9;
+const rflags_df: u64 = 1 << 10;
+const rflags_iopl: u64 = 3 << 12;
+const rflags_nt: u64 = 1 << 14;
+const rflags_ac: u64 = 1 << 18;
+const syscall_fmask: u64 = rflags_tf | rflags_if | rflags_df | rflags_iopl | rflags_nt | rflags_ac;
 const apic_base_x2apic: u64 = 1 << 10;
 const apic_base_enable: u64 = 1 << 11;
 const apic_base_addr_mask: u64 = ~@as(u64, 0xfff);
@@ -126,8 +138,17 @@ pub const CPU = struct {
 
         self.gdt.load(&self.tss);
         self.idt.load();
+        enableSyscall();
         self.initialized = true;
-        logger.info("bsp gdt idt tss", .{});
+        logger.info("bsp gdt idt tss syscall", .{});
+    }
+
+    /// IRQ and SYSCALL kernel stack top. `TSS.rsp[0]` for privilege-changing
+    /// interrupts; `syscall_kernel_rsp` for `syscallEntry` (SYSCALL does not
+    /// switch stacks).
+    pub fn setIrqStack(self: *CPU, top: u64) void {
+        self.tss.rsp[0] = top;
+        ivt.syscall_kernel_rsp = top;
     }
 
     pub fn initLapic(self: *CPU) !void {
@@ -277,6 +298,18 @@ pub const CPU = struct {
 
 pub fn init() !void {
     bsp_value.init();
+}
+
+fn enableSyscall() void {
+    const ext = cpuid(0x80000000, 0);
+    if (ext.eax < 0x80000001) @panic("syscall not supported");
+    if (cpuid(0x80000001, 0).edx & syscall_feature == 0) @panic("syscall not supported");
+
+    writeMSR(msr_efer, readMSR(msr_efer) | efer_sce);
+    writeMSR(msr_star, (@as(u64, gdt.star_user) << 48) | (@as(u64, gdt.kernel_code_sel) << 32));
+    writeMSR(msr_lstar, @intFromPtr(&ivt.syscallEntry));
+    writeMSR(msr_fmask, syscall_fmask);
+    logger.info("syscall lstar=0x{x} star_user=0x{x}", .{ @intFromPtr(&ivt.syscallEntry), gdt.star_user });
 }
 
 fn rdtsc() u64 {

@@ -1,4 +1,5 @@
-// User int 0x80 ABI. Numbers match kernel/src/sys/syscall.zig.
+// User SYSCALL ABI. Numbers match kernel/src/sys/syscall.zig.
+// RCX and R11 are clobbered (hardware saves RIP/RFLAGS there).
 pub const nr_read: u64 = 0;
 pub const nr_write: u64 = 1;
 pub const nr_exit: u64 = 2;
@@ -20,13 +21,13 @@ pub const prot_write: u64 = 2;
 pub const prot_exec: u64 = 4;
 
 pub fn syscall3(n: u64, a: u64, b: u64, c: u64) i64 {
-    const ret = asm volatile ("int $0x80"
+    const ret = asm volatile ("syscall"
         : [ret] "={rax}" (-> u64),
         : [n] "{rax}" (n),
           [a] "{rdi}" (a),
           [b] "{rsi}" (b),
           [c] "{rdx}" (c),
-        : .{ .memory = true, .cc = true });
+        : .{ .rcx = true, .r11 = true, .memory = true, .cc = true });
     return @bitCast(ret);
 }
 

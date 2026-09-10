@@ -1,11 +1,24 @@
 // GDT long mode selectors (index << 3). User selectors need | 3 for RPL
-// when loaded into CS/SS. Code-then-data is fine for iret; SYSRET wants
-// the opposite (user data at STAR+8, user code at STAR+16).
+// when loaded into CS/SS.
+//
+// SYSRET loads SS = STAR[63:48]+8 and CS = STAR[63:48]+16, so user data
+// must sit immediately after kernel data, then user code. IRET takes CS/SS
+// from the frame, so it does not care about this order. STAR[63:48] is
+// `star_user` (kernel data | 3) so the +8/+16 results keep RPL 3.
 pub const kernel_code_sel = 0x08;
 pub const kernel_data_sel = 0x10;
-pub const user_code_sel = 0x18;
-pub const user_data_sel = 0x20;
+pub const user_data_sel = 0x18;
+pub const user_code_sel = 0x20;
 pub const tss_sel = 0x28;
+pub const star_user = kernel_data_sel | 3;
+comptime {
+    const std = @import("std");
+    std.debug.assert(kernel_data_sel == kernel_code_sel + 8);
+    std.debug.assert(user_data_sel == kernel_data_sel + 8);
+    std.debug.assert(user_code_sel == user_data_sel + 8);
+    std.debug.assert(star_user + 8 == (user_data_sel | 3));
+    std.debug.assert(star_user + 16 == (user_code_sel | 3));
+}
 
 // Access byte:
 // | P | DPL(2) | S | 1 | C | R | A |
@@ -90,8 +103,8 @@ pub const GDT = struct {
         0, // null
         @bitCast(GDTEntry.make(0, 0xfffff, kernel_code_access, code_flags)),
         @bitCast(GDTEntry.make(0, 0xfffff, kernel_data_access, data_flags)),
-        @bitCast(GDTEntry.make(0, 0xfffff, user_code_access, code_flags)),
         @bitCast(GDTEntry.make(0, 0xfffff, user_data_access, data_flags)),
+        @bitCast(GDTEntry.make(0, 0xfffff, user_code_access, code_flags)),
         0, // TSS low
         0, // TSS high
     },
@@ -157,6 +170,15 @@ test "GDT entry construction" {
         .flags = 0,
     };
     try std.testing.expect(std.meta.eql(value, expected));
+}
+
+test "SYSRET selector layout" {
+    const std = @import("std");
+    try std.testing.expectEqual(@as(u16, 0x18), user_data_sel);
+    try std.testing.expectEqual(@as(u16, 0x20), user_code_sel);
+    try std.testing.expectEqual(@as(u16, 0x13), star_user);
+    try std.testing.expectEqual(@as(u64, 0x1b), star_user + 8);
+    try std.testing.expectEqual(@as(u64, 0x23), star_user + 16);
 }
 
 test "TSS entry construction" {

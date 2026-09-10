@@ -4,6 +4,7 @@ const std = @import("std");
 
 const cpu = @import("cpu.zig");
 const debug = @import("../lib/debug.zig");
+const gdt = @import("gdt.zig");
 const ps2 = @import("../dev/ps2.zig");
 const sched = @import("../sched/sched.zig");
 const tty = @import("../dev/tty.zig");
@@ -127,6 +128,96 @@ export fn interruptStub() callconv(.naked) void {
         \\
         \\addq $16, %rsp // discard vector + error_code
         \\iretq
+    );
+}
+
+// SYSCALL does not switch stacks. Entry stashes user RSP here, then loads
+// `syscall_kernel_rsp` (kept equal to TSS.rsp[0]). Single-CPU; FMASK holds
+// IF off so this is not re-entered.
+pub export var syscall_user_rsp: u64 = 0;
+pub export var syscall_kernel_rsp: u64 = 0;
+
+// Build the same `cpu.Context` as `interruptStub`, then return via SYSRET
+// when the iret frame is a clean 64-bit user context. Non-canonical RIP
+// (Intel #GP in kernel with user RSP) and kernel/non-user CS/SS fall back
+// to IRETQ.
+pub export fn syscallEntry() callconv(.naked) void {
+    const user_cs: u64 = gdt.user_code_sel | 3;
+    const user_ss: u64 = gdt.user_data_sel | 3;
+    const vector: u64 = vec_syscall;
+    const tf_rf: u64 = (1 << 8) | (1 << 16);
+
+    asm volatile (
+        \\movq %%rsp, syscall_user_rsp(%%rip)
+        \\movq syscall_kernel_rsp(%%rip), %%rsp
+        \\
+        \\pushq %[user_ss]
+        \\pushq syscall_user_rsp(%%rip)
+        \\pushq %%r11
+        \\pushq %[user_cs]
+        \\pushq %%rcx
+        \\
+        \\pushq $0
+        \\pushq %[vector]
+        \\
+        \\push %%rax
+        \\push %%rbx
+        \\push %%rcx
+        \\push %%rdx
+        \\push %%rbp
+        \\push %%rdi
+        \\push %%rsi
+        \\push %%r8
+        \\push %%r9
+        \\push %%r10
+        \\push %%r11
+        \\push %%r12
+        \\push %%r13
+        \\push %%r14
+        \\push %%r15
+        \\
+        \\cld
+        \\mov %%rsp, %%rdi
+        \\call interruptDispatch
+        \\
+        \\pop %%r15
+        \\pop %%r14
+        \\pop %%r13
+        \\pop %%r12
+        \\pop %%r11
+        \\pop %%r10
+        \\pop %%r9
+        \\pop %%r8
+        \\pop %%rsi
+        \\pop %%rdi
+        \\pop %%rbp
+        \\pop %%rdx
+        \\pop %%rcx
+        \\pop %%rbx
+        \\pop %%rax
+        \\
+        \\addq $16, %%rsp
+        \\
+        \\cmpq %[user_cs], 8(%%rsp)
+        \\jne 1f
+        \\cmpq %[user_ss], 32(%%rsp)
+        \\jne 1f
+        \\testq %[tf_rf], 16(%%rsp)
+        \\jnz 1f
+        \\movq (%%rsp), %%rcx
+        \\sarq $47, %%rcx
+        \\jnz 1f
+        \\movq (%%rsp), %%rcx
+        \\movq 16(%%rsp), %%r11
+        \\movq 24(%%rsp), %%rsp
+        \\sysretq
+        \\1:
+        \\iretq
+        :
+        : [user_ss] "i" (user_ss),
+          [user_cs] "i" (user_cs),
+          [vector] "i" (vector),
+          [tf_rf] "i" (tf_rf),
     );
 }
 
