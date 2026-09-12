@@ -115,7 +115,6 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .node = .{},
         .on_proctable = false,
         .exit_code = 0,
-        .orphaned = false,
         .user_stack_next = user_stack_top,
         .mmap_next = user_mmap_top,
         .brk_start = 0,
@@ -149,9 +148,11 @@ fn findProcessLocked(pid: u64) ?*proc.Process {
     return null;
 }
 
-// Park until a child has exited, then reap it and return its exit code.
-// `pid == 0` waits for any child. Unrelated pids are ECHILD, not a hang.
-pub fn waitProcess(pid: u64) error{ NoChild, Invalid }!u8 {
+pub const WaitResult = struct { pid: u64, code: u8 };
+
+// Park until a child has exited, then reap it. `pid == 0` waits for any
+// child. Unrelated pids are ECHILD, not a hang.
+pub fn waitProcess(pid: u64) error{ NoChild, Invalid }!WaitResult {
     expectInit();
     const thread = cpu.current().thread orelse @panic("wait with no thread");
     const waiter = thread.parent;
@@ -169,9 +170,9 @@ pub fn waitProcess(pid: u64) error{ NoChild, Invalid }!u8 {
                 node = n.next;
                 if (!isWaitableChild(process, waiter.pid)) continue;
                 if (process.zombie) {
-                    const code = process.exit_code;
+                    const result: WaitResult = .{ .pid = process.pid, .code = process.exit_code };
                     reapLocked(process);
-                    return code;
+                    return result;
                 }
                 live = true;
             }
@@ -183,16 +184,16 @@ pub fn waitProcess(pid: u64) error{ NoChild, Invalid }!u8 {
         const process = findProcessLocked(pid) orelse return error.NoChild;
         if (!isWaitableChild(process, waiter.pid)) return error.NoChild;
         if (process.zombie) {
-            const code = process.exit_code;
+            const result: WaitResult = .{ .pid = process.pid, .code = process.exit_code };
             reapLocked(process);
-            return code;
+            return result;
         }
         waitLocked(process);
     }
 }
 
 fn isWaitableChild(process: *const proc.Process, parent_pid: u64) bool {
-    return process.parent == parent_pid and !process.orphaned;
+    return process.parent == parent_pid;
 }
 
 fn startKernelThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bool) !*proc.Thread {
@@ -587,25 +588,26 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
 
     dropAddressSpace(&process.vmm);
 
+    var reparented = false;
     var pnode = processes.first;
     while (pnode) |n| {
         const child: *proc.Process = @fieldParentPtr("node", n);
         pnode = n.next;
         if (child.parent != process.pid or child == process) continue;
-        if (child.zombie) {
-            reapLocked(child);
-        } else {
-            child.parent = kernel_pid;
-            child.orphaned = true;
-        }
+        child.parent = init_pid;
+        reparented = true;
+        logger.info("pid {d} reparent to init", .{child.pid});
     }
 
     wakeupLocked(process);
     if (findProcessLocked(process.parent)) |parent| {
         wakeupLocked(parent);
     }
-
-    if (process.orphaned) reapLocked(process);
+    // Zombie and live kids now belong to init; wake its wait(0).
+    if (reparented) {
+        const reaper = findProcessLocked(init_pid) orelse @panic("no init");
+        wakeupLocked(reaper);
+    }
 }
 
 // Interrupt-context kill: stop the running user process and overwrite `ctx`
@@ -620,7 +622,7 @@ pub fn killCurrent(ctx: *cpu.Context, exit_code: u8) void {
 }
 
 // Spawn failed before the process ran. Not exitProcess: that panics on pid 1
-// ("init exited") and only reaps if orphaned. Nobody is wait()ing.
+// ("init exited") and would leave a zombie. Nobody is wait()ing.
 pub fn abortProcess(process: *proc.Process, exit_code: u8) void {
     expectInit();
     lock.lock();

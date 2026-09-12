@@ -75,8 +75,15 @@ pub fn spawn(path: [*:0]const u8, argv: Argv) i64 {
     return syscall3(nr_spawn, @intFromPtr(path), @intFromPtr(argv), 0);
 }
 
+/// Wait for a child. `pid` 0 means any. Returns the child's pid, or -errno.
+/// If `status` is non-null, stores the child's exit code there.
 pub fn wait(pid: u64) i64 {
-    return syscall3(nr_wait, pid, 0, 0);
+    return waitStatus(pid, null);
+}
+
+pub fn waitStatus(pid: u64, status: ?*u64) i64 {
+    const addr: u64 = if (status) |s| @intFromPtr(s) else 0;
+    return syscall3(nr_wait, pid, addr, 0);
 }
 
 pub fn getpid() i64 {

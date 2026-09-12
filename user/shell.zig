@@ -102,8 +102,8 @@ fn spawnWait(path: [*:0]const u8, ps: *[*:0]u8) void {
         lib.printErr(": err ", pid);
         return;
     }
-    const code = sys.wait(@intCast(pid));
-    if (code < 0) lib.printErr("wait: err ", code);
+    const wpid = sys.wait(@intCast(pid));
+    if (wpid < 0) lib.printErr("wait: err ", wpid);
 }
 
 fn dispatch(buf: *[128:0]u8) void {

@@ -15,7 +15,7 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 - 1 kHz local APIC timer, calibrated from HPET, ACPI PM timer, or PIT channel 2
 - Processes, threads, and a preemptive round-robin scheduler
 - Userspace with a handful of SYSCALL/SYSRET syscalls
-- Boot spawns `/init` as pid 1; `/init` runs `/shell` and restarts it on exit
+- Boot spawns `/init` as pid 1; `/init` reaps orphans and restarts `/shell` on exit
 
 ## Requirements
 

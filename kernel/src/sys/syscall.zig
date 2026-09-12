@@ -21,7 +21,7 @@ pub const nr_sleep: u64 = 4;
 pub const nr_open: u64 = 5;
 pub const nr_close: u64 = 6;
 pub const nr_spawn: u64 = 7; // rdi=path, rsi=argv or 0
-pub const nr_wait: u64 = 8; // rdi=pid, 0 = any child
+pub const nr_wait: u64 = 8; // rdi=pid (0 = any); rsi=status or 0; returns pid
 pub const nr_getpid: u64 = 9;
 pub const nr_getppid: u64 = 10;
 pub const nr_exec: u64 = 11; // replace image, keep pid/fds; rsi=argv or 0
@@ -196,11 +196,20 @@ fn sys_spawn(ctx: *cpu.Context) u64 {
 }
 
 fn sys_wait(ctx: *cpu.Context) u64 {
-    const code = sched.waitProcess(ctx.rdi) catch |err| return switch (err) {
+    const status_addr: usize = @intCast(ctx.rsi);
+    if (status_addr != 0 and !vmm.userRange(status_addr, @sizeOf(u64))) {
+        return errval(EFAULT);
+    }
+    const result = sched.waitProcess(ctx.rdi) catch |err| return switch (err) {
         error.NoChild => errval(ECHILD),
         error.Invalid => errval(EINVAL),
     };
-    return code;
+    if (status_addr != 0) {
+        var tmp: [@sizeOf(u64)]u8 = undefined;
+        std.mem.writeInt(u64, &tmp, result.code, .little);
+        userSpace().copyToUser(status_addr, &tmp) catch return errval(EFAULT);
+    }
+    return result.pid;
 }
 
 fn sys_getpid() u64 {
