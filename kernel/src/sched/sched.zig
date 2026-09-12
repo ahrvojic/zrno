@@ -119,12 +119,11 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .mmap_next = user_mmap_top,
         .brk_start = 0,
         .brk = 0,
-        .fds = [_]proc.Fd{.empty} ** proc.max_fds,
+        .fds = [_]proc.Fd{null} ** proc.max_fds,
     };
-
-    process.fds[0] = .tty;
-    process.fds[1] = .tty;
-    process.fds[2] = .tty;
+    errdefer process.vmm.destroy();
+    try proc.installStdio(&process.fds);
+    errdefer proc.closeAll(&process.fds);
 
     if (cpu.current().thread) |thread| {
         process.parent = thread.parent.pid;
@@ -775,6 +774,7 @@ fn dequeueProcess(process: *proc.Process) void {
 
 fn reapLocked(process: *proc.Process) void {
     dequeueProcess(process);
+    proc.closeAll(&process.fds);
     process.heap.destroy(process);
 }
 

@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const cpu = @import("../sys/cpu.zig");
+const heap = @import("../mm/heap.zig");
 const vmm = @import("../mm/vmm.zig");
 
 pub const max_fds: usize = 16;
@@ -10,11 +11,54 @@ pub const OpenFile = struct {
     pos: usize,
 };
 
-pub const Fd = union(enum) {
-    empty,
-    tty,
-    file: OpenFile,
+// Shared open-file description. Fd table slots point here; `dup` retains.
+pub const File = struct {
+    refs: usize,
+    kind: Kind,
+
+    pub const Kind = union(enum) {
+        tty,
+        file: OpenFile,
+    };
+
+    pub fn create(kind: Kind) error{OutOfMemory}!*File {
+        const f = try heap.kernel_heap.allocator().create(File);
+        f.* = .{ .refs = 1, .kind = kind };
+        return f;
+    }
+
+    pub fn retain(self: *File) void {
+        self.refs += 1;
+    }
+
+    pub fn release(self: *File) void {
+        if (self.refs == 0) @panic("file refcount underflow");
+        self.refs -= 1;
+        if (self.refs == 0) {
+            heap.kernel_heap.allocator().destroy(self);
+        }
+    }
 };
+
+pub const Fd = ?*File;
+
+pub fn installStdio(fds: *[max_fds]Fd) error{OutOfMemory}!void {
+    const tty = try File.create(.tty);
+    tty.retain();
+    tty.retain();
+    fds[0] = tty;
+    fds[1] = tty;
+    fds[2] = tty;
+}
+
+pub fn closeAll(fds: *[max_fds]Fd) void {
+    for (fds) |*slot| {
+        if (slot.*) |f| {
+            slot.* = null;
+            f.release();
+        }
+    }
+}
 
 pub const Process = struct {
     pid: u64,
@@ -37,7 +81,7 @@ pub const Process = struct {
     // the page-aligned end of the loaded image; `brk` may grow up to mmap.
     brk_start: usize,
     brk: usize,
-    // 0/1/2 are TTY; fds ≥ 3 are ramfs files.
+    // 0/1/2 share one TTY description; fds ≥ 3 are ramfs files.
     fds: [max_fds]Fd,
 };
 

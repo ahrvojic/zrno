@@ -90,9 +90,8 @@ fn sys_read(ctx: *cpu.Context) u64 {
     if (fd >= proc.max_fds) return errval(EBADF);
 
     const i: usize = @intCast(fd);
-    const slot = &currentProcess().fds[i];
-    switch (slot.*) {
-        .empty => return errval(EBADF),
+    const f = currentProcess().fds[i] orelse return errval(EBADF);
+    switch (f.kind) {
         .tty => {
             var tmp: [io_chunk]u8 = undefined;
             const want = @min(tmp.len, len);
@@ -101,11 +100,11 @@ fn sys_read(ctx: *cpu.Context) u64 {
             tty.consume(n);
             return n;
         },
-        .file => |*f| {
-            if (f.pos >= f.bytes.len) return 0;
-            const n = @min(len, f.bytes.len - f.pos);
-            userSpace().copyToUser(addr, f.bytes[f.pos..][0..n]) catch return errval(EFAULT);
-            f.pos += n;
+        .file => |*open| {
+            if (open.pos >= open.bytes.len) return 0;
+            const n = @min(len, open.bytes.len - open.pos);
+            userSpace().copyToUser(addr, open.bytes[open.pos..][0..n]) catch return errval(EFAULT);
+            open.pos += n;
             return n;
         },
     }
@@ -121,8 +120,8 @@ fn sys_write(ctx: *cpu.Context) u64 {
     if (fd >= proc.max_fds) return errval(EBADF);
 
     const i: usize = @intCast(fd);
-    switch (currentProcess().fds[i]) {
-        .empty => return errval(EBADF),
+    const f = currentProcess().fds[i] orelse return errval(EBADF);
+    switch (f.kind) {
         .file => return errval(EACCES),
         .tty => {},
     }
@@ -170,8 +169,9 @@ fn sys_open(ctx: *cpu.Context) u64 {
     const data = ramfs.lookup(path) orelse return errval(ENOENT);
     const fds = &currentProcess().fds;
     for (fds[3..], 3..) |*slot, fd| {
-        if (slot.* == .empty) {
-            slot.* = .{ .file = .{ .bytes = data, .pos = 0 } };
+        if (slot.* == null) {
+            slot.* = proc.File.create(.{ .file = .{ .bytes = data, .pos = 0 } }) catch
+                return errval(ENOMEM);
             return fd;
         }
     }
@@ -183,8 +183,9 @@ fn sys_close(ctx: *cpu.Context) u64 {
     if (fd >= proc.max_fds) return errval(EBADF);
     const i: usize = @intCast(fd);
     const slot = &currentProcess().fds[i];
-    if (slot.* == .empty) return errval(EBADF);
-    slot.* = .empty;
+    const f = slot.* orelse return errval(EBADF);
+    slot.* = null;
+    f.release();
     return 0;
 }
 
@@ -262,11 +263,11 @@ fn sys_dup(ctx: *cpu.Context) u64 {
     if (fd >= proc.max_fds) return errval(EBADF);
     const fds = &currentProcess().fds;
     const i: usize = @intCast(fd);
-    if (fds[i] == .empty) return errval(EBADF);
+    const f = fds[i] orelse return errval(EBADF);
     for (fds, 0..) |*slot, new_fd| {
-        if (slot.* == .empty) {
-            // Copy the slot; file offsets are per-fd, not a shared POSIX description.
-            slot.* = fds[i];
+        if (slot.* == null) {
+            f.retain();
+            slot.* = f;
             return new_fd;
         }
     }
