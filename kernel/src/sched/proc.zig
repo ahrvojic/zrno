@@ -51,6 +51,15 @@ pub fn installStdio(fds: *[max_fds]Fd) error{OutOfMemory}!void {
     fds[2] = tty;
 }
 
+pub fn inherit(dst: *[max_fds]Fd, src: *const [max_fds]Fd) void {
+    for (dst, src) |*d, s| {
+        if (s) |f| {
+            f.retain();
+            d.* = f;
+        }
+    }
+}
+
 pub fn closeAll(fds: *[max_fds]Fd) void {
     for (fds) |*slot| {
         if (slot.*) |f| {
@@ -81,7 +90,7 @@ pub const Process = struct {
     // the page-aligned end of the loaded image; `brk` may grow up to mmap.
     brk_start: usize,
     brk: usize,
-    // 0/1/2 share one TTY description; fds ≥ 3 are ramfs files.
+    // Inherited at spawn. Kernel and init: 0/1/2 share one TTY.
     fds: [max_fds]Fd,
 };
 
