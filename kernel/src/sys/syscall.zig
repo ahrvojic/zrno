@@ -87,10 +87,7 @@ fn sys_read(ctx: *cpu.Context) u64 {
     if (len == 0) return 0;
     if (len > max_io) return errval(EINVAL);
     if (!vmm.userRange(addr, len)) return errval(EFAULT);
-    if (fd >= proc.max_fds) return errval(EBADF);
-
-    const i: usize = @intCast(fd);
-    const f = currentProcess().fds[i] orelse return errval(EBADF);
+    const f = fdFile(fd) orelse return errval(EBADF);
     switch (f.kind) {
         .tty => {
             var tmp: [io_chunk]u8 = undefined;
@@ -117,10 +114,7 @@ fn sys_write(ctx: *cpu.Context) u64 {
     if (len == 0) return 0;
     if (len > max_io) return errval(EINVAL);
     if (!vmm.userRange(addr, len)) return errval(EFAULT);
-    if (fd >= proc.max_fds) return errval(EBADF);
-
-    const i: usize = @intCast(fd);
-    const f = currentProcess().fds[i] orelse return errval(EBADF);
+    const f = fdFile(fd) orelse return errval(EBADF);
     switch (f.kind) {
         .file => return errval(EACCES),
         .tty => {},
@@ -179,10 +173,7 @@ fn sys_open(ctx: *cpu.Context) u64 {
 }
 
 fn sys_close(ctx: *cpu.Context) u64 {
-    const fd = ctx.rdi;
-    if (fd >= proc.max_fds) return errval(EBADF);
-    const i: usize = @intCast(fd);
-    const slot = &currentProcess().fds[i];
+    const slot = fdSlot(ctx.rdi) orelse return errval(EBADF);
     const f = slot.* orelse return errval(EBADF);
     slot.* = null;
     f.release();
@@ -259,11 +250,8 @@ fn sys_mmap(ctx: *cpu.Context) u64 {
 }
 
 fn sys_dup(ctx: *cpu.Context) u64 {
-    const fd = ctx.rdi;
-    if (fd >= proc.max_fds) return errval(EBADF);
     const fds = &currentProcess().fds;
-    const i: usize = @intCast(fd);
-    const f = fds[i] orelse return errval(EBADF);
+    const f = fdFile(ctx.rdi) orelse return errval(EBADF);
     for (fds, 0..) |*slot, new_fd| {
         if (slot.* == null) {
             f.retain();
@@ -334,6 +322,16 @@ fn copyUserArgv(addr: usize, path: []const u8, storage: *ArgvStorage) error{ Fau
 fn currentProcess() *proc.Process {
     const thread = cpu.current().thread orelse @panic("syscall with no thread");
     return thread.parent;
+}
+
+fn fdSlot(fd: u64) ?*proc.Fd {
+    if (fd >= proc.max_fds) return null;
+    return &currentProcess().fds[@intCast(fd)];
+}
+
+fn fdFile(fd: u64) ?*proc.File {
+    const slot = fdSlot(fd) orelse return null;
+    return slot.*;
 }
 
 fn userSpace() *vmm.VMM {
