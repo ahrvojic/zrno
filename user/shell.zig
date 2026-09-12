@@ -64,6 +64,7 @@ fn help() void {
     lib.print("yield         yield the CPU\n");
     lib.print("sleep [ms]    sleep (default 1000)\n");
     lib.print("exit [code]   exit the shell\n");
+    lib.print("reboot        reboot the machine\n");
     lib.print("[name] [args] spawn /name\n");
 }
 
@@ -117,6 +118,8 @@ fn dispatch(buf: *[128:0]u8) void {
         doSleep(nextTok(&rest));
     } else if (lib.eql(cmd, "exit")) {
         doExit(nextTok(&rest));
+    } else if (lib.eql(cmd, "reboot")) {
+        sys.reboot();
     } else {
         spawnWait(cmd, &rest);
     }

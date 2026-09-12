@@ -15,6 +15,7 @@ pub const nr_exec: u64 = 11;
 pub const nr_dup: u64 = 12;
 pub const nr_brk: u64 = 13;
 pub const nr_mmap: u64 = 14;
+pub const nr_reboot: u64 = 15;
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -52,7 +53,7 @@ pub fn writeAll(fd: u64, bytes: []const u8) void {
 
 pub fn exit(code: u64) noreturn {
     _ = syscall3(nr_exit, code, 0, 0);
-    while (true) {}
+    unreachable;
 }
 
 pub fn yield() void {
@@ -108,4 +109,9 @@ pub fn brk(addr: usize) i64 {
 
 pub fn mmap(addr: usize, len: usize, prot: u64) i64 {
     return syscall3(nr_mmap, addr, len, prot);
+}
+
+pub fn reboot() noreturn {
+    _ = syscall3(nr_reboot, 0, 0, 0);
+    unreachable;
 }

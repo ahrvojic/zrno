@@ -63,11 +63,15 @@ const FADT = extern struct {
 comptime {
     std.debug.assert(@offsetOf(FADT, "pm_timer_block") == 40);
     std.debug.assert(@offsetOf(FADT, "flags") == 76);
+    std.debug.assert(@offsetOf(FADT, "reset_reg") == 80);
+    std.debug.assert(@offsetOf(FADT, "reset_value") == 92);
     std.debug.assert(@offsetOf(FADT, "x_pm_timer_block") == 172);
 }
 
 // ACPI spec: FADT Flags bit 8 = TMR_VAL_EXT (PM timer is 32-bit, else 24).
 const tmr_val_ext: u32 = 1 << 8;
+// ACPI spec: FADT Flags bit 10 = RESET_REG_SUP
+const reset_reg_sup: u32 = 1 << 10;
 // ACPI spec: FADT Flags bit 20 = HW_REDUCED_ACPI
 const hw_reduced_acpi: u32 = 1 << 20;
 // SCI_EN in PM1_CNT: platform has entered ACPI mode.
@@ -105,8 +109,14 @@ pub const PmTimer = struct {
     bits: u8,
 };
 
+pub const ResetReg = struct {
+    address: u16,
+    value: u8,
+};
+
 var info_value: Info = undefined;
 var pm_timer_value: ?PmTimer = null;
+var reset_reg_value: ?ResetReg = null;
 var initialized = false;
 
 pub fn info() Info {
@@ -121,6 +131,11 @@ pub fn bootArch() BootArch {
 pub fn pmTimer() ?PmTimer {
     expectInit();
     return pm_timer_value;
+}
+
+pub fn resetReg() ?ResetReg {
+    expectInit();
+    return reset_reg_value;
 }
 
 pub fn init(sdt: *align(1) const acpi.SDT) !void {
@@ -157,6 +172,10 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
 
     const bits: u8 = if (fadt.flags & tmr_val_ext != 0) 32 else 24;
     pm_timer_value = parsePmTimer(data, bits);
+    reset_reg_value = parseResetReg(data);
+    if (reset_reg_value) |r| {
+        logger.info("reset io=0x{x} value=0x{x}", .{ r.address, r.value });
+    }
 
     try enableAcpi(fadt);
     initialized = true;
@@ -188,6 +207,24 @@ fn fromGas(gas: acpi.GenericAddress, bits: u8) ?PmTimer {
     };
     if (kind == .io and gas.address > std.math.maxInt(u16)) return null;
     return .{ .kind = kind, .address = gas.address, .bits = bits };
+}
+
+fn parseResetReg(data: []const u8) ?ResetReg {
+    const val_off = @offsetOf(FADT, "reset_value");
+    if (data.len < val_off + 1) return null;
+
+    const flags = std.mem.readInt(u32, data[@offsetOf(FADT, "flags")..][0..4], .little);
+    if (flags & reset_reg_sup == 0) return null;
+
+    const gas = std.mem.bytesAsValue(
+        acpi.GenericAddress,
+        data[@offsetOf(FADT, "reset_reg")..][0..@sizeOf(acpi.GenericAddress)],
+    ).*;
+    if (gas.address_space != acpi.gas_space_io) return null;
+    if (gas.address == 0 or gas.address > std.math.maxInt(u16) or gas.bit_offset != 0) return null;
+    const width: u8 = if (gas.bit_width == 0) 8 else gas.bit_width;
+    if (width != 8) return null;
+    return .{ .address = @intCast(gas.address), .value = data[val_off] };
 }
 
 fn parseBootArch(revision: u8, flags: u16) BootArch {
@@ -246,4 +283,51 @@ fn expectInit() void {
 
 fn expectUninit() void {
     if (initialized) @panic("fadt already initialized");
+}
+
+fn resetFixture(flags: u32, gas: acpi.GenericAddress, value: u8) [93]u8 {
+    var data = [_]u8{0} ** 93;
+    std.mem.writeInt(u32, data[@offsetOf(FADT, "flags")..][0..4], flags, .little);
+    @memcpy(data[@offsetOf(FADT, "reset_reg")..][0..@sizeOf(acpi.GenericAddress)], std.mem.asBytes(&gas));
+    data[@offsetOf(FADT, "reset_value")] = value;
+    return data;
+}
+
+fn ioResetGas(address: u64, bit_width: u8) acpi.GenericAddress {
+    return .{
+        .address_space = acpi.gas_space_io,
+        .bit_width = bit_width,
+        .bit_offset = 0,
+        .access_size = 1,
+        .address = address,
+    };
+}
+
+test "parseResetReg reads IO reset from FADT" {
+    const data = resetFixture(reset_reg_sup, ioResetGas(0xcf9, 8), 0x06);
+    try std.testing.expectEqual(ResetReg{ .address = 0xcf9, .value = 0x06 }, parseResetReg(&data).?);
+
+    const width0 = resetFixture(reset_reg_sup, ioResetGas(0xcf9, 0), 0x0f);
+    try std.testing.expectEqual(ResetReg{ .address = 0xcf9, .value = 0x0f }, parseResetReg(&width0).?);
+}
+
+test "parseResetReg rejects missing flag, short table, and bad GAS" {
+    try std.testing.expect(parseResetReg(&resetFixture(0, ioResetGas(0xcf9, 8), 0x06)) == null);
+    try std.testing.expect(parseResetReg(&[_]u8{0} ** 80) == null);
+    try std.testing.expect(parseResetReg(&resetFixture(reset_reg_sup, ioResetGas(0, 8), 0x06)) == null);
+    try std.testing.expect(parseResetReg(&resetFixture(reset_reg_sup, ioResetGas(0x1_0000, 8), 0x06)) == null);
+    try std.testing.expect(parseResetReg(&resetFixture(reset_reg_sup, ioResetGas(0xcf9, 16), 0x06)) == null);
+    try std.testing.expect(parseResetReg(&resetFixture(reset_reg_sup, ioResetGas(0xcf9, 64), 0x06)) == null);
+
+    var mem = ioResetGas(0xfee0_0000, 8);
+    mem.address_space = acpi.gas_space_memory;
+    try std.testing.expect(parseResetReg(&resetFixture(reset_reg_sup, mem, 0x06)) == null);
+
+    var pci = ioResetGas(0xcf9, 8);
+    pci.address_space = 2;
+    try std.testing.expect(parseResetReg(&resetFixture(reset_reg_sup, pci, 0x06)) == null);
+
+    var offset = ioResetGas(0xcf9, 8);
+    offset.bit_offset = 1;
+    try std.testing.expect(parseResetReg(&resetFixture(reset_reg_sup, offset, 0x06)) == null);
 }
