@@ -567,6 +567,9 @@ pub fn tick(ctx: *cpu.Context) void {
 
 pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
     expectInit();
+    // Before the sched lock: last-close may later wakeup pipe waiters, and
+    // wakeup takes sched. Heap (File.release) is a lower rank.
+    proc.closeAll(&process.fds);
     lock.lock();
     defer lock.unlock();
 
@@ -624,6 +627,7 @@ pub fn killCurrent(ctx: *cpu.Context, exit_code: u8) void {
 // ("init exited") and would leave a zombie. Nobody is wait()ing.
 pub fn abortProcess(process: *proc.Process, exit_code: u8) void {
     expectInit();
+    proc.closeAll(&process.fds);
     lock.lock();
     defer lock.unlock();
 
@@ -774,7 +778,6 @@ fn dequeueProcess(process: *proc.Process) void {
 
 fn reapLocked(process: *proc.Process) void {
     dequeueProcess(process);
-    proc.closeAll(&process.fds);
     process.heap.destroy(process);
 }
 
