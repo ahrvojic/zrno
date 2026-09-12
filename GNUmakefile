@@ -67,7 +67,7 @@ limine/limine:
 		LDFLAGS="$(HOST_LDFLAGS)" \
 		LIBS="$(HOST_LIBS)"
 
-USER_PROGS := hello init echo cat
+USER_PROGS := hello init shell echo cat
 USER_LIB := user/start.zig user/sys.zig user/lib.zig user/malloc.zig user/user.ld
 
 # ReleaseSmall: Debug/ReleaseSafe pull Zig's panic formatter (ubsan_rt +
