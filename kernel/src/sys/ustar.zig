@@ -46,10 +46,7 @@ pub fn walk(archive: []const u8) Walker {
 }
 
 fn isZero(block: []const u8) bool {
-    for (block) |b| {
-        if (b != 0) return false;
-    }
-    return true;
+    return std.mem.allEqual(u8, block, 0);
 }
 
 fn nameSlice(field: []const u8) []const u8 {
@@ -158,10 +155,11 @@ test "walk regular files" {
     try std.testing.expect((try it.next()) == null);
 }
 
-test "skip directories and padding" {
+test "skip directories and non-file members" {
     var f: Fixture = .{};
     f.addFile("a", "x");
     f.addDir("dir");
+    f.addMember("link", "", '1');
     f.addFile("b", "yz");
     var it = walk(f.finish());
 
@@ -188,7 +186,7 @@ test "zero-length file" {
     var it = walk(f.finish());
     const a = (try it.next()).?;
     try std.testing.expectEqualStrings("empty", a.name);
-    try std.testing.expectEqual(@as(usize, 0), a.data.len);
+    try std.testing.expectEqual(0, a.data.len);
     try std.testing.expect((try it.next()) == null);
 }
 
@@ -215,15 +213,4 @@ test "space-terminated octal size" {
     var it = walk(f.finish());
     const a = (try it.next()).?;
     try std.testing.expectEqualStrings("ab", a.data);
-}
-
-test "skip non-file members" {
-    var f: Fixture = .{};
-    f.addFile("keep", "k");
-    f.addMember("link", "", '1');
-    f.addFile("after", "z");
-    var it = walk(f.finish());
-    try std.testing.expectEqualStrings("keep", (try it.next()).?.name);
-    try std.testing.expectEqualStrings("after", (try it.next()).?.name);
-    try std.testing.expect((try it.next()) == null);
 }

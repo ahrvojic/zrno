@@ -133,14 +133,14 @@ fn readsConsistent(v1: u32, v2: u32, v3: u32) bool {
 }
 
 test "counterDelta wraps at 24 and 32 bits" {
-    try std.testing.expectEqual(@as(u32, 0x20), counterDelta(0x10, 0x00ff_fff0, 24));
-    try std.testing.expectEqual(@as(u32, 0x20), counterDelta(0x10, 0xffff_fff0, 32));
-    try std.testing.expectEqual(@as(u32, 1), counterDelta(0, 0x00ff_ffff, 24));
-    try std.testing.expectEqual(@as(u32, 0), counterDelta(0x123, 0x123, 24));
+    try std.testing.expectEqual(0x20, counterDelta(0x10, 0x00ff_fff0, 24));
+    try std.testing.expectEqual(0x20, counterDelta(0x10, 0xffff_fff0, 32));
+    try std.testing.expectEqual(1, counterDelta(0, 0x00ff_ffff, 24));
+    try std.testing.expectEqual(0, counterDelta(0x123, 0x123, 24));
 }
 
 test "counterDelta 24-bit mask ignores high bits" {
-    try std.testing.expectEqual(@as(u32, 1), counterDelta(0x0100_0000, 0x00ff_ffff, 24));
+    try std.testing.expectEqual(1, counterDelta(0x0100_0000, 0x00ff_ffff, 24));
 }
 
 test "readsConsistent rejects an outlier middle sample" {

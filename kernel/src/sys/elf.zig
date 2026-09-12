@@ -112,7 +112,7 @@ fn imageBrk(segs: []const Load) usize {
 pub fn load(space: anytype, image: []const u8) !Loaded {
     const parsed = try parse(image);
     const segs = parsed.constSlice();
-    const Alloc = @typeInfo(@TypeOf(space.alloc(@as(usize, 1)))).error_union.payload;
+    const Alloc = @typeInfo(@TypeOf(space.alloc(1))).error_union.payload;
 
     var mapped: usize = 0;
     var done: [max_loads]Mapped(Alloc) = undefined;
@@ -387,9 +387,9 @@ test "parse ET_EXEC x86-64 little-endian" {
     f.addLoad(0x400000, rx(), "code", 0, page_size);
     const image = f.finish(.EXEC, .X86_64, 0x400000);
     const parsed = try parse(image);
-    try std.testing.expectEqual(@as(usize, 0x400000), parsed.entry);
-    try std.testing.expectEqual(@as(usize, 1), parsed.nloads);
-    try std.testing.expectEqual(@as(usize, 0x400000), parsed.loads[0].map_vaddr);
+    try std.testing.expectEqual(0x400000, parsed.entry);
+    try std.testing.expectEqual(1, parsed.nloads);
+    try std.testing.expectEqual(0x400000, parsed.loads[0].map_vaddr);
     try std.testing.expectEqual(page_size, parsed.loads[0].map_size);
     try std.testing.expect(parsed.loads[0].flags.executable);
     try std.testing.expect(!parsed.loads[0].flags.writable);
@@ -475,15 +475,15 @@ test "load copies filesz, zeros BSS, maps R/W/X" {
     var backing: [page_size * 4]u8 = undefined;
     var space: MockSpace = .{ .backing = &backing };
     const loaded = try load(&space, image);
-    try std.testing.expectEqual(@as(usize, 0x400000), loaded.entry);
-    try std.testing.expectEqual(@as(usize, 0x402000), loaded.brk);
-    try std.testing.expectEqual(@as(usize, 2), space.nmaps);
+    try std.testing.expectEqual(0x400000, loaded.entry);
+    try std.testing.expectEqual(0x402000, loaded.brk);
+    try std.testing.expectEqual(2, space.nmaps);
 
     const t = space.at(0x400000).?;
     try std.testing.expect(t.flags.executable);
     try std.testing.expect(!t.flags.writable);
     try std.testing.expectEqualSlices(u8, &text, t.bytes[0..text.len]);
-    try std.testing.expectEqual(@as(u8, 0), t.bytes[text.len]);
+    try std.testing.expectEqual(0, t.bytes[text.len]);
 
     const d = space.at(0x401000).?;
     try std.testing.expect(d.flags.writable);
@@ -501,8 +501,8 @@ test "load page-aligns unaligned p_vaddr and zeros the lead" {
     var backing: [page_size * 2]u8 = undefined;
     var space: MockSpace = .{ .backing = &backing };
     const loaded = try load(&space, image);
-    try std.testing.expectEqual(@as(usize, 0x400010), loaded.entry);
-    try std.testing.expectEqual(@as(usize, 0x401000), loaded.brk);
+    try std.testing.expectEqual(0x400010, loaded.entry);
+    try std.testing.expectEqual(0x401000, loaded.brk);
     const t = space.at(0x400000).?;
     try std.testing.expectEqual(page_size, t.bytes.len);
     try std.testing.expectEqualSlices(u8, &[_]u8{0} ** 0x10, t.bytes[0..0x10]);

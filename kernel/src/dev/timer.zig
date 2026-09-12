@@ -126,8 +126,8 @@ fn expectUninit() void {
 }
 
 test "initialCount converts lapic and ref deltas to a 1 ms ICR" {
-    try std.testing.expectEqual(@as(u32, 100_000), initialCount(1_000_000, 1_000_000, 100_000_000).?);
-    try std.testing.expectEqual(@as(u32, 1_193), initialCount(11_931, 11_931, 1_193_182).?);
+    try std.testing.expectEqual(100_000, initialCount(1_000_000, 1_000_000, 100_000_000).?);
+    try std.testing.expectEqual(1_193, initialCount(11_931, 11_931, 1_193_182).?);
     try std.testing.expect(initialCount(0, 1_000_000, 100_000_000) == null);
     try std.testing.expect(initialCount(50, 1_000_000, 100_000_000) == null);
 }

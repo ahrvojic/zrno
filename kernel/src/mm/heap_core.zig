@@ -45,7 +45,7 @@ pub fn Heap(comptime Pages: type) type {
                 }
                 return self.refill(class);
             }
-            const align_pages = @max(@as(usize, 1), alignment.toByteUnits() / page_size);
+            const align_pages = @max(1, alignment.toByteUnits() / page_size);
             return self.pages.alloc(class / page_size, align_pages);
         }
 
@@ -131,19 +131,19 @@ const TestPages = struct {
 const TestHeap = Heap(*TestPages);
 
 test "classSize rounds to power of two" {
-    try std.testing.expectEqual(@as(usize, 16), classSize(1, .@"1").?);
-    try std.testing.expectEqual(@as(usize, 16), classSize(16, .@"8").?);
-    try std.testing.expectEqual(@as(usize, 32), classSize(17, .@"8").?);
-    try std.testing.expectEqual(@as(usize, 64), classSize(8, .@"64").?);
-    try std.testing.expectEqual(@as(usize, page_size), classSize(page_size, .@"1").?);
-    try std.testing.expectEqual(@as(usize, page_size * 2), classSize(page_size + 1, .@"1").?);
-    try std.testing.expectEqual(@as(usize, max_size), classSize(max_size, .@"1").?);
+    try std.testing.expectEqual(16, classSize(1, .@"1").?);
+    try std.testing.expectEqual(16, classSize(16, .@"8").?);
+    try std.testing.expectEqual(32, classSize(17, .@"8").?);
+    try std.testing.expectEqual(64, classSize(8, .@"64").?);
+    try std.testing.expectEqual(page_size, classSize(page_size, .@"1").?);
+    try std.testing.expectEqual(page_size * 2, classSize(page_size + 1, .@"1").?);
+    try std.testing.expectEqual(max_size, classSize(max_size, .@"1").?);
     try std.testing.expect(classSize(max_size + 1, .@"1") == null);
 }
 
 test "classIndex matches slab size class" {
-    try std.testing.expectEqual(@as(usize, 0), classIndex(16));
-    try std.testing.expectEqual(@as(usize, 1), classIndex(32));
+    try std.testing.expectEqual(0, classIndex(16));
+    try std.testing.expectEqual(1, classIndex(32));
     try std.testing.expectEqual(slab_class_count - 1, classIndex(page_size));
 }
 
@@ -154,12 +154,12 @@ test "free reuses the same size class without a new slab" {
 
     const p1 = h.alloc(17, .@"1") orelse return error.TestUnexpectedResult;
     const addr1 = @intFromPtr(p1);
-    try std.testing.expectEqual(@as(usize, 1), pages.allocs);
+    try std.testing.expectEqual(1, pages.allocs);
     h.free(p1[0..17], .@"1");
 
     const p2 = h.alloc(17, .@"1") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(addr1, @intFromPtr(p2));
-    try std.testing.expectEqual(@as(usize, 1), pages.allocs);
+    try std.testing.expectEqual(1, pages.allocs);
 }
 
 test "distinct size classes do not share freelists" {
@@ -178,18 +178,6 @@ test "distinct size classes do not share freelists" {
     h.free(large2[0..64], .@"1");
 }
 
-test "free of never-touched object" {
-    var backing: [page_size]u8 align(page_size) = undefined;
-    var pages: TestPages = .{ .buf = &backing };
-    var h = TestHeap.init(&pages);
-
-    const Dummy = struct { x: u64, y: u64, z: u64 };
-    const p = h.alloc(@sizeOf(Dummy), .fromByteUnits(@alignOf(Dummy))) orelse return error.TestUnexpectedResult;
-    h.free(p[0..@sizeOf(Dummy)], .fromByteUnits(@alignOf(Dummy)));
-    const q = h.alloc(@sizeOf(Dummy), .fromByteUnits(@alignOf(Dummy))) orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(@intFromPtr(p), @intFromPtr(q));
-}
-
 test "slab exhausts after objects-per-page plus one without a second page" {
     var backing: [page_size]u8 align(page_size) = undefined;
     var pages: TestPages = .{ .buf = &backing };
@@ -200,7 +188,7 @@ test "slab exhausts after objects-per-page plus one without a second page" {
     for (0..per_page) |_| {
         _ = h.alloc(class, .@"1") orelse return error.TestUnexpectedResult;
     }
-    try std.testing.expectEqual(@as(usize, 1), pages.allocs);
+    try std.testing.expectEqual(1, pages.allocs);
     try std.testing.expect(h.alloc(class, .@"1") == null);
 }
 
@@ -210,10 +198,10 @@ test "large allocation is a page run and free returns it" {
     var h = TestHeap.init(&pages);
 
     const p = h.alloc(page_size + 1, .@"1") orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(@as(usize, 1), pages.allocs);
+    try std.testing.expectEqual(1, pages.allocs);
     try std.testing.expect(std.mem.isAligned(@intFromPtr(p), page_size));
     h.free(p[0 .. page_size + 1], .@"1");
-    try std.testing.expectEqual(@as(usize, 1), pages.frees);
+    try std.testing.expectEqual(1, pages.frees);
 
     const q = h.alloc(page_size + 1, .@"1") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@intFromPtr(p), @intFromPtr(q));

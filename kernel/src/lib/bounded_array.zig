@@ -47,9 +47,9 @@ test "append pop slice" {
     try a.append(1);
     try a.append(2);
     try std.testing.expectEqualSlices(u8, &.{ 1, 2 }, a.constSlice());
-    try std.testing.expectEqual(@as(u8, 2), a.pop().?);
+    try std.testing.expectEqual(2, a.pop().?);
     try std.testing.expectEqualSlices(u8, &.{1}, a.slice());
-    try std.testing.expectEqual(@as(u8, 1), a.pop().?);
+    try std.testing.expectEqual(1, a.pop().?);
     try std.testing.expect(a.pop() == null);
 }
 
@@ -58,9 +58,9 @@ test "swapRemove last and middle" {
     try a.append(1);
     try a.append(2);
     try a.append(3);
-    try std.testing.expectEqual(@as(u8, 3), a.swapRemove(2));
+    try std.testing.expectEqual(3, a.swapRemove(2));
     try std.testing.expectEqualSlices(u8, &.{ 1, 2 }, a.constSlice());
-    try std.testing.expectEqual(@as(u8, 1), a.swapRemove(0));
+    try std.testing.expectEqual(1, a.swapRemove(0));
     try std.testing.expectEqualSlices(u8, &.{2}, a.constSlice());
 }
 
@@ -76,6 +76,6 @@ test "resize zero clears; overflow is rejected" {
     var a = BoundedArray(u8, 2){};
     try a.append(1);
     try a.resize(0);
-    try std.testing.expectEqual(@as(usize, 0), a.constSlice().len);
+    try std.testing.expectEqual(0, a.constSlice().len);
     try std.testing.expectError(error.Overflow, a.resize(3));
 }

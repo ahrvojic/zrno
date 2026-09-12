@@ -157,8 +157,8 @@ test "freqFromPeriodFs rejects 0 and periods above 100 ns" {
 }
 
 test "freqFromPeriodFs converts femtoseconds to hertz" {
-    try std.testing.expectEqual(@as(u64, 10_000_000), freqFromPeriodFs(100_000_000).?);
-    try std.testing.expectEqual(@as(u64, 20_000_000), freqFromPeriodFs(50_000_000).?);
+    try std.testing.expectEqual(10_000_000, freqFromPeriodFs(100_000_000).?);
+    try std.testing.expectEqual(20_000_000, freqFromPeriodFs(50_000_000).?);
     // 14.31818 MHz crystal; integer division truncates.
-    try std.testing.expectEqual(@as(u64, 14_318_179), freqFromPeriodFs(69_841_279).?);
+    try std.testing.expectEqual(14_318_179, freqFromPeriodFs(69_841_279).?);
 }

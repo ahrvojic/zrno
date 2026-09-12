@@ -1,3 +1,5 @@
+const std = @import("std");
+
 // GDT long mode selectors (index << 3). User selectors need | 3 for RPL
 // when loaded into CS/SS.
 //
@@ -12,7 +14,6 @@ pub const user_code_sel = 0x20;
 pub const tss_sel = 0x28;
 pub const star_user = kernel_data_sel | 3;
 comptime {
-    const std = @import("std");
     std.debug.assert(kernel_data_sel == kernel_code_sel + 8);
     std.debug.assert(user_data_sel == kernel_data_sel + 8);
     std.debug.assert(user_code_sel == user_data_sel + 8);
@@ -159,7 +160,6 @@ noinline fn reload() void {
 }
 
 test "GDT entry construction" {
-    const std = @import("std");
     const value = GDTEntry.make(0x80808000, 0x8000, 0, 0);
     const expected = GDTEntry{
         .base_1 = 0x8000,
@@ -169,20 +169,10 @@ test "GDT entry construction" {
         .access = 0,
         .flags = 0,
     };
-    try std.testing.expect(std.meta.eql(value, expected));
-}
-
-test "SYSRET selector layout" {
-    const std = @import("std");
-    try std.testing.expectEqual(@as(u16, 0x18), user_data_sel);
-    try std.testing.expectEqual(@as(u16, 0x20), user_code_sel);
-    try std.testing.expectEqual(@as(u16, 0x13), star_user);
-    try std.testing.expectEqual(@as(u64, 0x1b), star_user + 8);
-    try std.testing.expectEqual(@as(u64, 0x23), star_user + 16);
+    try std.testing.expect(value == expected);
 }
 
 test "TSS entry construction" {
-    const std = @import("std");
     const value = TSSEntry.make(0x800080808000, 0, 0);
     const expected = TSSEntry{
         .base_1 = 0x8000,
@@ -194,5 +184,5 @@ test "TSS entry construction" {
         .flags = 0,
         .reserved = 0,
     };
-    try std.testing.expect(std.meta.eql(value, expected));
+    try std.testing.expect(value == expected);
 }

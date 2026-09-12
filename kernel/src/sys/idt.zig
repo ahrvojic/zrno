@@ -74,5 +74,5 @@ test "IDT entry construction" {
         .ist = 0,
         .reserved = 0,
     };
-    try std.testing.expect(std.meta.eql(value, expected));
+    try std.testing.expect(value == expected);
 }

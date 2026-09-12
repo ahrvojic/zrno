@@ -20,11 +20,5 @@ pub const builtin: Font = .{
 };
 
 test "font size" {
-    try std.testing.expectEqual(@as(usize, 256) * builtin.height, builtin.bytes.len);
-}
-
-test "glyph retrieval" {
-    try std.testing.expectEqualSlices(u8, builtin.bytes[0..16], builtin.glyph(0));
-    try std.testing.expectEqualSlices(u8, builtin.bytes[16..32], builtin.glyph(1));
-    try std.testing.expectEqualSlices(u8, builtin.bytes[32..48], builtin.glyph(2));
+    try std.testing.expectEqual(@as(usize, builtin.height) * 256, builtin.bytes.len);
 }

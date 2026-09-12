@@ -84,9 +84,7 @@ fn sys_read(ctx: *cpu.Context) u64 {
     const fd = ctx.rdi;
     const addr: usize = @intCast(ctx.rsi);
     const len: usize = @intCast(ctx.rdx);
-    if (len == 0) return 0;
-    if (len > max_io) return errval(EINVAL);
-    if (!vmm.userRange(addr, len)) return errval(EFAULT);
+    if (checkIo(addr, len)) |r| return r;
     const f = fdFile(fd) orelse return errval(EBADF);
     switch (f.kind) {
         .tty => {
@@ -111,9 +109,7 @@ fn sys_write(ctx: *cpu.Context) u64 {
     const fd = ctx.rdi;
     const addr: usize = @intCast(ctx.rsi);
     const len: usize = @intCast(ctx.rdx);
-    if (len == 0) return 0;
-    if (len > max_io) return errval(EINVAL);
-    if (!vmm.userRange(addr, len)) return errval(EFAULT);
+    if (checkIo(addr, len)) |r| return r;
     const f = fdFile(fd) orelse return errval(EBADF);
     switch (f.kind) {
         .file => return errval(EACCES),
@@ -159,7 +155,7 @@ fn sys_sleep(ctx: *cpu.Context) u64 {
 fn sys_open(ctx: *cpu.Context) u64 {
     const addr: usize = @intCast(ctx.rdi);
     var buf: [max_path]u8 = undefined;
-    const path = copyUserPath(addr, &buf) catch |err| return pathErr(err);
+    const path = copyUserCString(addr, &buf) catch |err| return pathErr(err);
     const data = ramfs.lookup(path) orelse return errval(ENOENT);
     const fds = &currentProcess().fds;
     for (fds[3..], 3..) |*slot, fd| {
@@ -183,7 +179,7 @@ fn sys_close(ctx: *cpu.Context) u64 {
 fn sys_spawn(ctx: *cpu.Context) u64 {
     const addr: usize = @intCast(ctx.rdi);
     var buf: [max_path]u8 = undefined;
-    const path = copyUserPath(addr, &buf) catch |err| return pathErr(err);
+    const path = copyUserCString(addr, &buf) catch |err| return pathErr(err);
     var storage: ArgvStorage = .{};
     const argv = copyUserArgv(ctx.rsi, path, &storage) catch |err| return argvErr(err);
     const pid = user.spawnPathArgv(path, argv) catch |err| return spawnErr(err);
@@ -218,7 +214,7 @@ fn sys_getppid() u64 {
 fn sys_exec(ctx: *cpu.Context) u64 {
     const addr: usize = @intCast(ctx.rdi);
     var buf: [max_path]u8 = undefined;
-    const path = copyUserPath(addr, &buf) catch |err| return pathErr(err);
+    const path = copyUserCString(addr, &buf) catch |err| return pathErr(err);
     var storage: ArgvStorage = .{};
     const argv = copyUserArgv(ctx.rsi, path, &storage) catch |err| return argvErr(err);
     user.execPath(currentProcess(), ctx, path, argv) catch |err| return spawnErr(err);
@@ -260,10 +256,6 @@ fn sys_dup(ctx: *cpu.Context) u64 {
         }
     }
     return errval(EMFILE);
-}
-
-fn copyUserPath(addr: usize, buf: *[max_path]u8) error{ Fault, NameTooLong }![]const u8 {
-    return copyUserCString(addr, buf);
 }
 
 fn copyUserCString(addr: usize, buf: []u8) error{ Fault, NameTooLong }![]const u8 {
@@ -353,12 +345,19 @@ fn argvErr(err: error{ Fault, NameTooLong, TooMany }) u64 {
     };
 }
 
-fn spawnErr(err: anyerror) u64 {
+fn spawnErr(err: user.SpawnError) u64 {
     return switch (err) {
         error.NoEnt => errval(ENOENT),
         error.OutOfMemory => errval(ENOMEM),
-        else => errval(ENOEXEC),
+        error.BadElf => errval(ENOEXEC),
     };
+}
+
+fn checkIo(addr: usize, len: usize) ?u64 {
+    if (len == 0) return 0;
+    if (len > max_io) return errval(EINVAL);
+    if (!vmm.userRange(addr, len)) return errval(EFAULT);
+    return null;
 }
 
 fn errval(errno: i64) u64 {

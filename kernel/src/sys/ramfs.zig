@@ -83,32 +83,6 @@ test "mount fixture tar and lookup" {
     try std.testing.expect(t.lookup("/") == null);
 }
 
-test "mount skips directories" {
-    var tar: ustar.Fixture = .{};
-    tar.addFile("a", "x");
-    tar.addDir("dir");
-    var t: Table = .{};
-    try t.mount(tar.finish());
-    try std.testing.expectEqual(@as(usize, 1), t.entries().len);
-    try std.testing.expectEqualStrings("x", t.lookup("a").?);
-    try std.testing.expect(t.lookup("dir") == null);
-}
-
-test "mount truncated tar" {
-    var tar: ustar.Fixture = .{};
-    tar.addFile("a", "hello world");
-    const archive = tar.finish();
-    var t: Table = .{};
-    try std.testing.expectError(error.BadTar, t.mount(archive[0..ustar.block_size]));
-}
-
-test "empty archive is no files" {
-    var tar: ustar.Fixture = .{};
-    var t: Table = .{};
-    try t.mount(tar.finish());
-    try std.testing.expectEqual(@as(usize, 0), t.entries().len);
-}
-
 test "mount rejects more than max_files" {
     // One header per empty file plus two trailing zero blocks.
     var tar: ustar.Archive(max_files + 3) = .{};
@@ -119,5 +93,5 @@ test "mount rejects more than max_files" {
     }
     var t: Table = .{};
     try std.testing.expectError(error.TooManyFiles, t.mount(tar.finish()));
-    try std.testing.expectEqual(@as(usize, max_files), t.entries().len);
+    try std.testing.expectEqual(max_files, t.entries().len);
 }

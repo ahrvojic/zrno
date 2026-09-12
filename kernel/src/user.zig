@@ -1,5 +1,3 @@
-const std = @import("std");
-
 const cpu = @import("sys/cpu.zig");
 const elf = @import("sys/elf.zig");
 const heap = @import("mm/heap.zig");
@@ -10,32 +8,41 @@ const sched = @import("sched/sched.zig");
 const virt = @import("lib/virt.zig");
 const vmm = @import("mm/vmm.zig");
 
-pub fn spawnPath(path: []const u8) !u64 {
+pub const SpawnError = error{ NoEnt, OutOfMemory, BadElf };
+
+pub fn spawnPath(path: []const u8) SpawnError!u64 {
     const argv = [_][]const u8{path};
     return spawnPathArgv(path, &argv);
 }
 
-pub fn spawnPathArgv(path: []const u8, argv: []const []const u8) !u64 {
+pub fn spawnPathArgv(path: []const u8, argv: []const []const u8) SpawnError!u64 {
     const image = ramfs.lookup(path) orelse return error.NoEnt;
-    const process = try sched.startProcess(heap.kernel_heap.allocator(), true);
+    const process = sched.startProcess(heap.kernel_heap.allocator(), true) catch |err| return spawnFail(err);
     errdefer sched.abortProcess(process, 1);
 
     var space: VmmSpace = .{ .vmm = &process.vmm };
-    const loaded = try elf.load(&space, image);
+    const loaded = elf.load(&space, image) catch |err| return spawnFail(err);
     process.brk_start = loaded.brk;
     process.brk = loaded.brk;
-    _ = try sched.startUserThread(process, loaded.entry, argv, true);
+    _ = sched.startUserThread(process, loaded.entry, argv, true) catch |err| return spawnFail(err);
     return process.pid;
 }
 
-pub fn execPath(process: *proc.Process, ctx: *cpu.Context, path: []const u8, argv: []const []const u8) !void {
+pub fn execPath(process: *proc.Process, ctx: *cpu.Context, path: []const u8, argv: []const []const u8) SpawnError!void {
     const image = ramfs.lookup(path) orelse return error.NoEnt;
-    var new_vmm = try vmm.VMM.cloneKernel();
+    var new_vmm = vmm.VMM.cloneKernel() catch |err| return spawnFail(err);
     errdefer new_vmm.destroy();
 
     var space: VmmSpace = .{ .vmm = &new_vmm };
-    const loaded = try elf.load(&space, image);
-    try sched.execReplace(process, ctx, new_vmm, loaded.entry, loaded.brk, argv);
+    const loaded = elf.load(&space, image) catch |err| return spawnFail(err);
+    sched.execReplace(process, ctx, new_vmm, loaded.entry, loaded.brk, argv) catch |err| return spawnFail(err);
+}
+
+fn spawnFail(err: anyerror) SpawnError {
+    return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.BadElf,
+    };
 }
 
 const VmmSpace = struct {

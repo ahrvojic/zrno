@@ -190,6 +190,6 @@ comptime {
 }
 
 test "acpi checksum is zero iff bytes sum to 0 mod 256" {
-    try std.testing.expectEqual(@as(u8, 0), checksum(&.{ 1, 2, 3, 250 }));
+    try std.testing.expectEqual(0, checksum(&.{ 1, 2, 3, 250 }));
     try std.testing.expect(checksum(&.{ 1, 2, 3, 0 }) != 0);
 }

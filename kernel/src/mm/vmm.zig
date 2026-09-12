@@ -490,9 +490,9 @@ inline fn switchPageTable(phys_addr: usize) void {
 
 test "Flags construction" {
     const flags = Flags{ .present = true, .writable = true, .noexec = true };
-    try std.testing.expectEqual(@as(u64, 0x8000_0000_0000_0003), @as(u64, @bitCast(flags)));
+    try std.testing.expectEqual(0x8000_0000_0000_0003, @as(u64, @bitCast(flags)));
 
-    try std.testing.expectEqual(@as(u64, 0x8000_0000_0000_0013), @as(u64, @bitCast(mmio_flags)));
+    try std.testing.expectEqual(0x8000_0000_0000_0013, @as(u64, @bitCast(mmio_flags)));
 }
 
 test "userRange rejects the null page" {

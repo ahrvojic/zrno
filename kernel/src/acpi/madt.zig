@@ -248,15 +248,15 @@ test "findEnabled skips disabled and prefers matching mode" {
         .{ .processor_id = 2, .apic_id = 0, .flags = 1, .x2apic = true },
     };
     const x2 = findEnabled(&entries, 0, true).?;
-    try std.testing.expectEqual(@as(u32, 2), x2.processor_id);
+    try std.testing.expectEqual(2, x2.processor_id);
     const xapic = findEnabled(&entries, 0, false).?;
-    try std.testing.expectEqual(@as(u32, 1), xapic.processor_id);
+    try std.testing.expectEqual(1, xapic.processor_id);
     try std.testing.expect(findEnabled(&entries, 1, false) == null);
     const only_x2 = [_]Lapic{
         .{ .processor_id = 9, .apic_id = 5, .flags = 1, .x2apic = true },
     };
     const fallback = findEnabled(&only_x2, 5, false).?;
-    try std.testing.expectEqual(@as(u32, 9), fallback.processor_id);
+    try std.testing.expectEqual(9, fallback.processor_id);
 }
 
 test "LapicNMI appliesTo all-processors and matching ACPI id" {
