@@ -114,9 +114,17 @@ pub const ResetReg = struct {
     value: u8,
 };
 
+pub const Pm1 = struct {
+    cnt: u16 = 0,
+    evt: u16 = 0,
+};
+
 var info_value: Info = undefined;
 var pm_timer_value: ?PmTimer = null;
 var reset_reg_value: ?ResetReg = null;
+var pm1a_value: Pm1 = .{};
+var pm1b_value: Pm1 = .{};
+var dsdt_phys_value: ?usize = null;
 var initialized = false;
 
 pub fn info() Info {
@@ -136,6 +144,21 @@ pub fn pmTimer() ?PmTimer {
 pub fn resetReg() ?ResetReg {
     expectInit();
     return reset_reg_value;
+}
+
+pub fn pm1a() Pm1 {
+    expectInit();
+    return pm1a_value;
+}
+
+pub fn pm1b() Pm1 {
+    expectInit();
+    return pm1b_value;
+}
+
+pub fn dsdtPhys() ?usize {
+    expectInit();
+    return dsdt_phys_value;
 }
 
 pub fn init(sdt: *align(1) const acpi.SDT) !void {
@@ -177,6 +200,16 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
         logger.info("reset io=0x{x} value=0x{x}", .{ r.address, r.value });
     }
 
+    pm1a_value = .{
+        .cnt = parseIoCtrl(data, @offsetOf(FADT, "x_pm1a_ctrl_block"), @offsetOf(FADT, "pm1a_ctrl_block")),
+        .evt = parseIoCtrl(data, @offsetOf(FADT, "x_pm1a_event_block"), @offsetOf(FADT, "pm1a_event_block")),
+    };
+    pm1b_value = .{
+        .cnt = parseIoCtrl(data, @offsetOf(FADT, "x_pm1b_ctrl_block"), @offsetOf(FADT, "pm1b_ctrl_block")),
+        .evt = parseIoCtrl(data, @offsetOf(FADT, "x_pm1b_event_block"), @offsetOf(FADT, "pm1b_event_block")),
+    };
+    dsdt_phys_value = readDsdtPhys(fadt, data);
+
     try enableAcpi(fadt);
     initialized = true;
 }
@@ -207,6 +240,34 @@ fn fromGas(gas: acpi.GenericAddress, bits: u8) ?PmTimer {
     };
     if (kind == .io and gas.address > std.math.maxInt(u16)) return null;
     return .{ .kind = kind, .address = gas.address, .bits = bits };
+}
+
+fn parseIoCtrl(data: []const u8, x_off: usize, legacy_off: usize) u16 {
+    if (data.len >= x_off + @sizeOf(acpi.GenericAddress)) {
+        const gas = std.mem.bytesAsValue(
+            acpi.GenericAddress,
+            data[x_off..][0..@sizeOf(acpi.GenericAddress)],
+        ).*;
+        if (gas.address_space == acpi.gas_space_io and gas.address != 0 and
+            gas.address <= std.math.maxInt(u16) and gas.bit_offset == 0)
+        {
+            return @intCast(gas.address);
+        }
+    }
+    if (data.len < legacy_off + 4) return 0;
+    const blk = std.mem.readInt(u32, data[legacy_off..][0..4], .little);
+    if (blk != 0 and blk <= std.math.maxInt(u16)) return @intCast(blk);
+    return 0;
+}
+
+fn readDsdtPhys(fadt: *align(1) const FADT, data: []const u8) ?usize {
+    const x_off = @offsetOf(FADT, "x_dsdt_addr");
+    if (data.len >= x_off + 8) {
+        const x = std.mem.readInt(u64, data[x_off..][0..8], .little);
+        if (x != 0) return @intCast(x);
+    }
+    if (fadt.dsdt_addr != 0) return fadt.dsdt_addr;
+    return null;
 }
 
 fn parseResetReg(data: []const u8) ?ResetReg {
@@ -262,9 +323,9 @@ fn enableAcpi(fadt: *align(1) const FADT) !void {
 
 fn waitAcpiMode(pm1a_ctrl_block: u32) void {
     if (pm1a_ctrl_block == 0 or pm1a_ctrl_block > std.math.maxInt(u16)) return;
-    const pm1a: u16 = @intCast(pm1a_ctrl_block);
+    const cnt: u16 = @intCast(pm1a_ctrl_block);
     var spins: u32 = 0;
-    while (port.inw(pm1a) & sci_en == 0) : (spins += 1) {
+    while (port.inw(cnt) & sci_en == 0) : (spins += 1) {
         if (spins >= sci_en_spins) {
             logger.err("ACPI enable did not set SCI_EN", .{});
             return;

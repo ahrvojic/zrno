@@ -16,6 +16,7 @@ pub const nr_dup: u64 = 12;
 pub const nr_brk: u64 = 13;
 pub const nr_mmap: u64 = 14;
 pub const nr_reboot: u64 = 15;
+pub const nr_poweroff: u64 = 16;
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -113,5 +114,10 @@ pub fn mmap(addr: usize, len: usize, prot: u64) i64 {
 
 pub fn reboot() noreturn {
     _ = syscall3(nr_reboot, 0, 0, 0);
+    unreachable;
+}
+
+pub fn poweroff() noreturn {
+    _ = syscall3(nr_poweroff, 0, 0, 0);
     unreachable;
 }

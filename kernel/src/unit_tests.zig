@@ -11,6 +11,7 @@ test {
     _ = @import("sys/ramfs.zig");
     _ = @import("acpi/acpi.zig");
     _ = @import("acpi/fadt.zig");
+    _ = @import("acpi/dsdt.zig");
     _ = @import("acpi/madt.zig");
     _ = @import("dev/timer.zig");
     _ = @import("dev/hpet.zig");

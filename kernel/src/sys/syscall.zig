@@ -30,6 +30,7 @@ pub const nr_dup: u64 = 12;
 pub const nr_brk: u64 = 13; // rdi=0 query; else set program break, return it
 pub const nr_mmap: u64 = 14; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX
 pub const nr_reboot: u64 = 15; // never returns
+pub const nr_poweroff: u64 = 16; // never returns
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -76,6 +77,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_brk => sys_brk(ctx),
         nr_mmap => sys_mmap(ctx),
         nr_reboot => reboot.perform(),
+        nr_poweroff => reboot.poweroff(),
         else => errval(ENOSYS),
     };
 }

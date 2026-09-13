@@ -3,6 +3,7 @@ const logger = std.log.scoped(.acpi);
 const std = @import("std");
 
 const boot = @import("../sys/boot.zig");
+const dsdt = @import("dsdt.zig");
 const fadt = @import("fadt.zig");
 const hpet = @import("hpet.zig");
 const madt = @import("madt.zig");
@@ -157,7 +158,7 @@ fn verifySdt(sdt: *align(1) const SDT) !void {
     }
 }
 
-fn mapSdt(phys: usize, comptime expected_sig: *const [4]u8) !*align(1) const SDT {
+pub fn mapSdt(phys: usize, comptime expected_sig: *const [4]u8) !*align(1) const SDT {
     const sdt = virt.toHH(*align(1) const SDT, phys);
     try verifySdt(sdt);
     if (!std.mem.eql(u8, &sdt.signature, expected_sig)) {
@@ -173,6 +174,7 @@ pub fn init() !void {
 
     const fadt_sdt = try acpi.findSDT("FACP", 0);
     try fadt.init(fadt_sdt);
+    dsdt.init(fadt.dsdtPhys());
 
     const madt_sdt = try acpi.findSDT("APIC", 0);
     try madt.init(madt_sdt);

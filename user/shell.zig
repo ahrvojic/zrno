@@ -65,6 +65,7 @@ fn help() void {
     lib.print("sleep [ms]    sleep (default 1000)\n");
     lib.print("exit [code]   exit the shell\n");
     lib.print("reboot        reboot the machine\n");
+    lib.print("poweroff      ACPI S5 power off\n");
     lib.print("[name] [args] spawn /name\n");
 }
 
@@ -120,6 +121,8 @@ fn dispatch(buf: *[128:0]u8) void {
         doExit(nextTok(&rest));
     } else if (lib.eql(cmd, "reboot")) {
         sys.reboot();
+    } else if (lib.eql(cmd, "poweroff")) {
+        sys.poweroff();
     } else {
         spawnWait(cmd, &rest);
     }
