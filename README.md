@@ -9,12 +9,13 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 - Single-CPU for now
 - GDT, IDT, exceptions, and local APIC
 - Bitmap physical allocator, virtual memory, and a power-of-two slab heap
-- ACPI FADT, MADT, and HPET as hardware inventory
+- ACPI FADT, MADT, HPET, and DSDT (`\_S5_`)
 - 16550 serial console (COM1)
 - I/O APIC, PS/2 keyboard, and framebuffer TTY
 - 1 kHz local APIC timer, calibrated from HPET, ACPI PM timer, or PIT channel 2
 - Processes, threads, and a preemptive round-robin scheduler
-- Userspace with a handful of SYSCALL/SYSRET syscalls
+- Userspace: SYSCALL/SYSRET, ustar ramfs, spawn/exec/wait, brk/mmap, fds inherited on spawn
+- ACPI S5 poweroff and ACPI/8042 reboot
 - Boot spawns `/init` as pid 1; `/init` reaps orphans and restarts `/shell` on exit
 
 ## Requirements
@@ -35,7 +36,7 @@ HDD images (`make all-hdd` / `make run-hdd`) also need:
 - `sgdisk` (package `gdisk` or `gptfdisk`)
 - [mtools](https://www.gnu.org/software/mtools/) (`mformat`, `mmd`, `mcopy`)
 
-`make run` attaches COM1 to the terminal (`-serial stdio`). Kernel logs and panics go there (115200 8N1).
+`make run` attaches COM1 to the terminal (`-serial stdio`). Kernel logs and panics go there (115200 8N1). After boot, `/shell` accepts `help`, `reboot`, and `poweroff` (S5; QEMU exits).
 
 ## References
 
