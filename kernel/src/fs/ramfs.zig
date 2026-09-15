@@ -19,7 +19,7 @@ pub const Table = struct {
     files: [max_files]Entry = undefined,
     nfiles: usize = 0,
 
-    pub fn mount(self: *Table, archive: []const u8) error{BadTar, TooManyFiles}!void {
+    pub fn mount(self: *Table, archive: []const u8) error{ BadTar, TooManyFiles }!void {
         self.nfiles = 0;
         var it = ustar.walk(archive);
         while (try it.next()) |file| {
@@ -49,7 +49,7 @@ pub const Table = struct {
 
 var table: Table = .{};
 
-pub fn mount(archive: []const u8) error{BadTar, TooManyFiles}!void {
+pub fn mount(archive: []const u8) error{ BadTar, TooManyFiles }!void {
     try table.mount(archive);
 }
 

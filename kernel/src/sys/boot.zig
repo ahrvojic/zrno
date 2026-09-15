@@ -5,7 +5,7 @@ const std = @import("std");
 const limine = @import("limine");
 
 const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
-const ramfs = @import("ramfs.zig");
+const ramfs = @import("../fs/ramfs.zig");
 const panic = @import("../lib/panic.zig").panic;
 const virt = @import("../lib/virt.zig");
 

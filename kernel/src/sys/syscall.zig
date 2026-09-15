@@ -3,10 +3,11 @@ const logger = std.log.scoped(.syscall);
 const std = @import("std");
 
 const cpu = @import("cpu.zig");
-const ramfs = @import("ramfs.zig");
+const file = @import("../fs/file.zig");
 const pmm = @import("../mm/pmm.zig");
 const pipe = @import("../fs/pipe.zig");
 const proc = @import("../sched/proc.zig");
+const ramfs = @import("../fs/ramfs.zig");
 const reboot = @import("reboot.zig");
 const sched = @import("../sched/sched.zig");
 const tty = @import("../dev/tty.zig");
@@ -181,7 +182,7 @@ fn sys_open(ctx: *cpu.Context) u64 {
     const fds = &currentProcess().fds;
     for (fds[3..], 3..) |*slot, fd| {
         if (slot.* == null) {
-            slot.* = proc.File.create(.{ .file = .{ .bytes = data, .pos = 0 } }) catch
+            slot.* = file.File.create(.{ .file = .{ .bytes = data, .pos = 0 } }) catch
                 return errval(ENOMEM);
             return fd;
         }
@@ -271,11 +272,11 @@ fn sys_pipe(ctx: *cpu.Context) u64 {
     if (!vmm.userRange(addr, 2 * @sizeOf(i64))) return errval(EFAULT);
     const pair = twoFreeFds() orelse return errval(EMFILE);
     const p = pipe.Pipe.create() catch return errval(ENOMEM);
-    const r = proc.File.create(.{ .pipe_read = p }) catch {
+    const r = file.File.create(.{ .pipe_read = p }) catch {
         p.destroy();
         return errval(ENOMEM);
     };
-    const w = proc.File.create(.{ .pipe_write = p }) catch {
+    const w = file.File.create(.{ .pipe_write = p }) catch {
         r.release();
         return errval(ENOMEM);
     };
@@ -373,12 +374,12 @@ fn currentProcess() *proc.Process {
     return thread.parent;
 }
 
-fn fdSlot(fd: u64) ?*proc.Fd {
-    if (fd >= proc.max_fds) return null;
+fn fdSlot(fd: u64) ?*file.Fd {
+    if (fd >= file.max_fds) return null;
     return &currentProcess().fds[@intCast(fd)];
 }
 
-fn fdFile(fd: u64) ?*proc.File {
+fn fdFile(fd: u64) ?*file.File {
     const slot = fdSlot(fd) orelse return null;
     return slot.*;
 }

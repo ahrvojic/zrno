@@ -7,8 +7,8 @@ test {
     _ = @import("sys/gdt.zig");
     _ = @import("sys/idt.zig");
     _ = @import("sys/elf.zig");
-    _ = @import("sys/ustar.zig");
-    _ = @import("sys/ramfs.zig");
+    _ = @import("fs/ustar.zig");
+    _ = @import("fs/ramfs.zig");
     _ = @import("acpi/acpi.zig");
     _ = @import("acpi/fadt.zig");
     _ = @import("acpi/dsdt.zig");

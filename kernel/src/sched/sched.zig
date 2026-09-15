@@ -4,6 +4,7 @@ const std = @import("std");
 
 const aspace = @import("aspace.zig");
 const cpu = @import("../sys/cpu.zig");
+const file = @import("../fs/file.zig");
 const heap = @import("../mm/heap.zig");
 const ivt = @import("../sys/ivt.zig");
 const kstack = @import("kstack.zig");
@@ -56,17 +57,17 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .mmap_next = state.user_mmap_top,
         .brk_start = 0,
         .brk = 0,
-        .fds = [_]proc.Fd{null} ** proc.max_fds,
+        .fds = [_]file.Fd{null} ** file.max_fds,
     };
     errdefer process.vmm.destroy();
     if (cpu.current().thread) |t| {
         process.parent = t.parent.pid;
-        proc.inherit(&process.fds, &t.parent.fds);
+        file.inherit(&process.fds, &t.parent.fds);
     } else {
         // Kernel pid 0 and `/init` (spawned off the Limine stack).
-        try proc.installStdio(&process.fds);
+        try file.installStdio(&process.fds);
     }
-    errdefer proc.closeAll(&process.fds);
+    errdefer file.closeAll(&process.fds);
 
     state.lock.lock();
     defer state.lock.unlock();
@@ -146,7 +147,7 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
     state.expectInit();
     // Before the sched lock: last-close may later wakeup pipe waiters, and
     // wakeup takes sched. Heap (File.release) is a lower rank.
-    proc.closeAll(&process.fds);
+    file.closeAll(&process.fds);
     state.lock.lock();
     defer state.lock.unlock();
 
@@ -194,7 +195,7 @@ pub fn killCurrent(ctx: *cpu.Context, exit_code: u8) void {
 // ("init exited") and would leave a zombie. Nobody is wait()ing.
 pub fn abortProcess(process: *proc.Process, exit_code: u8) void {
     state.expectInit();
-    proc.closeAll(&process.fds);
+    file.closeAll(&process.fds);
     state.lock.lock();
     defer state.lock.unlock();
 
