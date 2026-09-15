@@ -30,8 +30,7 @@ pub fn probeChannel2() bool {
     const nmi = port.inb(port_nmi);
     armChannel2(probe_count, nmi);
     const first = readChannel2();
-    var i: u32 = 0;
-    while (i < probe_spins) : (i += 1) cpu.pause();
+    for (0..probe_spins) |_| cpu.pause();
     const second = readChannel2();
     port.outb(port_nmi, nmi);
 

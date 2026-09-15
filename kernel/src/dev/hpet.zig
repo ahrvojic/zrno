@@ -130,8 +130,7 @@ fn write32(offset: u32, value: u32) void {
 }
 
 fn pauseLoop(n: u32) void {
-    var i: u32 = 0;
-    while (i < n) : (i += 1) cpu.pause();
+    for (0..n) |_| cpu.pause();
 }
 
 fn expectPresent() void {

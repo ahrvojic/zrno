@@ -139,15 +139,13 @@ fn routeGsi(lapic_id: u32, vector: u8, gsi: u32, flags: u16) void {
     expectInit();
     lock.lock();
     defer lock.unlock();
-    const io_apic = findForGsi(gsi) orelse @panic("GSI not owned by any I/O APIC");
-    io_apic.route(lapic_id, vector, gsi, flags);
-}
-
-fn findForGsi(gsi: u32) ?*const IOApic {
     for (io_apics.slice()) |*io_apic| {
-        if (io_apic.ownsGsi(gsi)) return io_apic;
+        if (io_apic.ownsGsi(gsi)) {
+            io_apic.route(lapic_id, vector, gsi, flags);
+            return;
+        }
     }
-    return null;
+    @panic("GSI not owned by any I/O APIC");
 }
 
 fn expectInit() void {
