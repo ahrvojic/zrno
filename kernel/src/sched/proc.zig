@@ -2,6 +2,7 @@ const std = @import("std");
 
 const cpu = @import("../sys/cpu.zig");
 const heap = @import("../mm/heap.zig");
+const pipe = @import("../fs/pipe.zig");
 const vmm = @import("../mm/vmm.zig");
 
 pub const max_fds: usize = 16;
@@ -19,11 +20,18 @@ pub const File = struct {
     pub const Kind = union(enum) {
         tty,
         file: OpenFile,
+        pipe_read: *pipe.Pipe,
+        pipe_write: *pipe.Pipe,
     };
 
     pub fn create(kind: Kind) error{OutOfMemory}!*File {
         const f = try heap.kernel_heap.allocator().create(File);
         f.* = .{ .refs = 1, .kind = kind };
+        switch (kind) {
+            .pipe_read => |p| p.readers += 1,
+            .pipe_write => |p| p.writers += 1,
+            .tty, .file => {},
+        }
         return f;
     }
 
@@ -35,6 +43,11 @@ pub const File = struct {
         if (self.refs == 0) @panic("file refcount underflow");
         self.refs -= 1;
         if (self.refs == 0) {
+            switch (self.kind) {
+                .pipe_read => |p| p.detachRead(),
+                .pipe_write => |p| p.detachWrite(),
+                .tty, .file => {},
+            }
             heap.kernel_heap.allocator().destroy(self);
         }
     }

@@ -17,6 +17,7 @@ pub const nr_brk: u64 = 13;
 pub const nr_mmap: u64 = 14;
 pub const nr_reboot: u64 = 15;
 pub const nr_poweroff: u64 = 16;
+pub const nr_pipe: u64 = 17;
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -120,4 +121,8 @@ pub fn reboot() noreturn {
 pub fn poweroff() noreturn {
     _ = syscall3(nr_poweroff, 0, 0, 0);
     unreachable;
+}
+
+pub fn pipe(fds: *[2]i64) i64 {
+    return syscall3(nr_pipe, @intFromPtr(fds), 0, 0);
 }

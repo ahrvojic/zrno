@@ -17,4 +17,5 @@ test {
     _ = @import("dev/hpet.zig");
     _ = @import("dev/pmtimer.zig");
     _ = @import("dev/font.zig");
+    _ = @import("fs/pipe.zig");
 }

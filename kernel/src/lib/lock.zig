@@ -7,8 +7,8 @@
 //! unlocking an inner lock must not `sti` while an outer lock is still held.
 //!
 //! Acquire in this order, never the reverse:
-//! sched → tty or debug → vmm → heap → pmm → apic or ps2.
-//! tty and debug are the same rank (do not nest them); same for apic and ps2.
+//! sched → tty or debug or pipe → vmm → heap → pmm → apic or ps2.
+//! tty, debug, and pipe are the same rank (do not nest them); same for apic and ps2.
 //!
 //! `sched.wait` / `sched.wakeup` are the exception: they take sched while a
 //! lower-rank lock (`held`) is already held. Never take a lower-rank lock

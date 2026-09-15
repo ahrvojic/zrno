@@ -5,6 +5,7 @@ const std = @import("std");
 const cpu = @import("cpu.zig");
 const ramfs = @import("ramfs.zig");
 const pmm = @import("../mm/pmm.zig");
+const pipe = @import("../fs/pipe.zig");
 const proc = @import("../sched/proc.zig");
 const reboot = @import("reboot.zig");
 const sched = @import("../sched/sched.zig");
@@ -31,6 +32,7 @@ pub const nr_brk: u64 = 13; // rdi=0 query; else set program break, return it
 pub const nr_mmap: u64 = 14; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX
 pub const nr_reboot: u64 = 15; // never returns
 pub const nr_poweroff: u64 = 16; // never returns
+pub const nr_pipe: u64 = 17; // rdi = *[2]i64 {read, write}
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -52,6 +54,7 @@ const EACCES: i64 = 13;
 const EFAULT: i64 = 14;
 const EINVAL: i64 = 22;
 const EMFILE: i64 = 24;
+const EPIPE: i64 = 32;
 const ENAMETOOLONG: i64 = 36;
 const ENOSYS: i64 = 38;
 
@@ -78,6 +81,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_mmap => sys_mmap(ctx),
         nr_reboot => reboot.perform(),
         nr_poweroff => reboot.poweroff(),
+        nr_pipe => sys_pipe(ctx),
         else => errval(ENOSYS),
     };
 }
@@ -104,6 +108,14 @@ fn sys_read(ctx: *cpu.Context) u64 {
             open.pos += n;
             return n;
         },
+        .pipe_write => return errval(EBADF),
+        .pipe_read => |p| {
+            var tmp: [io_chunk]u8 = undefined;
+            const n = p.peek(tmp[0..@min(tmp.len, len)]);
+            userSpace().copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
+            p.consume(n);
+            return n;
+        },
     }
 }
 
@@ -115,6 +127,13 @@ fn sys_write(ctx: *cpu.Context) u64 {
     const f = fdFile(fd) orelse return errval(EBADF);
     switch (f.kind) {
         .file => return errval(EACCES),
+        .pipe_read => return errval(EBADF),
+        .pipe_write => |p| {
+            var tmp: [io_chunk]u8 = undefined;
+            const n = @min(tmp.len, len);
+            userSpace().copyFromUser(tmp[0..n], addr) catch return errval(EFAULT);
+            return p.write(tmp[0..n]) catch return errval(EPIPE);
+        },
         .tty => {},
     }
 
@@ -245,6 +264,42 @@ fn sys_mmap(ctx: *cpu.Context) u64 {
         error.OutOfMemory => errval(ENOMEM),
     };
     return va;
+}
+
+fn sys_pipe(ctx: *cpu.Context) u64 {
+    const addr: usize = @intCast(ctx.rdi);
+    if (!vmm.userRange(addr, 2 * @sizeOf(i64))) return errval(EFAULT);
+    const pair = twoFreeFds() orelse return errval(EMFILE);
+    const p = pipe.Pipe.create() catch return errval(ENOMEM);
+    const r = proc.File.create(.{ .pipe_read = p }) catch {
+        p.destroy();
+        return errval(ENOMEM);
+    };
+    const w = proc.File.create(.{ .pipe_write = p }) catch {
+        r.release();
+        return errval(ENOMEM);
+    };
+    var fds_out: [2]i64 = .{ @intCast(pair[0]), @intCast(pair[1]) };
+    userSpace().copyToUser(addr, std.mem.asBytes(&fds_out)) catch {
+        r.release();
+        w.release();
+        return errval(EFAULT);
+    };
+    const fds = &currentProcess().fds;
+    fds[pair[0]] = r;
+    fds[pair[1]] = w;
+    return 0;
+}
+
+fn twoFreeFds() ?[2]usize {
+    const fds = &currentProcess().fds;
+    var first: ?usize = null;
+    for (fds, 0..) |slot, fd| {
+        if (slot != null) continue;
+        if (first) |a| return .{ a, fd };
+        first = fd;
+    }
+    return null;
 }
 
 fn sys_dup(ctx: *cpu.Context) u64 {
