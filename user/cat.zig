@@ -2,29 +2,26 @@ const lib = @import("lib");
 const sys = lib.sys;
 
 pub fn main(argv: []const [*:0]const u8) u64 {
-    if (argv.len < 2) {
-        lib.print("usage: cat [path...]\n");
-        return 1;
-    }
+    if (argv.len < 2) return copy(0);
     var status: u64 = 0;
     for (argv[1..]) |path| {
-        if (!catPath(path)) status = 1;
+        const fd = sys.open(path);
+        if (fd < 0) {
+            lib.printErr("cat: err ", fd);
+            status = 1;
+            continue;
+        }
+        if (copy(@intCast(fd)) != 0) status = 1;
+        _ = sys.close(@intCast(fd));
     }
     return status;
 }
 
-fn catPath(path: [*:0]const u8) bool {
-    const fd = sys.open(path);
-    if (fd < 0) {
-        lib.printErr("cat: err ", fd);
-        return false;
-    }
-    const fdu: u64 = @intCast(fd);
-    const n = lib.copyFd(fdu);
-    _ = sys.close(fdu);
+fn copy(fd: u64) u64 {
+    const n = lib.copyFd(fd);
     if (n < 0) {
         lib.printErr("cat: err ", n);
-        return false;
+        return 1;
     }
-    return true;
+    return 0;
 }

@@ -67,6 +67,7 @@ fn help() void {
     lib.print("reboot        reboot the machine\n");
     lib.print("poweroff      ACPI S5 power off\n");
     lib.print("[name] [args] spawn /name\n");
+    lib.print("a | b         pipe a stdout to b stdin\n");
 }
 
 fn doSleep(arg: ?[*:0]u8) void {
@@ -85,30 +86,132 @@ fn doExit(arg: ?[*:0]u8) void {
     sys.exit(code);
 }
 
-fn spawnWait(path: [*:0]const u8, ps: *[*:0]u8) void {
-    var ptrs: [32:null]?[*:0]const u8 = undefined;
+const Argv = [32:null]?[*:0]const u8;
+
+fn fillArgv(ptrs: *Argv, path: [*:0]const u8, ps: *[*:0]u8) bool {
     ptrs[0] = path;
     var n: usize = 1;
     while (nextTok(ps)) |tok| {
         if (n >= ptrs.len) {
             lib.print("too many args\n");
-            return;
+            return false;
         }
         ptrs[n] = tok;
         n += 1;
     }
     ptrs[n] = null;
-    const pid = sys.spawn(path, &ptrs);
+    return true;
+}
+
+fn spawnCmd(path: [*:0]const u8, argv: *Argv) i64 {
+    const pid = sys.spawn(path, argv);
     if (pid < 0) {
         lib.print(lib.slice(path));
         lib.printErr(": err ", pid);
+    }
+    return pid;
+}
+
+fn waitPid(pid: i64) void {
+    const w = sys.wait(@intCast(pid));
+    if (w < 0) lib.printErr("wait: err ", w);
+}
+
+fn spawnWait(path: [*:0]const u8, ps: *[*:0]u8) void {
+    var ptrs: Argv = undefined;
+    if (!fillArgv(&ptrs, path, ps)) return;
+    const pid = spawnCmd(path, &ptrs);
+    if (pid >= 0) waitPid(pid);
+}
+
+fn splitPipe(buf: *[128:0]u8) ?[*:0]u8 {
+    var i: usize = 0;
+    while (buf[i] != 0) : (i += 1) {
+        if (buf[i] == '|') {
+            buf[i] = 0;
+            return buf[i + 1 .. :0];
+        }
+    }
+    return null;
+}
+
+fn hasChar(s: [*:0]const u8, ch: u8) bool {
+    var p = s;
+    while (p[0] != 0) : (p += 1) {
+        if (p[0] == ch) return true;
+    }
+    return false;
+}
+
+// Lowest-fd `dup`: close `slot`, then `dup(with)` lands on it.
+fn redirect(slot: u64, with: u64) u64 {
+    const saved: u64 = @intCast(sys.dup(slot));
+    _ = sys.close(slot);
+    _ = sys.dup(with);
+    _ = sys.close(with);
+    return saved;
+}
+
+fn restore(slot: u64, saved: u64) void {
+    _ = sys.close(slot);
+    _ = sys.dup(saved);
+    _ = sys.close(saved);
+}
+
+fn doPipe(left_line: [*:0]u8, right_line: [*:0]u8) void {
+    if (hasChar(right_line, '|')) {
+        lib.print("too many |\n");
         return;
     }
-    const wpid = sys.wait(@intCast(pid));
-    if (wpid < 0) lib.printErr("wait: err ", wpid);
+    var left_rest: [*:0]u8 = left_line;
+    const left_cmd = nextTok(&left_rest) orelse {
+        lib.print("usage: cmd | cmd\n");
+        return;
+    };
+    var right_rest: [*:0]u8 = right_line;
+    const right_cmd = nextTok(&right_rest) orelse {
+        lib.print("usage: cmd | cmd\n");
+        return;
+    };
+
+    var left_argv: Argv = undefined;
+    var right_argv: Argv = undefined;
+    if (!fillArgv(&left_argv, left_cmd, &left_rest)) return;
+    if (!fillArgv(&right_argv, right_cmd, &right_rest)) return;
+
+    var p: [2]i64 = undefined;
+    const prc = sys.pipe(&p);
+    if (prc < 0) {
+        lib.printErr("pipe: err ", prc);
+        return;
+    }
+    const pr: u64 = @intCast(p[0]);
+    const pw: u64 = @intCast(p[1]);
+
+    const saved1 = redirect(1, pw);
+    const lpid = spawnCmd(left_cmd, &left_argv);
+    restore(1, saved1);
+    if (lpid < 0) {
+        _ = sys.close(pr);
+        return;
+    }
+
+    const saved0 = redirect(0, pr);
+    const rpid = spawnCmd(right_cmd, &right_argv);
+    restore(0, saved0);
+    if (rpid < 0) {
+        waitPid(lpid);
+        return;
+    }
+    waitPid(lpid);
+    waitPid(rpid);
 }
 
 fn dispatch(buf: *[128:0]u8) void {
+    if (splitPipe(buf)) |right| {
+        doPipe(buf, right);
+        return;
+    }
     var rest: [*:0]u8 = buf;
     const cmd = nextTok(&rest) orelse return;
     if (lib.eql(cmd, "help")) {
