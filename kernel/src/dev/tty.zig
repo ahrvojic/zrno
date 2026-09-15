@@ -23,7 +23,7 @@ var serial_saw_cr = false;
 pub fn writeBytes(string: []const u8) void {
     lock.lock();
     defer lock.unlock();
-    write(string);
+    writeUnlocked(string);
 }
 
 /// Block until at least one byte is queued, then copy without consuming.
@@ -46,7 +46,7 @@ pub fn printUnsafe(comptime fmt: []const u8, args: anytype) void {
     var writer: std.Io.Writer = .fixed(&print_buffer);
 
     writer.print(fmt, args) catch {};
-    write(writer.buffered());
+    writeUnlocked(writer.buffered());
 }
 
 // IRQ-safe: enqueue only.
@@ -76,19 +76,18 @@ fn waitData() void {
 }
 
 fn copyOut(out: []u8) usize {
-    var n: usize = 0;
     var idx = in_head;
-    while (n < out.len and idx != in_tail) {
-        out[n] = in_buf[idx];
+    for (out, 0..) |*slot, n| {
+        if (idx == in_tail) return n;
+        slot.* = in_buf[idx];
         idx +%= 1;
-        n += 1;
     }
-    return n;
+    return out.len;
 }
 
 fn drop(n: usize) void {
-    var i: usize = 0;
-    while (i < n and in_head != in_tail) : (i += 1) {
+    for (0..n) |_| {
+        if (in_head == in_tail) return;
         in_head +%= 1;
     }
 }
@@ -120,15 +119,11 @@ fn enqueueUnlocked(ch: u8) void {
     sched.wakeup(&in_buf);
 }
 
-fn write(string: []const u8) void {
+fn writeUnlocked(string: []const u8) void {
     for (string) |ch| {
-        putCharUnlocked(ch);
+        putSerial(ch);
+        putVideo(ch);
     }
-}
-
-fn putCharUnlocked(ch: u8) void {
-    putSerial(ch);
-    putVideo(ch);
 }
 
 fn putSerial(ch: u8) void {

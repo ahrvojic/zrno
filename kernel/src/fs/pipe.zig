@@ -89,19 +89,18 @@ pub const Pipe = struct {
     }
 
     fn copyOut(self: *const Pipe, out: []u8) usize {
-        var n: usize = 0;
         var idx = self.head;
-        while (n < out.len and idx != self.tail) {
-            out[n] = self.buf[idx];
+        for (out, 0..) |*slot, n| {
+            if (idx == self.tail) return n;
+            slot.* = self.buf[idx];
             idx +%= 1;
-            n += 1;
         }
-        return n;
+        return out.len;
     }
 
     fn drop(self: *Pipe, n: usize) void {
-        var i: usize = 0;
-        while (i < n and self.head != self.tail) : (i += 1) {
+        for (0..n) |_| {
+            if (self.head == self.tail) return;
             self.head +%= 1;
         }
     }

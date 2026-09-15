@@ -4,7 +4,6 @@ const std = @import("std");
 
 const boot = @import("../sys/boot.zig");
 const font = @import("font.zig");
-const panic = @import("../lib/panic.zig").panic;
 
 const Captured = struct {
     address: [*]u8,
@@ -16,104 +15,54 @@ const Captured = struct {
 
 var captured: ?Captured = null;
 var initialized = false;
-var fb: Framebuffer = .{};
+var ready = false;
 
-const Framebuffer = struct {
-    address: [*]u8 = undefined,
-    width: usize = 0,
-    height: usize = 0,
-    pitch: usize = 0,
-    bpp: u16 = 0,
-    max_row: usize = 25,
-    max_col: usize = 80,
-    initialized: bool = false,
-
-    fn init(self: *Framebuffer, src: Captured) void {
-        self.expectUninit();
-        self.address = src.address;
-        self.width = src.width;
-        self.height = src.height;
-        self.pitch = src.pitch;
-        self.bpp = src.bpp;
-        self.max_col = src.width / font.builtin.width;
-        self.max_row = src.height / font.builtin.height;
-        self.initialized = true;
-    }
-
-    fn data(self: *const Framebuffer) []u8 {
-        return self.address[0 .. self.pitch * self.height];
-    }
-
-    fn plotChar(self: *const Framebuffer, ch: u8, row: usize, col: usize) void {
-        self.expectInit();
-        if (row >= self.max_row or col >= self.max_col) return;
-
-        const glyph = font.builtin.glyph(ch);
-
-        const row_offset_start = self.toRowOffset(row);
-        const col_offset_start = self.toColOffset(col);
-
-        var row_offset = row_offset_start;
-        var col_offset = col_offset_start;
-
-        for (glyph) |glyph_row| {
-            for (0..font.builtin.width) |i| {
-                const pixel: *u32 = @ptrCast(@alignCast(self.address + row_offset + col_offset));
-                pixel.* = if (glyph_row & std.math.shr(u8, 0x80, i) != 0) 0xffffffff else 0x00000000;
-                col_offset += self.bpp / 8;
-            }
-
-            row_offset += self.pitch;
-            col_offset = col_offset_start;
-        }
-    }
-
-    fn scroll(self: *const Framebuffer) void {
-        self.expectInit();
-        // Shift framebuffer up one character row
-        const new_top = self.toRowOffset(1);
-        std.mem.copyForwards(u8, self.data(), self.data()[new_top..]);
-        // Clear last character row
-        for (0..self.max_col) |col| {
-            self.plotChar(' ', self.max_row - 1, col);
-        }
-    }
-
-    fn toRowOffset(self: *const Framebuffer, row: usize) usize {
-        return row * self.pitch * font.builtin.height;
-    }
-
-    fn toColOffset(self: *const Framebuffer, col: usize) usize {
-        return col * self.bpp / 8 * font.builtin.width;
-    }
-
-    fn expectInit(self: *const Framebuffer) void {
-        if (!self.initialized) @panic("video used before init");
-    }
-
-    fn expectUninit(self: *const Framebuffer) void {
-        if (self.initialized) @panic("video already initialized");
-    }
-};
+var address: [*]u8 = undefined;
+var height: usize = undefined;
+var pitch: usize = undefined;
+var max_row: usize = undefined;
+var max_col: usize = undefined;
 
 pub fn isReady() bool {
-    return fb.initialized;
+    return ready;
 }
 
 pub fn plotChar(ch: u8, row: usize, col: usize) void {
-    fb.plotChar(ch, row, col);
+    expectReady();
+    if (row >= max_row or col >= max_col) return;
+
+    const glyph = font.builtin.glyph(ch);
+    const pixels: [*]u32 = @ptrCast(@alignCast(address));
+    const pitch_pixels = pitch / @sizeOf(u32);
+    const y0 = row * font.builtin.height;
+    const x0 = col * font.builtin.width;
+
+    for (glyph, 0..) |glyph_row, y| {
+        for (0..font.builtin.width) |x| {
+            const on = glyph_row & (@as(u8, 0x80) >> @intCast(x)) != 0;
+            pixels[(y0 + y) * pitch_pixels + (x0 + x)] = if (on) 0xffffffff else 0;
+        }
+    }
 }
 
 pub fn scroll() void {
-    fb.scroll();
+    expectReady();
+    const new_top = pitch * font.builtin.height;
+    const fb = address[0 .. pitch * height];
+    std.mem.copyForwards(u8, fb, fb[new_top..]);
+    for (0..max_col) |col| {
+        plotChar(' ', max_row - 1, col);
+    }
 }
 
 pub fn maxRow() usize {
-    return fb.max_row;
+    expectReady();
+    return max_row;
 }
 
 pub fn maxCol() usize {
-    return fb.max_col;
+    expectReady();
+    return max_col;
 }
 
 /// Copy Limine framebuffer metadata into BSS. Call before `boot.drop()`.
@@ -131,7 +80,7 @@ pub fn capture() void {
 }
 
 pub fn init() !void {
-    if (initialized) panic("video already initialized");
+    if (initialized) @panic("video already initialized");
     initialized = true;
 
     // GOP/Limine FB is independent of FADT VGA_NOT_PRESENT (legacy VGA
@@ -153,6 +102,15 @@ pub fn init() !void {
         return;
     }
 
-    fb.init(info);
+    address = info.address;
+    height = info.height;
+    pitch = info.pitch;
+    max_col = info.width / font.builtin.width;
+    max_row = info.height / font.builtin.height;
+    ready = true;
     logger.info("{d}x{d} {d}bpp pitch={d}", .{ info.width, info.height, info.bpp, info.pitch });
+}
+
+fn expectReady() void {
+    if (!ready) @panic("video used before init");
 }
