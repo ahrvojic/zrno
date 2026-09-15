@@ -8,16 +8,16 @@ const Header = struct {
     next: ?*Header,
 };
 
-const header_size: usize = (@sizeOf(Header) + align_size - 1) & ~(align_size - 1);
-
-var heap_cur: usize = 0;
-var free_head: ?*Header = null;
-
 fn alignUp(n: usize) usize {
     const a: usize = align_size - 1;
     if (n > ~@as(usize, 0) - a) return 0;
     return (n + a) & ~a;
 }
+
+const header_size: usize = alignUp(@sizeOf(Header));
+
+var heap_cur: usize = 0;
+var free_head: ?*Header = null;
 
 fn payload(h: *Header) [*]u8 {
     return @ptrFromInt(@intFromPtr(h) + header_size);
@@ -27,12 +27,11 @@ fn headerOf(p: [*]u8) *Header {
     return @ptrFromInt(@intFromPtr(p) - header_size);
 }
 
-fn tryCoalesce(left: *Header, right: *Header) bool {
+fn tryCoalesce(left: *Header, right: *Header) void {
     const left_end = @intFromPtr(left) + header_size + left.size;
-    if (left_end != @intFromPtr(right)) return false;
+    if (left_end != @intFromPtr(right)) return;
     left.size += header_size + right.size;
     left.next = right.next;
-    return true;
 }
 
 fn insertFree(block: *Header) void {
@@ -45,16 +44,13 @@ fn insertFree(block: *Header) void {
     }
 
     block.next = it;
+    if (it) |n| tryCoalesce(block, n);
     if (prev) |p| {
         p.next = block;
-        if (tryCoalesce(p, block)) {
-            if (it) |n| _ = tryCoalesce(p, n);
-            return;
-        }
+        tryCoalesce(p, block);
     } else {
         free_head = block;
     }
-    if (it) |n| _ = tryCoalesce(block, n);
 }
 
 fn take(n: usize) ?*Header {
@@ -68,10 +64,9 @@ fn take(n: usize) ?*Header {
                 split.size = rest - header_size;
                 split.next = h.next;
                 h.size = n;
-                if (prev) |p| p.next = split else free_head = split;
-            } else {
-                if (prev) |p| p.next = h.next else free_head = h.next;
+                h.next = split;
             }
+            if (prev) |p| p.next = h.next else free_head = h.next;
             h.next = null;
             return h;
         }
@@ -81,42 +76,36 @@ fn take(n: usize) ?*Header {
     return null;
 }
 
-fn moreCore(need: usize) bool {
-    const chunk = alignUp(need);
-    if (chunk < need) return false;
-    const grow_by = (chunk + page_size - 1) & ~(page_size - 1);
-    if (grow_by < chunk) return false;
+fn moreCore(payload_n: usize) ?*Header {
+    const need = header_size + payload_n;
+    const grow_by = (need + page_size - 1) & ~(page_size - 1);
+    if (grow_by < need) return null;
 
     if (heap_cur == 0) {
         const cur = sys.brk(0);
-        if (cur <= 0) return false;
+        if (cur <= 0) return null;
         heap_cur = @intCast(cur);
     }
-    if (heap_cur > ~@as(usize, 0) - grow_by) return false;
+    if (heap_cur > ~@as(usize, 0) - grow_by) return null;
 
     const next = heap_cur + grow_by;
     const got = sys.brk(next);
-    if (got < 0 or @as(usize, @intCast(got)) != next) return false;
+    if (got < 0 or @as(usize, @intCast(got)) != next) return null;
 
     const h: *Header = @ptrFromInt(heap_cur);
     h.size = grow_by - header_size;
-    h.next = null;
     heap_cur = next;
     insertFree(h);
-    return true;
+    return take(payload_n);
 }
 
 pub fn malloc(n: usize) ?[]u8 {
     if (n == 0) return null;
     const payload_n = alignUp(n);
     if (payload_n < n) return null;
-    const need = header_size + payload_n;
-    if (need < payload_n) return null;
+    if (payload_n > ~@as(usize, 0) - header_size) return null;
 
-    const h = take(payload_n) orelse blk: {
-        if (!moreCore(need)) return null;
-        break :blk take(payload_n) orelse return null;
-    };
+    const h = take(payload_n) orelse moreCore(payload_n) orelse return null;
     return payload(h)[0..n];
 }
 
