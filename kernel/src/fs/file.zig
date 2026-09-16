@@ -8,6 +8,10 @@ pub const OpenFile = struct {
     pos: usize,
 };
 
+pub const OpenDir = struct {
+    pos: usize,
+};
+
 // Shared open-file description. Fd table slots point here; `dup` retains.
 pub const File = struct {
     refs: usize,
@@ -16,6 +20,7 @@ pub const File = struct {
     pub const Kind = union(enum) {
         tty,
         file: OpenFile,
+        dir: OpenDir,
         pipe_read: *pipe.Pipe,
         pipe_write: *pipe.Pipe,
     };
@@ -26,7 +31,7 @@ pub const File = struct {
         switch (kind) {
             .pipe_read => |p| p.readers += 1,
             .pipe_write => |p| p.writers += 1,
-            .tty, .file => {},
+            .tty, .file, .dir => {},
         }
         return f;
     }
@@ -42,7 +47,7 @@ pub const File = struct {
             switch (self.kind) {
                 .pipe_read => |p| p.detachRead(),
                 .pipe_write => |p| p.detachWrite(),
-                .tty, .file => {},
+                .tty, .file, .dir => {},
             }
             heap.kernel_heap.allocator().destroy(self);
         }

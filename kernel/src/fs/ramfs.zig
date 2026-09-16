@@ -61,6 +61,11 @@ pub fn entries() []const Entry {
     return table.entries();
 }
 
+pub fn isRoot(path: []const u8) bool {
+    const key = stripSlash(path);
+    return key.len == 0 or std.mem.eql(u8, key, ".");
+}
+
 fn stripSlash(path: []const u8) []const u8 {
     var p = path;
     while (p.len > 0 and p[0] == '/') p = p[1..];
@@ -81,6 +86,22 @@ test "mount fixture tar and lookup" {
     try std.testing.expect(t.lookup("missing") == null);
     try std.testing.expect(t.lookup("") == null);
     try std.testing.expect(t.lookup("/") == null);
+
+    try std.testing.expectEqual(@as(usize, 2), t.entries().len);
+    try std.testing.expectEqualStrings("hello.txt", t.entries()[0].name());
+    try std.testing.expectEqual(@as(usize, "hello from ramfs\n".len), t.entries()[0].data.len);
+    try std.testing.expectEqualStrings("hello", t.entries()[1].name());
+}
+
+test "isRoot treats / and . as the ramfs root" {
+    try std.testing.expect(isRoot("/"));
+    try std.testing.expect(isRoot(""));
+    try std.testing.expect(isRoot("//"));
+    try std.testing.expect(isRoot("."));
+    try std.testing.expect(isRoot("/."));
+    try std.testing.expect(!isRoot("hello"));
+    try std.testing.expect(!isRoot("/hello"));
+    try std.testing.expect(!isRoot(".."));
 }
 
 test "mount rejects more than max_files" {

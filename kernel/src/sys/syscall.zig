@@ -34,10 +34,22 @@ pub const nr_mmap: u64 = 14; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX
 pub const nr_reboot: u64 = 15; // never returns
 pub const nr_poweroff: u64 = 16; // never returns
 pub const nr_pipe: u64 = 17; // rdi = *[2]i64 {read, write}
+pub const nr_getdents: u64 = 18; // rdi=fd, rsi=buf, rdx=len; returns bytes
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
 pub const prot_exec: u64 = 4;
+
+// Packed dirent. 128 bytes; name is NUL-terminated.
+pub const dirent_name_max: usize = 120;
+pub const Dirent = extern struct {
+    size: u64,
+    name: [dirent_name_max]u8,
+};
+comptime {
+    std.debug.assert(@sizeOf(Dirent) == 128);
+    std.debug.assert(ramfs.max_name < dirent_name_max);
+}
 
 const max_io: usize = pmm.page_size;
 const io_chunk: usize = 256;
@@ -53,6 +65,8 @@ const ECHILD: i64 = 10;
 const ENOMEM: i64 = 12;
 const EACCES: i64 = 13;
 const EFAULT: i64 = 14;
+const ENOTDIR: i64 = 20;
+const EISDIR: i64 = 21;
 const EINVAL: i64 = 22;
 const EMFILE: i64 = 24;
 const EPIPE: i64 = 32;
@@ -83,21 +97,20 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_reboot => reboot.perform(),
         nr_poweroff => reboot.poweroff(),
         nr_pipe => sys_pipe(ctx),
+        nr_getdents => sys_getdents(ctx),
         else => errval(ENOSYS),
     };
 }
 
 fn sys_read(ctx: *cpu.Context) u64 {
-    const fd = ctx.rdi;
     const addr: usize = @intCast(ctx.rsi);
     const len: usize = @intCast(ctx.rdx);
     if (checkIo(addr, len)) |r| return r;
-    const f = fdFile(fd) orelse return errval(EBADF);
+    const f = fdFile(ctx.rdi) orelse return errval(EBADF);
     switch (f.kind) {
         .tty => {
             var tmp: [io_chunk]u8 = undefined;
-            const want = @min(tmp.len, len);
-            const n = tty.peek(tmp[0..want]);
+            const n = tty.peek(tmp[0..@min(tmp.len, len)]);
             userSpace().copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
             tty.consume(n);
             return n;
@@ -109,6 +122,7 @@ fn sys_read(ctx: *cpu.Context) u64 {
             open.pos += n;
             return n;
         },
+        .dir => return errval(EISDIR),
         .pipe_write => return errval(EBADF),
         .pipe_read => |p| {
             var tmp: [io_chunk]u8 = undefined;
@@ -121,13 +135,13 @@ fn sys_read(ctx: *cpu.Context) u64 {
 }
 
 fn sys_write(ctx: *cpu.Context) u64 {
-    const fd = ctx.rdi;
     const addr: usize = @intCast(ctx.rsi);
     const len: usize = @intCast(ctx.rdx);
     if (checkIo(addr, len)) |r| return r;
-    const f = fdFile(fd) orelse return errval(EBADF);
+    const f = fdFile(ctx.rdi) orelse return errval(EBADF);
     switch (f.kind) {
         .file => return errval(EACCES),
+        .dir => return errval(EISDIR),
         .pipe_read => return errval(EBADF),
         .pipe_write => |p| {
             var tmp: [io_chunk]u8 = undefined;
@@ -135,27 +149,26 @@ fn sys_write(ctx: *cpu.Context) u64 {
             userSpace().copyFromUser(tmp[0..n], addr) catch return errval(EFAULT);
             return p.write(tmp[0..n]) catch return errval(EPIPE);
         },
-        .tty => {},
-    }
-
-    var tmp: [io_chunk]u8 = undefined;
-    var copied: usize = 0;
-    const space = userSpace();
-    while (copied < len) {
-        const n = @min(tmp.len, len - copied);
-        space.copyFromUser(tmp[0..n], addr + copied) catch {
-            if (copied == 0) return errval(EFAULT);
+        .tty => {
+            var tmp: [io_chunk]u8 = undefined;
+            var copied: usize = 0;
+            const space = userSpace();
+            while (copied < len) {
+                const n = @min(tmp.len, len - copied);
+                space.copyFromUser(tmp[0..n], addr + copied) catch {
+                    if (copied == 0) return errval(EFAULT);
+                    return copied;
+                };
+                tty.writeBytes(tmp[0..n]);
+                copied += n;
+            }
             return copied;
-        };
-        tty.writeBytes(tmp[0..n]);
-        copied += n;
+        },
     }
-    return copied;
 }
 
 fn sys_exit(ctx: *cpu.Context) u64 {
-    const thread = cpu.current().thread orelse @panic("exit with no thread");
-    const process = thread.parent;
+    const process = currentProcess();
     if (process.pid == 0) @panic("kernel process exit");
     const code: u8 = @truncate(ctx.rdi);
     logger.info("pid {d} exit {d}", .{ process.pid, code });
@@ -175,19 +188,15 @@ fn sys_sleep(ctx: *cpu.Context) u64 {
 }
 
 fn sys_open(ctx: *cpu.Context) u64 {
-    const addr: usize = @intCast(ctx.rdi);
     var buf: [max_path]u8 = undefined;
-    const path = copyUserCString(addr, &buf) catch |err| return pathErr(err);
-    const data = ramfs.lookup(path) orelse return errval(ENOENT);
-    const fds = &currentProcess().fds;
-    for (fds[3..], 3..) |*slot, fd| {
-        if (slot.* == null) {
-            slot.* = file.File.create(.{ .file = .{ .bytes = data, .pos = 0 } }) catch
-                return errval(ENOMEM);
-            return fd;
-        }
-    }
-    return errval(EMFILE);
+    const path = copyUserCString(@intCast(ctx.rdi), &buf) catch |err| return pathErr(err);
+    const kind: file.File.Kind = if (ramfs.isRoot(path))
+        .{ .dir = .{ .pos = 0 } }
+    else
+        .{ .file = .{ .bytes = ramfs.lookup(path) orelse return errval(ENOENT), .pos = 0 } };
+    const fd = firstFreeFd(3) orelse return errval(EMFILE);
+    currentProcess().fds[fd] = file.File.create(kind) catch return errval(ENOMEM);
+    return fd;
 }
 
 fn sys_close(ctx: *cpu.Context) u64 {
@@ -199,13 +208,11 @@ fn sys_close(ctx: *cpu.Context) u64 {
 }
 
 fn sys_spawn(ctx: *cpu.Context) u64 {
-    const addr: usize = @intCast(ctx.rdi);
     var buf: [max_path]u8 = undefined;
-    const path = copyUserCString(addr, &buf) catch |err| return pathErr(err);
+    const path = copyUserCString(@intCast(ctx.rdi), &buf) catch |err| return pathErr(err);
     var storage: ArgvStorage = .{};
     const argv = copyUserArgv(ctx.rsi, path, &storage) catch |err| return argvErr(err);
-    const pid = exec.spawnPathArgv(path, argv) catch |err| return spawnErr(err);
-    return pid;
+    return exec.spawnPathArgv(path, argv) catch |err| return spawnErr(err);
 }
 
 fn sys_wait(ctx: *cpu.Context) u64 {
@@ -218,9 +225,8 @@ fn sys_wait(ctx: *cpu.Context) u64 {
         error.Invalid => errval(EINVAL),
     };
     if (status_addr != 0) {
-        var tmp: [@sizeOf(u64)]u8 = undefined;
-        std.mem.writeInt(u64, &tmp, result.code, .little);
-        userSpace().copyToUser(status_addr, &tmp) catch return errval(EFAULT);
+        var code: u64 = result.code;
+        userSpace().copyToUser(status_addr, std.mem.asBytes(&code)) catch return errval(EFAULT);
     }
     return result.pid;
 }
@@ -234,9 +240,8 @@ fn sys_getppid() u64 {
 }
 
 fn sys_exec(ctx: *cpu.Context) u64 {
-    const addr: usize = @intCast(ctx.rdi);
     var buf: [max_path]u8 = undefined;
-    const path = copyUserCString(addr, &buf) catch |err| return pathErr(err);
+    const path = copyUserCString(@intCast(ctx.rdi), &buf) catch |err| return pathErr(err);
     var storage: ArgvStorage = .{};
     const argv = copyUserArgv(ctx.rsi, path, &storage) catch |err| return argvErr(err);
     exec.execPath(currentProcess(), ctx, path, argv) catch |err| return spawnErr(err);
@@ -244,12 +249,7 @@ fn sys_exec(ctx: *cpu.Context) u64 {
 }
 
 fn sys_brk(ctx: *cpu.Context) u64 {
-    const addr: usize = @intCast(ctx.rdi);
-    const brk = sched.setBrk(addr) catch |err| return switch (err) {
-        error.Invalid => errval(EINVAL),
-        error.OutOfMemory => errval(ENOMEM),
-    };
-    return brk;
+    return sched.setBrk(@intCast(ctx.rdi)) catch |err| mmErr(err);
 }
 
 fn sys_mmap(ctx: *cpu.Context) u64 {
@@ -260,11 +260,37 @@ fn sys_mmap(ctx: *cpu.Context) u64 {
     if (len == 0) return errval(EINVAL);
     if (prot & prot_exec != 0) return errval(EINVAL);
     if (prot & (prot_read | prot_write) == 0) return errval(EINVAL);
-    const va = sched.mapAnon(len, prot & prot_write != 0) catch |err| return switch (err) {
-        error.Invalid => errval(EINVAL),
-        error.OutOfMemory => errval(ENOMEM),
+    return sched.mapAnon(len, prot & prot_write != 0) catch |err| mmErr(err);
+}
+
+fn sys_getdents(ctx: *cpu.Context) u64 {
+    const f = fdFile(ctx.rdi) orelse return errval(EBADF);
+    const dir = switch (f.kind) {
+        .dir => |*d| d,
+        else => return errval(ENOTDIR),
     };
-    return va;
+    const addr: usize = @intCast(ctx.rsi);
+    const len: usize = @intCast(ctx.rdx);
+    if (checkIo(addr, len)) |r| return r;
+    if (len < @sizeOf(Dirent)) return errval(EINVAL);
+
+    const ents = ramfs.entries();
+    var copied: usize = 0;
+    const space = userSpace();
+    while (dir.pos < ents.len) {
+        if (copied + @sizeOf(Dirent) > len) break;
+        const e = ents[dir.pos];
+        var de: Dirent = .{ .size = e.data.len, .name = @splat(0) };
+        const n = @min(e.name().len, de.name.len - 1);
+        @memcpy(de.name[0..n], e.name()[0..n]);
+        space.copyToUser(addr + copied, std.mem.asBytes(&de)) catch {
+            if (copied == 0) return errval(EFAULT);
+            return copied;
+        };
+        copied += @sizeOf(Dirent);
+        dir.pos += 1;
+    }
+    return copied;
 }
 
 fn sys_pipe(ctx: *cpu.Context) u64 {
@@ -292,37 +318,33 @@ fn sys_pipe(ctx: *cpu.Context) u64 {
     return 0;
 }
 
-fn twoFreeFds() ?[2]usize {
+fn firstFreeFd(start: usize) ?usize {
     const fds = &currentProcess().fds;
-    var first: ?usize = null;
-    for (fds, 0..) |slot, fd| {
-        if (slot != null) continue;
-        if (first) |a| return .{ a, fd };
-        first = fd;
+    for (fds[start..], start..) |slot, fd| {
+        if (slot == null) return fd;
     }
     return null;
 }
 
+fn twoFreeFds() ?[2]usize {
+    const a = firstFreeFd(0) orelse return null;
+    const b = firstFreeFd(a + 1) orelse return null;
+    return .{ a, b };
+}
+
 fn sys_dup(ctx: *cpu.Context) u64 {
-    const fds = &currentProcess().fds;
     const f = fdFile(ctx.rdi) orelse return errval(EBADF);
-    for (fds, 0..) |*slot, new_fd| {
-        if (slot.* == null) {
-            f.retain();
-            slot.* = f;
-            return new_fd;
-        }
-    }
-    return errval(EMFILE);
+    const fd = firstFreeFd(0) orelse return errval(EMFILE);
+    f.retain();
+    currentProcess().fds[fd] = f;
+    return fd;
 }
 
 fn copyUserCString(addr: usize, buf: []u8) error{ Fault, NameTooLong }![]const u8 {
     const space = userSpace();
     for (0..buf.len) |n| {
-        var c: [1]u8 = undefined;
-        try space.copyFromUser(c[0..], addr + n);
-        if (c[0] == 0) return buf[0..n];
-        buf[n] = c[0];
+        try space.copyFromUser(buf[n .. n + 1], addr + n);
+        if (buf[n] == 0) return buf[0..n];
     }
     return error.NameTooLong;
 }
@@ -350,23 +372,20 @@ fn copyUserArgv(addr: usize, path: []const u8, storage: *ArgvStorage) error{ Fau
         try storage.add(path);
         return storage.slice();
     }
-    if (!vmm.userRange(addr, @sizeOf(u64))) return error.Fault;
 
     const space = userSpace();
     for (0..max_argv + 1) |i| {
-        var ptr_bytes: [@sizeOf(u64)]u8 = undefined;
-        try space.copyFromUser(&ptr_bytes, addr + i * @sizeOf(u64));
-        const ptr = std.mem.readInt(u64, &ptr_bytes, .little);
+        var ptr: u64 = undefined;
+        try space.copyFromUser(std.mem.asBytes(&ptr), addr + i * @sizeOf(u64));
         if (ptr == 0) {
             if (i == 0) try storage.add(path);
             return storage.slice();
         }
         if (i == max_argv) return error.TooMany;
         var tmp: [max_arg]u8 = undefined;
-        const s = try copyUserCString(@intCast(ptr), &tmp);
-        try storage.add(s);
+        try storage.add(try copyUserCString(@intCast(ptr), &tmp));
     }
-    return error.TooMany;
+    unreachable;
 }
 
 fn currentProcess() *proc.Process {
@@ -408,6 +427,13 @@ fn spawnErr(err: exec.SpawnError) u64 {
         error.NoEnt => errval(ENOENT),
         error.OutOfMemory => errval(ENOMEM),
         error.BadElf => errval(ENOEXEC),
+    };
+}
+
+fn mmErr(err: error{ Invalid, OutOfMemory }) u64 {
+    return switch (err) {
+        error.Invalid => errval(EINVAL),
+        error.OutOfMemory => errval(ENOMEM),
     };
 }
 

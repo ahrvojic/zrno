@@ -18,10 +18,21 @@ pub const nr_mmap: u64 = 14;
 pub const nr_reboot: u64 = 15;
 pub const nr_poweroff: u64 = 16;
 pub const nr_pipe: u64 = 17;
+pub const nr_getdents: u64 = 18;
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
 pub const prot_exec: u64 = 4;
+
+// Packed dirent. Matches kernel/src/sys/syscall.zig. Name is NUL-terminated.
+pub const dirent_name_max: usize = 120;
+pub const Dirent = extern struct {
+    size: u64,
+    name: [dirent_name_max]u8,
+};
+comptime {
+    if (@sizeOf(Dirent) != 128) @compileError("Dirent must be 128 bytes");
+}
 
 pub const Argv = [*:null]const ?[*:0]const u8;
 
@@ -125,4 +136,8 @@ pub fn poweroff() noreturn {
 
 pub fn pipe(fds: *[2]i64) i64 {
     return syscall3(nr_pipe, @intFromPtr(fds), 0, 0);
+}
+
+pub fn getdents(fd: u64, buf: []Dirent) i64 {
+    return syscall3(nr_getdents, fd, @intFromPtr(buf.ptr), buf.len * @sizeOf(Dirent));
 }
