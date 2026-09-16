@@ -1,12 +1,12 @@
-const cpu = @import("sys/cpu.zig");
-const elf = @import("sys/elf.zig");
-const heap = @import("mm/heap.zig");
-const pmm = @import("mm/pmm.zig");
-const proc = @import("sched/proc.zig");
-const ramfs = @import("fs/ramfs.zig");
-const sched = @import("sched/sched.zig");
-const virt = @import("lib/virt.zig");
-const vmm = @import("mm/vmm.zig");
+const cpu = @import("../sys/cpu.zig");
+const elf = @import("../sys/elf.zig");
+const heap = @import("../mm/heap.zig");
+const pmm = @import("../mm/pmm.zig");
+const proc = @import("proc.zig");
+const ramfs = @import("../fs/ramfs.zig");
+const sched = @import("sched.zig");
+const virt = @import("../lib/virt.zig");
+const vmm = @import("../mm/vmm.zig");
 
 pub const SpawnError = error{ NoEnt, OutOfMemory, BadElf };
 

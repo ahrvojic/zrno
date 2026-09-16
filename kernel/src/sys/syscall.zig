@@ -3,6 +3,7 @@ const logger = std.log.scoped(.syscall);
 const std = @import("std");
 
 const cpu = @import("cpu.zig");
+const exec = @import("../sched/exec.zig");
 const file = @import("../fs/file.zig");
 const pmm = @import("../mm/pmm.zig");
 const pipe = @import("../fs/pipe.zig");
@@ -11,7 +12,6 @@ const ramfs = @import("../fs/ramfs.zig");
 const reboot = @import("reboot.zig");
 const sched = @import("../sched/sched.zig");
 const tty = @import("../dev/tty.zig");
-const user = @import("../user.zig");
 const vmm = @import("../mm/vmm.zig");
 
 // SYSCALL (int 0x80 still accepted): rax = number / return, rdi/rsi/rdx = args.
@@ -204,7 +204,7 @@ fn sys_spawn(ctx: *cpu.Context) u64 {
     const path = copyUserCString(addr, &buf) catch |err| return pathErr(err);
     var storage: ArgvStorage = .{};
     const argv = copyUserArgv(ctx.rsi, path, &storage) catch |err| return argvErr(err);
-    const pid = user.spawnPathArgv(path, argv) catch |err| return spawnErr(err);
+    const pid = exec.spawnPathArgv(path, argv) catch |err| return spawnErr(err);
     return pid;
 }
 
@@ -239,7 +239,7 @@ fn sys_exec(ctx: *cpu.Context) u64 {
     const path = copyUserCString(addr, &buf) catch |err| return pathErr(err);
     var storage: ArgvStorage = .{};
     const argv = copyUserArgv(ctx.rsi, path, &storage) catch |err| return argvErr(err);
-    user.execPath(currentProcess(), ctx, path, argv) catch |err| return spawnErr(err);
+    exec.execPath(currentProcess(), ctx, path, argv) catch |err| return spawnErr(err);
     return 0;
 }
 
@@ -403,7 +403,7 @@ fn argvErr(err: error{ Fault, NameTooLong, TooMany }) u64 {
     };
 }
 
-fn spawnErr(err: user.SpawnError) u64 {
+fn spawnErr(err: exec.SpawnError) u64 {
     return switch (err) {
         error.NoEnt => errval(ENOENT),
         error.OutOfMemory => errval(ENOMEM),
