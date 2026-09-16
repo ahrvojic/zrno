@@ -1,6 +1,10 @@
 # Nuke built-in rules and variables.
 override MAKEFLAGS += -rR
 
+ifeq ($(firstword $(subst ., ,$(MAKE_VERSION))),3)
+$(error GNU Make 4+ required (found $(MAKE_VERSION)))
+endif
+
 override IMAGE_NAME := zrno
 
 # Pin the bootloader release. Limine does not guarantee protocol or config
@@ -14,18 +18,8 @@ HOST_CPPFLAGS :=
 HOST_LDFLAGS :=
 HOST_LIBS :=
 
-# Convenience macro to reliably declare user overridable variables.
-define DEFAULT_VAR =
-    ifeq ($(origin $1),default)
-        override $(1) := $(2)
-    endif
-    ifeq ($(origin $1),undefined)
-        override $(1) := $(2)
-    endif
-endef
-
-override DEFAULT_KZIGFLAGS := -Doptimize=ReleaseSafe
-$(eval $(call DEFAULT_VAR,KZIGFLAGS,$(DEFAULT_KZIGFLAGS)))
+KZIGFLAGS ?= -Doptimize=ReleaseSafe
+UZIGFLAGS ?= -Doptimize=ReleaseSmall
 
 QEMU := qemu-system-x86_64
 QEMUFLAGS := -M q35 -m 2G -serial stdio
@@ -67,45 +61,25 @@ limine/limine:
 		LDFLAGS="$(HOST_LDFLAGS)" \
 		LIBS="$(HOST_LIBS)"
 
-USER_PROGS := $(sort $(patsubst user/cmd/%.zig,%,$(wildcard user/cmd/*.zig)))
-USER_LIB := user/lib/start.zig user/lib/sys.zig user/lib/lib.zig user/lib/malloc.zig user/lib/user.ld
+USER_PROGS := $(sort $(patsubst user/src/cmd/%.zig,%,$(wildcard user/src/cmd/*.zig)))
+USER_SRCS := $(wildcard user/src/cmd/*.zig) $(wildcard user/src/lib/*.zig) \
+	user/build.zig user/build.zig.zon user/user.ld
 
-# ReleaseSmall: Debug/ReleaseSafe pull Zig's panic formatter (ubsan_rt +
-# compiler-rt float helpers). No SSE: #NM is fatal until FXSAVE/XRSTOR.
-USER_ZFLAGS := \
-	-target x86_64-freestanding-none \
-	-T user/lib/user.ld \
-	-fentry=_start \
-	-fno-PIE \
-	-fno-compiler-rt \
-	-fstrip \
-	-fno-stack-protector \
-	-O ReleaseSmall \
-	-fno-stack-check \
-	-mcpu=x86_64+soft_float-mmx-sse-sse2-avx-avx2
-
-# start.zig is crt (`_start`). lib.zig is the user library. cmd/%.zig is main.
-# Zig only emits exports from the root module.
-user/%.elf: user/cmd/%.zig $(USER_LIB)
-	zig build-exe $(USER_ZFLAGS) \
-		--dep app --dep lib -Mroot=user/lib/start.zig \
-		$(USER_ZFLAGS) \
-		--dep lib -Mapp=$< \
-		$(USER_ZFLAGS) \
-		-Mlib=user/lib/lib.zig \
-		--name $* \
-		-femit-bin=$@
-
-user/initramfs.tar: $(addprefix user/,$(addsuffix .elf,$(USER_PROGS)))
-	rm -rf user/.initramfs
-	mkdir user/.initramfs
-	for p in $(USER_PROGS); do cp -f user/$$p.elf user/.initramfs/$$p; done
-	COPYFILE_DISABLE=1 tar --format=ustar -cf $@ -C user/.initramfs $(USER_PROGS)
-	rm -rf user/.initramfs
+.PHONY: user
+user:
+	cd user && zig build $(UZIGFLAGS)
 
 .PHONY: kernel
 kernel:
 	cd kernel && zig build $(KZIGFLAGS)
+
+user/initramfs.tar: $(USER_SRCS)
+	cd user && zig build $(UZIGFLAGS)
+	rm -rf user/.initramfs
+	mkdir user/.initramfs
+	for p in $(USER_PROGS); do cp -f user/zig-out/bin/$$p user/.initramfs/$$p; done
+	tar --format=ustar -cf $@ -C user/.initramfs $(USER_PROGS)
+	rm -rf user/.initramfs
 
 $(IMAGE_NAME).iso: limine/limine kernel user/initramfs.tar
 	rm -rf iso_root
@@ -140,8 +114,9 @@ $(IMAGE_NAME).hdd: limine/limine kernel user/initramfs.tar
 clean:
 	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
 	rm -rf kernel/.zig-cache kernel/zig-cache kernel/zig-out
+	rm -rf user/.zig-cache user/zig-cache user/zig-out
 	rm -rf user/.initramfs
-	rm -f $(addprefix user/,$(addsuffix .elf,$(USER_PROGS))) user/initramfs.tar
+	rm -f user/initramfs.tar
 
 .PHONY: distclean
 distclean: clean

@@ -4,6 +4,8 @@ limine-binary/
 ovmf/
 *.iso
 *.hdd
-user/*.elf
+user/.zig-cache/
+user/zig-cache/
+user/zig-out/
 user/initramfs.tar
 user/.initramfs/

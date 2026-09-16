@@ -9,7 +9,7 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 - Single-CPU for now
 - GDT, IDT, exceptions, and local APIC
 - Bitmap physical allocator, virtual memory, and a power-of-two slab heap
-- ACPI FADT, MADT, HPET, and DSDT (`\_S5_`)
+- ACPI FADT, MADT, HPET, and DSDT
 - 16550 serial console (COM1)
 - I/O APIC, PS/2 keyboard, and framebuffer TTY
 - 1 kHz local APIC timer, calibrated from HPET, ACPI PM timer, or PIT channel 2
@@ -24,7 +24,7 @@ Host tools that need to be installed locally. Limine (and OVMF, for UEFI QEMU ta
 
 To build the ISO and run it (`make run`):
 
-- [GNU make](https://www.gnu.org/software/make/)
+- [GNU make](https://www.gnu.org/software/make/) 4.x
 - [Zig](https://ziglang.org) 0.16.0
 - [QEMU](https://www.qemu.org) (`qemu-system-x86_64`)
 - [xorriso](https://www.gnu.org/software/xorriso/)
