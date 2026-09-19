@@ -3,7 +3,7 @@ const sys = lib.sys;
 
 pub fn main() u64 {
     lib.print("READY.\n");
-    const argv = [_:null]?[*:0]const u8{"/shell"};
+    const argv = [_][]const u8{"/shell"};
     var shell_pid: i64 = -1;
     while (true) {
         if (shell_pid < 0) {

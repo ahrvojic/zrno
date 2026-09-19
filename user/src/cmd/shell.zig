@@ -3,37 +3,33 @@ const sys = lib.sys;
 
 pub fn main() u64 {
     lib.print("type 'help'\n");
-    var buf: [128:0]u8 = undefined;
+    var buf: [128]u8 = undefined;
     while (true) {
         lib.print("> ");
-        readLine(&buf);
-        dispatch(&buf);
+        dispatch(readLine(&buf));
     }
 }
 
-fn skipSpaces(s: [*:0]u8) [*:0]u8 {
-    var p = s;
-    while (p[0] == ' ') p += 1;
-    return p;
+fn skipSpaces(s: []u8) []u8 {
+    var i: usize = 0;
+    while (i < s.len and s[i] == ' ') i += 1;
+    return s[i..];
 }
 
-fn nextTok(ps: *[*:0]u8) ?[*:0]u8 {
-    var s = skipSpaces(ps.*);
-    if (s[0] == 0) {
+fn nextTok(ps: *[]u8) ?[]u8 {
+    const s = skipSpaces(ps.*);
+    if (s.len == 0) {
         ps.* = s;
         return null;
     }
-    const tok = s;
-    while (s[0] != 0 and s[0] != ' ') s += 1;
-    if (s[0] == ' ') {
-        s[0] = 0;
-        s += 1;
-    }
-    ps.* = s;
+    var i: usize = 0;
+    while (i < s.len and s[i] != ' ') i += 1;
+    const tok = s[0..i];
+    ps.* = if (i < s.len) s[i + 1 ..] else s[i..];
     return tok;
 }
 
-fn readLine(buf: *[128:0]u8) void {
+fn readLine(buf: *[128]u8) []u8 {
     var n: usize = 0;
     while (true) {
         var ch: [1]u8 = undefined;
@@ -41,8 +37,7 @@ fn readLine(buf: *[128:0]u8) void {
         if (r <= 0) continue;
         if (ch[0] == '\n') {
             lib.print("\n");
-            buf[n] = 0;
-            return;
+            return buf[0..n];
         }
         if (ch[0] == 0x08) {
             if (n > 0) {
@@ -51,7 +46,7 @@ fn readLine(buf: *[128:0]u8) void {
             }
             continue;
         }
-        if (n < buf.len - 1) {
+        if (n < buf.len) {
             buf[n] = ch[0];
             n += 1;
             _ = sys.write(1, &ch);
@@ -71,7 +66,7 @@ fn help() void {
     lib.print("cmd < file    stdin from file\n");
 }
 
-fn optU64(arg: ?[*:0]u8, default: u64, usage: []const u8) ?u64 {
+fn optU64(arg: ?[]const u8, default: u64, usage: []const u8) ?u64 {
     const s = arg orelse return default;
     return lib.parseU64(s) orelse {
         lib.print(usage);
@@ -79,34 +74,32 @@ fn optU64(arg: ?[*:0]u8, default: u64, usage: []const u8) ?u64 {
     };
 }
 
-fn doSleep(arg: ?[*:0]u8) void {
+fn doSleep(arg: ?[]const u8) void {
     sys.sleep(optU64(arg, 1000, "usage: sleep [ms]\n") orelse return);
 }
 
-fn doExit(arg: ?[*:0]u8) void {
+fn doExit(arg: ?[]const u8) void {
     sys.exit(optU64(arg, 0, "usage: exit [code]\n") orelse return);
 }
 
-const Argv = [32:null]?[*:0]const u8;
-
 const Cmd = struct {
-    path: [*:0]const u8,
-    argv: Argv,
-    in_file: ?[*:0]u8 = null,
+    argv: [sys.max_argv][]const u8,
+    n: usize,
+    in_file: ?[]const u8 = null,
 };
 
-fn parseCmd(path: [*:0]const u8, ps: *[*:0]u8) ?Cmd {
-    var argv: Argv = @splat(null);
+fn parseCmd(path: []const u8, ps: *[]u8) ?Cmd {
+    var argv: [sys.max_argv][]const u8 = undefined;
     argv[0] = path;
     var n: usize = 1;
-    var in_file: ?[*:0]u8 = null;
+    var in_file: ?[]const u8 = null;
     while (nextTok(ps)) |tok| {
-        if (tok[0] == '>') {
+        if (tok.len > 0 and tok[0] == '>') {
             lib.print("no > yet\n");
             return null;
         }
-        if (tok[0] == '<') {
-            const name = (if (tok[1] != 0) tok + 1 else nextTok(ps)) orelse {
+        if (tok.len > 0 and tok[0] == '<') {
+            const name = if (tok.len > 1) tok[1..] else nextTok(ps) orelse {
                 lib.print("usage: cmd < file\n");
                 return null;
             };
@@ -124,7 +117,7 @@ fn parseCmd(path: [*:0]const u8, ps: *[*:0]u8) ?Cmd {
         argv[n] = tok;
         n += 1;
     }
-    return .{ .path = path, .argv = argv, .in_file = in_file };
+    return .{ .argv = argv, .n = n, .in_file = in_file };
 }
 
 fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout: u64) i64 {
@@ -137,7 +130,7 @@ fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout: u64) i64 {
     if (cmd.in_file) |f| {
         const fd = sys.open(f);
         if (fd < 0) {
-            lib.print(lib.slice(f));
+            lib.print(f);
             lib.printErr(": err ", fd);
             return fd;
         }
@@ -145,9 +138,9 @@ fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout: u64) i64 {
         opened = nfd;
         stdin = nfd;
     }
-    const pid = sys.spawn(cmd.path, &cmd.argv, stdin, stdout, 2);
+    const pid = sys.spawn(cmd.argv[0], cmd.argv[0..cmd.n], stdin, stdout, 2);
     if (pid < 0) {
-        lib.print(lib.slice(cmd.path));
+        lib.print(cmd.argv[0]);
         lib.printErr(": err ", pid);
     }
     return pid;
@@ -165,31 +158,28 @@ fn waitPid(pid: i64) void {
     lib.print("]\n");
 }
 
-fn spawnWait(path: [*:0]const u8, ps: *[*:0]u8) void {
+fn spawnWait(path: []const u8, ps: *[]u8) void {
     const cmd = parseCmd(path, ps) orelse return;
     const pid = spawnCmd(&cmd, 0, 1);
     if (pid >= 0) waitPid(pid);
 }
 
-fn splitPipe(buf: *[128:0]u8) ?[*:0]u8 {
-    for (lib.slice(buf), 0..) |c, i| {
-        if (c == '|') {
-            buf[i] = 0;
-            return buf[i + 1 .. :0];
-        }
+fn splitPipe(line: []u8) ?struct { left: []u8, right: []u8 } {
+    for (line, 0..) |c, i| {
+        if (c == '|') return .{ .left = line[0..i], .right = line[i + 1 ..] };
     }
     return null;
 }
 
-fn doPipe(left_line: [*:0]u8, right_line: [*:0]u8) void {
-    for (lib.slice(right_line)) |c| {
+fn doPipe(left_line: []u8, right_line: []u8) void {
+    for (right_line) |c| {
         if (c == '|') {
             lib.print("too many |\n");
             return;
         }
     }
-    var left_ps: [*:0]u8 = left_line;
-    var right_ps: [*:0]u8 = right_line;
+    var left_ps: []u8 = left_line;
+    var right_ps: []u8 = right_line;
     const left_path = nextTok(&left_ps) orelse {
         lib.print("usage: cmd | cmd\n");
         return;
@@ -218,12 +208,12 @@ fn doPipe(left_line: [*:0]u8, right_line: [*:0]u8) void {
     if (rpid >= 0) waitPid(rpid);
 }
 
-fn dispatch(buf: *[128:0]u8) void {
-    if (splitPipe(buf)) |right| {
-        doPipe(buf, right);
+fn dispatch(line: []u8) void {
+    if (splitPipe(line)) |parts| {
+        doPipe(parts.left, parts.right);
         return;
     }
-    var rest: [*:0]u8 = buf;
+    var rest = line;
     const cmd = nextTok(&rest) orelse return;
     if (lib.eql(cmd, "help")) {
         help();

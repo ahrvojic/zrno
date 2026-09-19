@@ -3,7 +3,7 @@ const sys = lib.sys;
 
 const enotdir: i64 = 20;
 
-pub fn main(argv: []const [*:0]const u8) u64 {
+pub fn main(argv: []const []const u8) u64 {
     if (argv.len < 2) return list("/");
     var status: u64 = 0;
     for (argv[1..]) |path| {
@@ -12,7 +12,7 @@ pub fn main(argv: []const [*:0]const u8) u64 {
     return status;
 }
 
-fn list(path: [*:0]const u8) u64 {
+fn list(path: []const u8) u64 {
     const fd = sys.open(path);
     if (fd < 0) {
         lib.printErr("ls: err ", fd);
@@ -23,14 +23,14 @@ fn list(path: [*:0]const u8) u64 {
     return rc;
 }
 
-fn listFd(fd: u64, path: [*:0]const u8) u64 {
+fn listFd(fd: u64, path: []const u8) u64 {
     var ents: [8]sys.Dirent = undefined;
     var listed = false;
     while (true) {
         const n = sys.getdents(fd, &ents);
         if (n < 0) {
             if (n == -enotdir and !listed) {
-                lib.print(lib.slice(path));
+                lib.print(path);
                 lib.print("\n");
                 return 0;
             }
@@ -41,14 +41,9 @@ fn listFd(fd: u64, path: [*:0]const u8) u64 {
         listed = true;
         const bytes: usize = @intCast(n);
         for (ents[0 .. bytes / @sizeOf(sys.Dirent)]) |e| {
-            printName(e.name);
+            const len = @min(e.name_len, e.name.len);
+            lib.print(e.name[0..len]);
+            lib.print("\n");
         }
     }
-}
-
-fn printName(name: [sys.dirent_name_max]u8) void {
-    var n: usize = 0;
-    while (n < name.len and name[n] != 0) n += 1;
-    lib.print(name[0..n]);
-    lib.print("\n");
 }

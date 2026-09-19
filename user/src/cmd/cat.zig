@@ -1,7 +1,7 @@
 const lib = @import("lib");
 const sys = lib.sys;
 
-pub fn main(argv: []const [*:0]const u8) u64 {
+pub fn main(argv: []const []const u8) u64 {
     if (argv.len < 2) return copy(0);
     var status: u64 = 0;
     for (argv[1..]) |path| {

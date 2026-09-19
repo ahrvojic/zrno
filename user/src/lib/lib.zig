@@ -1,24 +1,12 @@
 pub const malloc = @import("malloc.zig");
 pub const sys = @import("sys.zig");
 
-pub fn strlen(s: [*:0]const u8) usize {
-    // Volatile so LLVM does not turn this into a `strlen` libcall.
-    var n: usize = 0;
-    while (true) {
-        const c = @as(*const volatile u8, @ptrCast(s + n)).*;
-        if (c == 0) return n;
-        n += 1;
+pub fn eql(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| {
+        if (x != y) return false;
     }
-}
-
-pub fn slice(s: [*:0]const u8) []const u8 {
-    return s[0..strlen(s)];
-}
-
-pub fn eql(a: [*:0]const u8, b: [*:0]const u8) bool {
-    var i: usize = 0;
-    while (a[i] != 0 and a[i] == b[i]) i += 1;
-    return a[i] == b[i];
+    return true;
 }
 
 pub fn print(bytes: []const u8) void {
@@ -45,12 +33,10 @@ pub fn printErr(prefix: []const u8, err: i64) void {
     print("\n");
 }
 
-pub fn parseU64(s: [*:0]const u8) ?u64 {
-    if (s[0] == 0) return null;
+pub fn parseU64(s: []const u8) ?u64 {
+    if (s.len == 0) return null;
     var v: u64 = 0;
-    var i: usize = 0;
-    while (s[i] != 0) : (i += 1) {
-        const ch = s[i];
+    for (s) |ch| {
         if (ch < '0' or ch > '9') return null;
         const digit: u64 = ch - '0';
         if (v > (~@as(u64, 0) - digit) / 10) return null;

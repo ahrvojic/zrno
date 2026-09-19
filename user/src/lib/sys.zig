@@ -24,17 +24,21 @@ pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
 pub const prot_exec: u64 = 4;
 
-// Packed dirent. Matches kernel/src/sys/syscall.zig. Name is NUL-terminated.
-pub const dirent_name_max: usize = 120;
+// Packed dirent. Matches kernel/src/sys/syscall.zig. Name is `name_len` bytes.
+pub const dirent_name_max: usize = 112;
 pub const Dirent = extern struct {
     size: u64,
+    name_len: u64,
     name: [dirent_name_max]u8,
 };
 comptime {
     if (@sizeOf(Dirent) != 128) @compileError("Dirent must be 128 bytes");
 }
 
-pub const Argv = [*:null]const ?[*:0]const u8;
+pub const max_argv: usize = 32;
+
+const UserStr = extern struct { ptr: u64, len: u64 };
+const e2big: i64 = -7;
 
 pub fn syscall3(n: u64, a: u64, b: u64, c: u64) i64 {
     return syscall6(n, a, b, c, 0, 0, 0);
@@ -84,16 +88,35 @@ pub fn sleep(ms: u64) void {
     _ = syscall3(nr_sleep, ms, 0, 0);
 }
 
-pub fn open(path: [*:0]const u8) i64 {
-    return syscall3(nr_open, @intFromPtr(path), 0, 0);
+pub fn open(path: []const u8) i64 {
+    return syscall3(nr_open, @intFromPtr(path.ptr), path.len, 0);
 }
 
 pub fn close(fd: u64) i64 {
     return syscall3(nr_close, fd, 0, 0);
 }
 
-pub fn spawn(path: [*:0]const u8, argv: Argv, stdin: u64, stdout: u64, stderr: u64) i64 {
-    return syscall6(nr_spawn, @intFromPtr(path), @intFromPtr(argv), stdin, stdout, stderr, 0);
+fn packArgv(argv: []const []const u8, strs: *[max_argv]UserStr) bool {
+    if (argv.len > strs.len) return false;
+    for (argv, 0..) |a, i| {
+        strs[i] = .{ .ptr = @intFromPtr(a.ptr), .len = a.len };
+    }
+    return true;
+}
+
+pub fn spawn(path: []const u8, argv: []const []const u8, stdin: u64, stdout: u64, stderr: u64) i64 {
+    var strs: [max_argv]UserStr = undefined;
+    if (!packArgv(argv, &strs)) return e2big;
+    var stdio = [3]u64{ stdin, stdout, stderr };
+    return syscall6(
+        nr_spawn,
+        @intFromPtr(path.ptr),
+        path.len,
+        @intFromPtr(&strs),
+        argv.len,
+        @intFromPtr(&stdio),
+        0,
+    );
 }
 
 /// Wait for a child. `pid` 0 means any. Returns the child's pid, or -errno.
@@ -115,8 +138,10 @@ pub fn getppid() i64 {
     return syscall3(nr_getppid, 0, 0, 0);
 }
 
-pub fn exec(path: [*:0]const u8, argv: Argv) i64 {
-    return syscall3(nr_exec, @intFromPtr(path), @intFromPtr(argv), 0);
+pub fn exec(path: []const u8, argv: []const []const u8) i64 {
+    var strs: [max_argv]UserStr = undefined;
+    if (!packArgv(argv, &strs)) return e2big;
+    return syscall6(nr_exec, @intFromPtr(path.ptr), path.len, @intFromPtr(&strs), argv.len, 0, 0);
 }
 
 pub fn brk(addr: usize) i64 {

@@ -21,13 +21,13 @@ pub const nr_write: u64 = 1;
 pub const nr_exit: u64 = 2;
 pub const nr_yield: u64 = 3;
 pub const nr_sleep: u64 = 4;
-pub const nr_open: u64 = 5;
+pub const nr_open: u64 = 5; // rdi=ptr, rsi=len
 pub const nr_close: u64 = 6;
-pub const nr_spawn: u64 = 7; // rdi=path, rsi=argv or 0, rdx/r10/r8=stdin/stdout/stderr
+pub const nr_spawn: u64 = 7; // rdi/rsi=path, rdx/r10=argv ptr/n, r8=*[3]u64 stdio
 pub const nr_wait: u64 = 8; // rdi=pid (0 = any); rsi=status or 0; returns pid
 pub const nr_getpid: u64 = 9;
 pub const nr_getppid: u64 = 10;
-pub const nr_exec: u64 = 11; // replace image, keep pid/fds; rsi=argv or 0
+pub const nr_exec: u64 = 11; // rdi/rsi=path, rdx/r10=argv ptr/n
 pub const nr_brk: u64 = 12; // rdi=0 query; else set program break, return it
 pub const nr_mmap: u64 = 13; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX
 pub const nr_reboot: u64 = 14; // never returns
@@ -39,15 +39,16 @@ pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
 pub const prot_exec: u64 = 4;
 
-// Packed dirent. 128 bytes; name is NUL-terminated.
-pub const dirent_name_max: usize = 120;
+// Packed dirent. 128 bytes; name is `name_len` bytes, not NUL-terminated.
+pub const dirent_name_max: usize = 112;
 pub const Dirent = extern struct {
     size: u64,
+    name_len: u64,
     name: [dirent_name_max]u8,
 };
 comptime {
     std.debug.assert(@sizeOf(Dirent) == 128);
-    std.debug.assert(ramfs.max_name < dirent_name_max);
+    std.debug.assert(ramfs.max_name <= dirent_name_max);
 }
 
 const max_io: usize = pmm.page_size;
@@ -187,7 +188,7 @@ fn sys_sleep(ctx: *cpu.Context) u64 {
 
 fn sys_open(ctx: *cpu.Context) u64 {
     var buf: [max_path]u8 = undefined;
-    const path = copyUserCString(@intCast(ctx.rdi), &buf) catch |err| return pathErr(err);
+    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return pathErr(err);
     const kind: file.File.Kind = if (ramfs.isRoot(path))
         .{ .dir = .{ .pos = 0 } }
     else
@@ -207,10 +208,12 @@ fn sys_close(ctx: *cpu.Context) u64 {
 
 fn sys_spawn(ctx: *cpu.Context) u64 {
     var buf: [max_path]u8 = undefined;
-    const path = copyUserCString(@intCast(ctx.rdi), &buf) catch |err| return pathErr(err);
+    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return pathErr(err);
     var storage: ArgvStorage = .{};
-    const argv = copyUserArgv(ctx.rsi, path, &storage) catch |err| return argvErr(err);
-    return exec.spawnPathArgv(path, argv, ctx.rdx, ctx.r10, ctx.r8) catch |err| return spawnErr(err);
+    const argv = copyUserArgv(ctx.rdx, ctx.r10, &storage) catch |err| return argvErr(err);
+    var stdio: [3]u64 = undefined;
+    userSpace().copyFromUser(std.mem.asBytes(&stdio), @intCast(ctx.r8)) catch return errval(EFAULT);
+    return exec.spawnPathArgv(path, argv, stdio[0], stdio[1], stdio[2]) catch |err| return spawnErr(err);
 }
 
 fn sys_wait(ctx: *cpu.Context) u64 {
@@ -239,9 +242,9 @@ fn sys_getppid() u64 {
 
 fn sys_exec(ctx: *cpu.Context) u64 {
     var buf: [max_path]u8 = undefined;
-    const path = copyUserCString(@intCast(ctx.rdi), &buf) catch |err| return pathErr(err);
+    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return pathErr(err);
     var storage: ArgvStorage = .{};
-    const argv = copyUserArgv(ctx.rsi, path, &storage) catch |err| return argvErr(err);
+    const argv = copyUserArgv(ctx.rdx, ctx.r10, &storage) catch |err| return argvErr(err);
     exec.execPath(currentProcess(), ctx, path, argv) catch |err| return spawnErr(err);
     return 0;
 }
@@ -278,8 +281,8 @@ fn sys_getdents(ctx: *cpu.Context) u64 {
     while (dir.pos < ents.len) {
         if (copied + @sizeOf(Dirent) > len) break;
         const e = ents[dir.pos];
-        var de: Dirent = .{ .size = e.data.len, .name = @splat(0) };
-        const n = @min(e.name().len, de.name.len - 1);
+        const n = @min(e.name().len, dirent_name_max);
+        var de: Dirent = .{ .size = e.data.len, .name_len = n, .name = @splat(0) };
         @memcpy(de.name[0..n], e.name()[0..n]);
         space.copyToUser(addr + copied, std.mem.asBytes(&de)) catch {
             if (copied == 0) return errval(EFAULT);
@@ -330,13 +333,14 @@ fn twoFreeFds() ?[2]usize {
     return .{ a, b };
 }
 
-fn copyUserCString(addr: usize, buf: []u8) error{ Fault, NameTooLong }![]const u8 {
-    const space = userSpace();
-    for (0..buf.len) |n| {
-        try space.copyFromUser(buf[n .. n + 1], addr + n);
-        if (buf[n] == 0) return buf[0..n];
-    }
-    return error.NameTooLong;
+const UserStr = extern struct { ptr: u64, len: u64 };
+
+fn copyUserString(ptr: u64, len: u64, buf: []u8) error{ Fault, NameTooLong }![]const u8 {
+    if (len > buf.len) return error.NameTooLong;
+    const n: usize = @intCast(len);
+    if (n == 0) return buf[0..0];
+    try userSpace().copyFromUser(buf[0..n], @intCast(ptr));
+    return buf[0..n];
 }
 
 const ArgvStorage = struct {
@@ -344,38 +348,24 @@ const ArgvStorage = struct {
     bufs: [max_argv][max_arg]u8 = undefined,
     ptrs: [max_argv][]const u8 = undefined,
 
-    fn add(self: *ArgvStorage, s: []const u8) error{ TooMany, NameTooLong }!void {
-        if (self.n >= max_argv) return error.TooMany;
-        if (s.len >= max_arg) return error.NameTooLong;
-        @memcpy(self.bufs[self.n][0..s.len], s);
-        self.ptrs[self.n] = self.bufs[self.n][0..s.len];
-        self.n += 1;
-    }
-
     fn slice(self: *ArgvStorage) []const []const u8 {
         return self.ptrs[0..self.n];
     }
 };
 
-fn copyUserArgv(addr: usize, path: []const u8, storage: *ArgvStorage) error{ Fault, NameTooLong, TooMany }![]const []const u8 {
-    if (addr == 0) {
-        try storage.add(path);
-        return storage.slice();
-    }
-
+fn copyUserArgv(addr: u64, n: u64, storage: *ArgvStorage) error{ Fault, NameTooLong, TooMany }![]const []const u8 {
+    if (n > max_argv) return error.TooMany;
+    if (n == 0) return storage.slice();
+    const base: usize = @intCast(addr);
     const space = userSpace();
-    for (0..max_argv + 1) |i| {
-        var ptr: u64 = undefined;
-        try space.copyFromUser(std.mem.asBytes(&ptr), addr + i * @sizeOf(u64));
-        if (ptr == 0) {
-            if (i == 0) try storage.add(path);
-            return storage.slice();
-        }
-        if (i == max_argv) return error.TooMany;
-        var tmp: [max_arg]u8 = undefined;
-        try storage.add(try copyUserCString(@intCast(ptr), &tmp));
+    for (0..@intCast(n)) |i| {
+        var s: UserStr = undefined;
+        try space.copyFromUser(std.mem.asBytes(&s), base + i * @sizeOf(UserStr));
+        const str = try copyUserString(s.ptr, s.len, &storage.bufs[storage.n]);
+        storage.ptrs[storage.n] = str;
+        storage.n += 1;
     }
-    unreachable;
+    return storage.slice();
 }
 
 fn currentProcess() *proc.Process {

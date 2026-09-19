@@ -178,46 +178,37 @@ fn applyUserRegs(ctx: *cpu.Context, pc: usize, frame: ArgvFrame) void {
     ctx.cs = gdt.user_code_sel | 3;
     ctx.ss = gdt.user_data_sel | 3;
     ctx.rip = @intCast(pc);
-    ctx.rdi = frame.argc;
-    ctx.rsi = frame.argv_va;
+    ctx.rdi = frame.argv_va;
+    ctx.rsi = frame.argc;
     ctx.rsp = frame.rsp;
 }
 
-// SysV `_start`: rsp % 16 == 8, argc then argv pointers, NULL, envp NULL.
+// argv is `{ptr,len}` slices on the stack; rdi=ptr, rsi=count. No NULs.
 fn setupUserArgv(stack_phys: usize, stack_va: usize, argv: []const []const u8) error{OutOfMemory}!ArgvFrame {
     const mem = virt.toHH([*]u8, stack_phys)[0..state.stack_size];
     var off: usize = state.stack_size;
 
-    var str_va: [32]usize = undefined;
-    if (argv.len > str_va.len) return error.OutOfMemory;
+    var strs: [32]struct { va: usize, len: usize } = undefined;
+    if (argv.len > strs.len) return error.OutOfMemory;
     for (argv, 0..) |arg, i| {
-        const n = arg.len + 1;
-        if (off < n) return error.OutOfMemory;
-        off -= n;
+        if (off < arg.len) return error.OutOfMemory;
+        off -= arg.len;
         @memcpy(mem[off..][0..arg.len], arg);
-        mem[off + arg.len] = 0;
-        str_va[i] = stack_va + off;
+        strs[i] = .{ .va = stack_va + off, .len = arg.len };
     }
 
     off &= ~@as(usize, 15);
-    const words = argv.len + 3;
-    const bytes = words * @sizeOf(u64);
-    if (off < bytes) return error.OutOfMemory;
-    off -= bytes;
-    if ((stack_va + off) % 16 != 8) {
-        if (off < @sizeOf(u64)) return error.OutOfMemory;
-        off -= @sizeOf(u64);
-    }
+    const table_bytes = argv.len * 16;
+    if (off < table_bytes) return error.OutOfMemory;
+    off -= table_bytes;
 
-    writeU64(mem, off, argv.len);
-    var p = off + @sizeOf(u64);
-    const argv_va = stack_va + p;
-    for (0..argv.len) |i| {
-        writeU64(mem, p, str_va[i]);
-        p += @sizeOf(u64);
+    const argv_va = stack_va + off;
+    var p = off;
+    for (strs[0..argv.len]) |s| {
+        writeU64(mem, p, s.va);
+        writeU64(mem, p + 8, s.len);
+        p += 16;
     }
-    writeU64(mem, p, 0);
-    writeU64(mem, p + @sizeOf(u64), 0);
 
     return .{
         .rsp = @intCast(stack_va + off),
