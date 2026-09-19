@@ -68,45 +68,86 @@ fn help() void {
     lib.print("poweroff      ACPI S5 power off\n");
     lib.print("[name] [args] spawn /name\n");
     lib.print("a | b         pipe a stdout to b stdin\n");
+    lib.print("cmd < file    stdin from file\n");
+}
+
+fn optU64(arg: ?[*:0]u8, default: u64, usage: []const u8) ?u64 {
+    const s = arg orelse return default;
+    return lib.parseU64(s) orelse {
+        lib.print(usage);
+        return null;
+    };
 }
 
 fn doSleep(arg: ?[*:0]u8) void {
-    const ms: u64 = if (arg) |s| lib.parseU64(s) orelse {
-        lib.print("usage: sleep [ms]\n");
-        return;
-    } else 1000;
-    sys.sleep(ms);
+    sys.sleep(optU64(arg, 1000, "usage: sleep [ms]\n") orelse return);
 }
 
 fn doExit(arg: ?[*:0]u8) void {
-    const code: u64 = if (arg) |s| lib.parseU64(s) orelse {
-        lib.print("usage: exit [code]\n");
-        return;
-    } else 0;
-    sys.exit(code);
+    sys.exit(optU64(arg, 0, "usage: exit [code]\n") orelse return);
 }
 
 const Argv = [32:null]?[*:0]const u8;
 
-fn fillArgv(ptrs: *Argv, path: [*:0]const u8, ps: *[*:0]u8) bool {
-    ptrs[0] = path;
+const Cmd = struct {
+    path: [*:0]const u8,
+    argv: Argv,
+    in_file: ?[*:0]u8 = null,
+};
+
+fn parseCmd(path: [*:0]const u8, ps: *[*:0]u8) ?Cmd {
+    var argv: Argv = @splat(null);
+    argv[0] = path;
     var n: usize = 1;
+    var in_file: ?[*:0]u8 = null;
     while (nextTok(ps)) |tok| {
-        if (n >= ptrs.len) {
-            lib.print("too many args\n");
-            return false;
+        if (tok[0] == '>') {
+            lib.print("no > yet\n");
+            return null;
         }
-        ptrs[n] = tok;
+        if (tok[0] == '<') {
+            const name = (if (tok[1] != 0) tok + 1 else nextTok(ps)) orelse {
+                lib.print("usage: cmd < file\n");
+                return null;
+            };
+            if (in_file) |_| {
+                lib.print("too many <\n");
+                return null;
+            }
+            in_file = name;
+            continue;
+        }
+        if (n >= argv.len) {
+            lib.print("too many args\n");
+            return null;
+        }
+        argv[n] = tok;
         n += 1;
     }
-    ptrs[n] = null;
-    return true;
+    return .{ .path = path, .argv = argv, .in_file = in_file };
 }
 
-fn spawnCmd(path: [*:0]const u8, argv: *Argv, stdin: u64, stdout: u64, stderr: u64) i64 {
-    const pid = sys.spawn(path, argv, stdin, stdout, stderr);
+fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout: u64) i64 {
+    var opened: ?u64 = null;
+    defer if (opened) |fd| {
+        _ = sys.close(fd);
+    };
+
+    var stdin = stdin0;
+    if (cmd.in_file) |f| {
+        const fd = sys.open(f);
+        if (fd < 0) {
+            lib.print(lib.slice(f));
+            lib.printErr(": err ", fd);
+            return fd;
+        }
+        const nfd: u64 = @intCast(fd);
+        opened = nfd;
+        stdin = nfd;
+    }
+    const pid = sys.spawn(cmd.path, &cmd.argv, stdin, stdout, 2);
     if (pid < 0) {
-        lib.print(lib.slice(path));
+        lib.print(lib.slice(cmd.path));
         lib.printErr(": err ", pid);
     }
     return pid;
@@ -125,16 +166,14 @@ fn waitPid(pid: i64) void {
 }
 
 fn spawnWait(path: [*:0]const u8, ps: *[*:0]u8) void {
-    var ptrs: Argv = undefined;
-    if (!fillArgv(&ptrs, path, ps)) return;
-    const pid = spawnCmd(path, &ptrs, 0, 1, 2);
+    const cmd = parseCmd(path, ps) orelse return;
+    const pid = spawnCmd(&cmd, 0, 1);
     if (pid >= 0) waitPid(pid);
 }
 
 fn splitPipe(buf: *[128:0]u8) ?[*:0]u8 {
-    var i: usize = 0;
-    while (buf[i] != 0) : (i += 1) {
-        if (buf[i] == '|') {
+    for (lib.slice(buf), 0..) |c, i| {
+        if (c == '|') {
             buf[i] = 0;
             return buf[i + 1 .. :0];
         }
@@ -142,34 +181,25 @@ fn splitPipe(buf: *[128:0]u8) ?[*:0]u8 {
     return null;
 }
 
-fn hasChar(s: [*:0]const u8, ch: u8) bool {
-    var p = s;
-    while (p[0] != 0) : (p += 1) {
-        if (p[0] == ch) return true;
-    }
-    return false;
-}
-
 fn doPipe(left_line: [*:0]u8, right_line: [*:0]u8) void {
-    if (hasChar(right_line, '|')) {
-        lib.print("too many |\n");
-        return;
+    for (lib.slice(right_line)) |c| {
+        if (c == '|') {
+            lib.print("too many |\n");
+            return;
+        }
     }
-    var left_rest: [*:0]u8 = left_line;
-    const left_cmd = nextTok(&left_rest) orelse {
+    var left_ps: [*:0]u8 = left_line;
+    var right_ps: [*:0]u8 = right_line;
+    const left_path = nextTok(&left_ps) orelse {
         lib.print("usage: cmd | cmd\n");
         return;
     };
-    var right_rest: [*:0]u8 = right_line;
-    const right_cmd = nextTok(&right_rest) orelse {
+    const right_path = nextTok(&right_ps) orelse {
         lib.print("usage: cmd | cmd\n");
         return;
     };
-
-    var left_argv: Argv = undefined;
-    var right_argv: Argv = undefined;
-    if (!fillArgv(&left_argv, left_cmd, &left_rest)) return;
-    if (!fillArgv(&right_argv, right_cmd, &right_rest)) return;
+    const left = parseCmd(left_path, &left_ps) orelse return;
+    const right = parseCmd(right_path, &right_ps) orelse return;
 
     var p: [2]i64 = undefined;
     const prc = sys.pipe(&p);
@@ -180,8 +210,8 @@ fn doPipe(left_line: [*:0]u8, right_line: [*:0]u8) void {
     const pr: u64 = @intCast(p[0]);
     const pw: u64 = @intCast(p[1]);
 
-    const lpid = spawnCmd(left_cmd, &left_argv, 0, pw, 2);
-    const rpid: i64 = if (lpid >= 0) spawnCmd(right_cmd, &right_argv, pr, 1, 2) else -1;
+    const lpid = spawnCmd(&left, 0, pw);
+    const rpid: i64 = if (lpid >= 0) spawnCmd(&right, pr, 1) else -1;
     _ = sys.close(pr);
     _ = sys.close(pw);
     if (lpid >= 0) waitPid(lpid);
