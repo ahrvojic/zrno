@@ -113,8 +113,15 @@ fn spawnCmd(path: [*:0]const u8, argv: *Argv) i64 {
 }
 
 fn waitPid(pid: i64) void {
-    const w = sys.wait(@intCast(pid));
-    if (w < 0) lib.printErr("wait: err ", w);
+    var status: u64 = 0;
+    const w = sys.waitStatus(@intCast(pid), &status);
+    if (w < 0) {
+        lib.printErr("wait: err ", w);
+        return;
+    }
+    lib.print("[");
+    lib.printU64(status);
+    lib.print("]\n");
 }
 
 fn spawnWait(path: [*:0]const u8, ps: *[*:0]u8) void {
