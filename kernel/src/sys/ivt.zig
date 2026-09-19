@@ -23,7 +23,6 @@ pub const vec_machine_check = 18;
 pub const vec_timer = 32; // local APIC timer, not ISA IRQ 0
 pub const vec_keyboard = 33;
 // Software only: must not overlap IOAPIC GSIs (32 + pin) or APIC spurious.
-pub const vec_syscall = 0x80;
 pub const vec_yield = 0x90;
 pub const vec_apic_spurious = 255;
 
@@ -66,9 +65,6 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
                 sched.schedule(ctx);
             }
             cpu.current().eoi();
-        },
-        vec_syscall => {
-            syscall.handle(ctx);
         },
         vec_yield => {
             sched.schedule(ctx);
@@ -137,14 +133,17 @@ export fn interruptStub() callconv(.naked) void {
 pub export var syscall_user_rsp: u64 = 0;
 pub export var syscall_kernel_rsp: u64 = 0;
 
-// Build the same `cpu.Context` as `interruptStub`, then return via SYSRET
-// when the iret frame is a clean 64-bit user context. Non-canonical RIP
-// (Intel #GP in kernel with user RSP) and kernel/non-user CS/SS fall back
-// to IRETQ.
+// Same `cpu.Context` layout as `interruptStub` (vector/error slots unused),
+// then SYSRET when the iret frame is a clean 64-bit user context.
+// Non-canonical RIP (Intel #GP in kernel with user RSP) and kernel/non-user
+// CS/SS fall back to IRETQ.
+export fn syscallDispatch(ctx: *cpu.Context) callconv(.c) void {
+    syscall.handle(ctx);
+}
+
 pub export fn syscallEntry() callconv(.naked) void {
     const user_cs: u64 = gdt.user_code_sel | 3;
     const user_ss: u64 = gdt.user_data_sel | 3;
-    const vector: u64 = vec_syscall;
     const tf_rf: u64 = (1 << 8) | (1 << 16);
 
     asm volatile (
@@ -158,7 +157,7 @@ pub export fn syscallEntry() callconv(.naked) void {
         \\pushq %%rcx
         \\
         \\pushq $0
-        \\pushq %[vector]
+        \\pushq $0
         \\
         \\push %%rax
         \\push %%rbx
@@ -178,7 +177,7 @@ pub export fn syscallEntry() callconv(.naked) void {
         \\
         \\cld
         \\mov %%rsp, %%rdi
-        \\call interruptDispatch
+        \\call syscallDispatch
         \\
         \\pop %%r15
         \\pop %%r14
@@ -216,7 +215,6 @@ pub export fn syscallEntry() callconv(.naked) void {
         :
         : [user_ss] "i" (user_ss),
           [user_cs] "i" (user_cs),
-          [vector] "i" (vector),
           [tf_rf] "i" (tf_rf),
     );
 }
