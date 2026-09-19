@@ -69,7 +69,7 @@ fn help() void {
 fn optU64(arg: ?[]const u8, default: u64, usage: []const u8) ?u64 {
     const s = arg orelse return default;
     return lib.parseU64(s) orelse {
-        lib.print(usage);
+        lib.eprint(usage);
         return null;
     };
 }
@@ -95,23 +95,23 @@ fn parseCmd(path: []const u8, ps: *[]u8) ?Cmd {
     var in_file: ?[]const u8 = null;
     while (nextTok(ps)) |tok| {
         if (tok.len > 0 and tok[0] == '>') {
-            lib.print("no > yet\n");
+            lib.eprint("no > yet\n");
             return null;
         }
         if (tok.len > 0 and tok[0] == '<') {
             const name = if (tok.len > 1) tok[1..] else nextTok(ps) orelse {
-                lib.print("usage: cmd < file\n");
+                lib.eprint("usage: cmd < file\n");
                 return null;
             };
             if (in_file) |_| {
-                lib.print("too many <\n");
+                lib.eprint("too many <\n");
                 return null;
             }
             in_file = name;
             continue;
         }
         if (n >= argv.len) {
-            lib.print("too many args\n");
+            lib.eprint("too many args\n");
             return null;
         }
         argv[n] = tok;
@@ -130,7 +130,7 @@ fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout: u64) i64 {
     if (cmd.in_file) |f| {
         const fd = sys.open(f);
         if (fd < 0) {
-            lib.print(f);
+            lib.eprint(f);
             lib.printErr(": err ", fd);
             return fd;
         }
@@ -140,7 +140,7 @@ fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout: u64) i64 {
     }
     const pid = sys.spawn(cmd.argv[0], cmd.argv[0..cmd.n], stdin, stdout, 2);
     if (pid < 0) {
-        lib.print(cmd.argv[0]);
+        lib.eprint(cmd.argv[0]);
         lib.printErr(": err ", pid);
     }
     return pid;
@@ -174,18 +174,18 @@ fn splitPipe(line: []u8) ?struct { left: []u8, right: []u8 } {
 fn doPipe(left_line: []u8, right_line: []u8) void {
     for (right_line) |c| {
         if (c == '|') {
-            lib.print("too many |\n");
+            lib.eprint("too many |\n");
             return;
         }
     }
     var left_ps: []u8 = left_line;
     var right_ps: []u8 = right_line;
     const left_path = nextTok(&left_ps) orelse {
-        lib.print("usage: cmd | cmd\n");
+        lib.eprint("usage: cmd | cmd\n");
         return;
     };
     const right_path = nextTok(&right_ps) orelse {
-        lib.print("usage: cmd | cmd\n");
+        lib.eprint("usage: cmd | cmd\n");
         return;
     };
     const left = parseCmd(left_path, &left_ps) orelse return;

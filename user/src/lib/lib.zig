@@ -13,7 +13,11 @@ pub fn print(bytes: []const u8) void {
     sys.writeAll(1, bytes);
 }
 
-pub fn printU64(v0: u64) void {
+pub fn eprint(bytes: []const u8) void {
+    sys.writeAll(2, bytes);
+}
+
+fn writeU64(fd: u64, v0: u64) void {
     var tmp: [20]u8 = undefined;
     var v = v0;
     var i: usize = tmp.len;
@@ -23,14 +27,18 @@ pub fn printU64(v0: u64) void {
         v /= 10;
         if (v == 0) break;
     }
-    print(tmp[i..]);
+    sys.writeAll(fd, tmp[i..]);
+}
+
+pub fn printU64(v0: u64) void {
+    writeU64(1, v0);
 }
 
 pub fn printErr(prefix: []const u8, err: i64) void {
-    print(prefix);
+    eprint(prefix);
     const v: u64 = if (err < 0) @intCast(-err) else @intCast(err);
-    printU64(v);
-    print("\n");
+    writeU64(2, v);
+    eprint("\n");
 }
 
 pub fn parseU64(s: []const u8) ?u64 {
