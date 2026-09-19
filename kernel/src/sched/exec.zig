@@ -1,5 +1,6 @@
 const cpu = @import("../sys/cpu.zig");
 const elf = @import("../sys/elf.zig");
+const file = @import("../fs/file.zig");
 const heap = @import("../mm/heap.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
@@ -8,17 +9,28 @@ const sched = @import("sched.zig");
 const virt = @import("../lib/virt.zig");
 const vmm = @import("../mm/vmm.zig");
 
-pub const SpawnError = error{ NoEnt, OutOfMemory, BadElf };
+pub const SpawnError = error{ NoEnt, OutOfMemory, BadElf, BadFd };
 
 pub fn spawnPath(path: []const u8) SpawnError!u64 {
     const argv = [_][]const u8{path};
-    return spawnPathArgv(path, &argv);
+    return spawn(path, &argv, null);
 }
 
-pub fn spawnPathArgv(path: []const u8, argv: []const []const u8) SpawnError!u64 {
+pub fn spawnPathArgv(path: []const u8, argv: []const []const u8, stdin: u64, stdout: u64, stderr: u64) SpawnError!u64 {
+    return spawn(path, argv, .{ stdin, stdout, stderr });
+}
+
+fn spawn(path: []const u8, argv: []const []const u8, stdio: ?[3]u64) SpawnError!u64 {
     const image = ramfs.lookup(path) orelse return error.NoEnt;
     const process = sched.startProcess(heap.kernel_heap.allocator(), true) catch |err| return spawnFail(err);
     errdefer sched.abortProcess(process, 1);
+
+    if (stdio) |fds| {
+        const t = cpu.current().thread orelse @panic("user spawn with no thread");
+        file.installStdioFrom(&process.fds, &t.parent.fds, fds) catch |err| return spawnFail(err);
+    } else {
+        file.installStdio(&process.fds) catch |err| return spawnFail(err);
+    }
 
     var space: VmmSpace = .{ .vmm = &process.vmm };
     const loaded = elf.load(&space, image) catch |err| return spawnFail(err);
@@ -41,6 +53,7 @@ pub fn execPath(process: *proc.Process, ctx: *cpu.Context, path: []const u8, arg
 fn spawnFail(err: anyerror) SpawnError {
     return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
+        error.BadFd => error.BadFd,
         else => error.BadElf,
     };
 }

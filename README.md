@@ -14,7 +14,7 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 - I/O APIC, PS/2 keyboard, and framebuffer TTY
 - 1 kHz local APIC timer, calibrated from HPET, ACPI PM timer, or PIT channel 2
 - Processes, threads, and a preemptive round-robin scheduler
-- Userspace: SYSCALL/SYSRET, ustar ramfs, spawn/exec/wait, brk/mmap, fds inherited on spawn
+- Userspace: SYSCALL/SYSRET, ustar ramfs, spawn/exec/wait, brk/mmap, spawn takes stdin/stdout/stderr fds
 - ACPI S5 poweroff and ACPI/8042 reboot
 - Boot spawns `/init` as pid 1; `/init` reaps orphans and restarts `/shell` on exit
 

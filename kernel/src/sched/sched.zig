@@ -62,12 +62,7 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
     errdefer process.vmm.destroy();
     if (cpu.current().thread) |t| {
         process.parent = t.parent.pid;
-        file.inherit(&process.fds, &t.parent.fds);
-    } else {
-        // Kernel pid 0 and `/init` (spawned off the Limine stack).
-        try file.installStdio(&process.fds);
     }
-    errdefer file.closeAll(&process.fds);
 
     state.lock.lock();
     defer state.lock.unlock();

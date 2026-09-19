@@ -12,7 +12,7 @@ pub const OpenDir = struct {
     pos: usize,
 };
 
-// Shared open-file description. Fd table slots point here; `dup` retains.
+// Shared open-file description. Fd table slots point here; spawn retains.
 pub const File = struct {
     refs: usize,
     kind: Kind,
@@ -36,7 +36,7 @@ pub const File = struct {
         return f;
     }
 
-    pub fn retain(self: *File) void {
+    fn retain(self: *File) void {
         self.refs += 1;
     }
 
@@ -65,12 +65,16 @@ pub fn installStdio(fds: *[max_fds]Fd) error{OutOfMemory}!void {
     fds[2] = tty;
 }
 
-pub fn inherit(dst: *[max_fds]Fd, src: *const [max_fds]Fd) void {
-    for (dst, src) |*d, s| {
-        if (s) |f| {
-            f.retain();
-            d.* = f;
-        }
+// Child 0/1/2 are retains of the given parent slots.
+pub fn installStdioFrom(dst: *[max_fds]Fd, src: *const [max_fds]Fd, stdio: [3]u64) error{BadFd}!void {
+    var files: [3]*File = undefined;
+    for (stdio, 0..) |fd, i| {
+        if (fd >= max_fds) return error.BadFd;
+        files[i] = src[@intCast(fd)] orelse return error.BadFd;
+    }
+    for (files, 0..) |f, i| {
+        f.retain();
+        dst[i] = f;
     }
 }
 

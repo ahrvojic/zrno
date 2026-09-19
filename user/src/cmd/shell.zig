@@ -103,8 +103,8 @@ fn fillArgv(ptrs: *Argv, path: [*:0]const u8, ps: *[*:0]u8) bool {
     return true;
 }
 
-fn spawnCmd(path: [*:0]const u8, argv: *Argv) i64 {
-    const pid = sys.spawn(path, argv);
+fn spawnCmd(path: [*:0]const u8, argv: *Argv, stdin: u64, stdout: u64, stderr: u64) i64 {
+    const pid = sys.spawn(path, argv, stdin, stdout, stderr);
     if (pid < 0) {
         lib.print(lib.slice(path));
         lib.printErr(": err ", pid);
@@ -127,7 +127,7 @@ fn waitPid(pid: i64) void {
 fn spawnWait(path: [*:0]const u8, ps: *[*:0]u8) void {
     var ptrs: Argv = undefined;
     if (!fillArgv(&ptrs, path, ps)) return;
-    const pid = spawnCmd(path, &ptrs);
+    const pid = spawnCmd(path, &ptrs, 0, 1, 2);
     if (pid >= 0) waitPid(pid);
 }
 
@@ -148,21 +148,6 @@ fn hasChar(s: [*:0]const u8, ch: u8) bool {
         if (p[0] == ch) return true;
     }
     return false;
-}
-
-// Lowest-fd `dup`: close `slot`, then `dup(with)` lands on it.
-fn redirect(slot: u64, with: u64) u64 {
-    const saved: u64 = @intCast(sys.dup(slot));
-    _ = sys.close(slot);
-    _ = sys.dup(with);
-    _ = sys.close(with);
-    return saved;
-}
-
-fn restore(slot: u64, saved: u64) void {
-    _ = sys.close(slot);
-    _ = sys.dup(saved);
-    _ = sys.close(saved);
 }
 
 fn doPipe(left_line: [*:0]u8, right_line: [*:0]u8) void {
@@ -195,23 +180,12 @@ fn doPipe(left_line: [*:0]u8, right_line: [*:0]u8) void {
     const pr: u64 = @intCast(p[0]);
     const pw: u64 = @intCast(p[1]);
 
-    const saved1 = redirect(1, pw);
-    const lpid = spawnCmd(left_cmd, &left_argv);
-    restore(1, saved1);
-    if (lpid < 0) {
-        _ = sys.close(pr);
-        return;
-    }
-
-    const saved0 = redirect(0, pr);
-    const rpid = spawnCmd(right_cmd, &right_argv);
-    restore(0, saved0);
-    if (rpid < 0) {
-        waitPid(lpid);
-        return;
-    }
-    waitPid(lpid);
-    waitPid(rpid);
+    const lpid = spawnCmd(left_cmd, &left_argv, 0, pw, 2);
+    const rpid: i64 = if (lpid >= 0) spawnCmd(right_cmd, &right_argv, pr, 1, 2) else -1;
+    _ = sys.close(pr);
+    _ = sys.close(pw);
+    if (lpid >= 0) waitPid(lpid);
+    if (rpid >= 0) waitPid(rpid);
 }
 
 fn dispatch(buf: *[128:0]u8) void {

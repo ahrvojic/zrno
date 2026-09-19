@@ -14,8 +14,9 @@ const sched = @import("../sched/sched.zig");
 const tty = @import("../dev/tty.zig");
 const vmm = @import("../mm/vmm.zig");
 
-// SYSCALL (int 0x80 still accepted): rax = number / return, rdi/rsi/rdx = args.
-// RCX/R11 are clobbered (RIP/RFLAGS). Negative rax is -errno.
+// SYSCALL (int 0x80 still accepted): rax = number / return,
+// rdi/rsi/rdx/r10/r8/r9 = args. RCX/R11 are clobbered (RIP/RFLAGS).
+// Negative rax is -errno.
 pub const nr_read: u64 = 0;
 pub const nr_write: u64 = 1;
 pub const nr_exit: u64 = 2;
@@ -23,18 +24,17 @@ pub const nr_yield: u64 = 3;
 pub const nr_sleep: u64 = 4;
 pub const nr_open: u64 = 5;
 pub const nr_close: u64 = 6;
-pub const nr_spawn: u64 = 7; // rdi=path, rsi=argv or 0
+pub const nr_spawn: u64 = 7; // rdi=path, rsi=argv or 0, rdx/r10/r8=stdin/stdout/stderr
 pub const nr_wait: u64 = 8; // rdi=pid (0 = any); rsi=status or 0; returns pid
 pub const nr_getpid: u64 = 9;
 pub const nr_getppid: u64 = 10;
 pub const nr_exec: u64 = 11; // replace image, keep pid/fds; rsi=argv or 0
-pub const nr_dup: u64 = 12;
-pub const nr_brk: u64 = 13; // rdi=0 query; else set program break, return it
-pub const nr_mmap: u64 = 14; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX
-pub const nr_reboot: u64 = 15; // never returns
-pub const nr_poweroff: u64 = 16; // never returns
-pub const nr_pipe: u64 = 17; // rdi = *[2]i64 {read, write}
-pub const nr_getdents: u64 = 18; // rdi=fd, rsi=buf, rdx=len; returns bytes
+pub const nr_brk: u64 = 12; // rdi=0 query; else set program break, return it
+pub const nr_mmap: u64 = 13; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX
+pub const nr_reboot: u64 = 14; // never returns
+pub const nr_poweroff: u64 = 15; // never returns
+pub const nr_pipe: u64 = 16; // rdi = *[2]i64 {read, write}
+pub const nr_getdents: u64 = 17; // rdi=fd, rsi=buf, rdx=len; returns bytes
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -91,7 +91,6 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_getpid => sys_getpid(),
         nr_getppid => sys_getppid(),
         nr_exec => sys_exec(ctx),
-        nr_dup => sys_dup(ctx),
         nr_brk => sys_brk(ctx),
         nr_mmap => sys_mmap(ctx),
         nr_reboot => reboot.perform(),
@@ -194,7 +193,7 @@ fn sys_open(ctx: *cpu.Context) u64 {
         .{ .dir = .{ .pos = 0 } }
     else
         .{ .file = .{ .bytes = ramfs.lookup(path) orelse return errval(ENOENT), .pos = 0 } };
-    const fd = firstFreeFd(3) orelse return errval(EMFILE);
+    const fd = firstFreeFd(0) orelse return errval(EMFILE);
     currentProcess().fds[fd] = file.File.create(kind) catch return errval(ENOMEM);
     return fd;
 }
@@ -212,7 +211,7 @@ fn sys_spawn(ctx: *cpu.Context) u64 {
     const path = copyUserCString(@intCast(ctx.rdi), &buf) catch |err| return pathErr(err);
     var storage: ArgvStorage = .{};
     const argv = copyUserArgv(ctx.rsi, path, &storage) catch |err| return argvErr(err);
-    return exec.spawnPathArgv(path, argv) catch |err| return spawnErr(err);
+    return exec.spawnPathArgv(path, argv, ctx.rdx, ctx.r10, ctx.r8) catch |err| return spawnErr(err);
 }
 
 fn sys_wait(ctx: *cpu.Context) u64 {
@@ -332,14 +331,6 @@ fn twoFreeFds() ?[2]usize {
     return .{ a, b };
 }
 
-fn sys_dup(ctx: *cpu.Context) u64 {
-    const f = fdFile(ctx.rdi) orelse return errval(EBADF);
-    const fd = firstFreeFd(0) orelse return errval(EMFILE);
-    f.retain();
-    currentProcess().fds[fd] = f;
-    return fd;
-}
-
 fn copyUserCString(addr: usize, buf: []u8) error{ Fault, NameTooLong }![]const u8 {
     const space = userSpace();
     for (0..buf.len) |n| {
@@ -427,6 +418,7 @@ fn spawnErr(err: exec.SpawnError) u64 {
         error.NoEnt => errval(ENOENT),
         error.OutOfMemory => errval(ENOMEM),
         error.BadElf => errval(ENOEXEC),
+        error.BadFd => errval(EBADF),
     };
 }
 

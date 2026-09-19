@@ -1,5 +1,6 @@
 // User SYSCALL ABI. Numbers match kernel/src/sys/syscall.zig.
 // RCX and R11 are clobbered (hardware saves RIP/RFLAGS there).
+// Args are rdi, rsi, rdx, r10, r8, r9 (r10 not rcx: SYSCALL overwrites rcx).
 pub const nr_read: u64 = 0;
 pub const nr_write: u64 = 1;
 pub const nr_exit: u64 = 2;
@@ -12,13 +13,12 @@ pub const nr_wait: u64 = 8;
 pub const nr_getpid: u64 = 9;
 pub const nr_getppid: u64 = 10;
 pub const nr_exec: u64 = 11;
-pub const nr_dup: u64 = 12;
-pub const nr_brk: u64 = 13;
-pub const nr_mmap: u64 = 14;
-pub const nr_reboot: u64 = 15;
-pub const nr_poweroff: u64 = 16;
-pub const nr_pipe: u64 = 17;
-pub const nr_getdents: u64 = 18;
+pub const nr_brk: u64 = 12;
+pub const nr_mmap: u64 = 13;
+pub const nr_reboot: u64 = 14;
+pub const nr_poweroff: u64 = 15;
+pub const nr_pipe: u64 = 16;
+pub const nr_getdents: u64 = 17;
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -37,12 +37,19 @@ comptime {
 pub const Argv = [*:null]const ?[*:0]const u8;
 
 pub fn syscall3(n: u64, a: u64, b: u64, c: u64) i64 {
+    return syscall6(n, a, b, c, 0, 0, 0);
+}
+
+pub fn syscall6(n: u64, a: u64, b: u64, c: u64, d: u64, e: u64, f: u64) i64 {
     const ret = asm volatile ("syscall"
         : [ret] "={rax}" (-> u64),
         : [n] "{rax}" (n),
           [a] "{rdi}" (a),
           [b] "{rsi}" (b),
           [c] "{rdx}" (c),
+          [d] "{r10}" (d),
+          [e] "{r8}" (e),
+          [f] "{r9}" (f),
         : .{ .rcx = true, .r11 = true, .memory = true, .cc = true });
     return @bitCast(ret);
 }
@@ -85,8 +92,8 @@ pub fn close(fd: u64) i64 {
     return syscall3(nr_close, fd, 0, 0);
 }
 
-pub fn spawn(path: [*:0]const u8, argv: Argv) i64 {
-    return syscall3(nr_spawn, @intFromPtr(path), @intFromPtr(argv), 0);
+pub fn spawn(path: [*:0]const u8, argv: Argv, stdin: u64, stdout: u64, stderr: u64) i64 {
+    return syscall6(nr_spawn, @intFromPtr(path), @intFromPtr(argv), stdin, stdout, stderr, 0);
 }
 
 /// Wait for a child. `pid` 0 means any. Returns the child's pid, or -errno.
@@ -110,10 +117,6 @@ pub fn getppid() i64 {
 
 pub fn exec(path: [*:0]const u8, argv: Argv) i64 {
     return syscall3(nr_exec, @intFromPtr(path), @intFromPtr(argv), 0);
-}
-
-pub fn dup(fd: u64) i64 {
-    return syscall3(nr_dup, fd, 0, 0);
 }
 
 pub fn brk(addr: usize) i64 {

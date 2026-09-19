@@ -7,7 +7,7 @@ pub fn main() u64 {
     var shell_pid: i64 = -1;
     while (true) {
         if (shell_pid < 0) {
-            const pid = sys.spawn("/shell", &argv);
+            const pid = sys.spawn("/shell", &argv, 0, 1, 2);
             if (pid < 0) {
                 lib.printErr("spawn /shell: ", pid);
                 sys.sleep(1000);

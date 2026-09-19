@@ -25,7 +25,8 @@ pub const Process = struct {
     // the page-aligned end of the loaded image; `brk` may grow up to mmap.
     brk_start: usize,
     brk: usize,
-    // Inherited at spawn. Kernel and init: 0/1/2 share one TTY.
+    // Spawn installs 0/1/2 from the caller's fds. Kernel pid 0 has none;
+    // `/init` (spawned from the kernel) gets a shared TTY.
     fds: [file.max_fds]file.Fd,
 };
 
