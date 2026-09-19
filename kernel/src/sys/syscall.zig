@@ -11,6 +11,7 @@ const proc = @import("../sched/proc.zig");
 const ramfs = @import("../fs/ramfs.zig");
 const reboot = @import("reboot.zig");
 const sched = @import("../sched/sched.zig");
+const state = @import("../sched/state.zig");
 const tty = @import("../dev/tty.zig");
 const vmm = @import("../mm/vmm.zig");
 
@@ -54,7 +55,7 @@ comptime {
 const max_io: usize = pmm.page_size;
 const io_chunk: usize = 256;
 const max_path: usize = 128;
-const max_argv: usize = 32;
+const max_argv: usize = state.max_argv;
 const max_arg: usize = 128;
 
 const ENOENT: i64 = 2;
@@ -104,16 +105,10 @@ fn dispatch(ctx: *cpu.Context) u64 {
 fn sys_read(ctx: *cpu.Context) u64 {
     const addr: usize = @intCast(ctx.rsi);
     const len: usize = @intCast(ctx.rdx);
-    if (checkIo(addr, len)) |r| return r;
+    if (checkIo(len)) |r| return r;
     const f = fdFile(ctx.rdi) orelse return errval(EBADF);
     switch (f.kind) {
-        .tty => {
-            var tmp: [io_chunk]u8 = undefined;
-            const n = tty.peek(tmp[0..@min(tmp.len, len)]);
-            userSpace().copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
-            tty.consume(n);
-            return n;
-        },
+        .tty => return readPeek(tty, addr, len),
         .file => |*open| {
             if (open.pos >= open.bytes.len) return 0;
             const n = @min(len, open.bytes.len - open.pos);
@@ -123,20 +118,22 @@ fn sys_read(ctx: *cpu.Context) u64 {
         },
         .dir => return errval(EISDIR),
         .pipe_write => return errval(EBADF),
-        .pipe_read => |p| {
-            var tmp: [io_chunk]u8 = undefined;
-            const n = p.peek(tmp[0..@min(tmp.len, len)]);
-            userSpace().copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
-            p.consume(n);
-            return n;
-        },
+        .pipe_read => |p| return readPeek(p, addr, len),
     }
+}
+
+fn readPeek(src: anytype, addr: usize, len: usize) u64 {
+    var tmp: [io_chunk]u8 = undefined;
+    const n = src.peek(tmp[0..@min(tmp.len, len)]);
+    userSpace().copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
+    src.consume(n);
+    return n;
 }
 
 fn sys_write(ctx: *cpu.Context) u64 {
     const addr: usize = @intCast(ctx.rsi);
     const len: usize = @intCast(ctx.rdx);
-    if (checkIo(addr, len)) |r| return r;
+    if (checkIo(len)) |r| return r;
     const f = fdFile(ctx.rdi) orelse return errval(EBADF);
     switch (f.kind) {
         .file => return errval(EACCES),
@@ -272,7 +269,7 @@ fn sys_getdents(ctx: *cpu.Context) u64 {
     };
     const addr: usize = @intCast(ctx.rsi);
     const len: usize = @intCast(ctx.rdx);
-    if (checkIo(addr, len)) |r| return r;
+    if (checkIo(len)) |r| return r;
     if (len < @sizeOf(Dirent)) return errval(EINVAL);
 
     const ents = ramfs.entries();
@@ -296,7 +293,6 @@ fn sys_getdents(ctx: *cpu.Context) u64 {
 
 fn sys_pipe(ctx: *cpu.Context) u64 {
     const addr: usize = @intCast(ctx.rdi);
-    if (!vmm.userRange(addr, 2 * @sizeOf(i64))) return errval(EFAULT);
     const pair = twoFreeFds() orelse return errval(EMFILE);
     const p = pipe.Pipe.create() catch return errval(ENOMEM);
     const r = file.File.create(.{ .pipe_read = p }) catch {
@@ -418,10 +414,9 @@ fn mmErr(err: error{ Invalid, OutOfMemory }) u64 {
     };
 }
 
-fn checkIo(addr: usize, len: usize) ?u64 {
+fn checkIo(len: usize) ?u64 {
     if (len == 0) return 0;
     if (len > max_io) return errval(EINVAL);
-    if (!vmm.userRange(addr, len)) return errval(EFAULT);
     return null;
 }
 

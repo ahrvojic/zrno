@@ -3,6 +3,7 @@ const std = @import("std");
 const aspace = @import("aspace.zig");
 const cpu = @import("../sys/cpu.zig");
 const gdt = @import("../sys/gdt.zig");
+const heap = @import("../mm/heap.zig");
 const kstack = @import("kstack.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
@@ -19,7 +20,7 @@ const user_stack_flags = vmm.Flags{
 
 pub fn startKernelThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: bool) !*proc.Thread {
     const thread = try allocKthread(parent);
-    errdefer abandonKthread(parent, thread);
+    errdefer abandonKthread(thread);
 
     // Fake a `call` so a `ret` panics instead of running off the stack, and so
     // SysV entry alignment is rsp ≡ 8 (mod 16).
@@ -40,7 +41,7 @@ pub fn startKernelThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: 
 
 pub fn startUserThread(parent: *proc.Process, pc: usize, argv: []const []const u8, enqueue: bool) !*proc.Thread {
     const thread = try allocKthread(parent);
-    errdefer abandonKthread(parent, thread);
+    errdefer abandonKthread(thread);
 
     const user_stack_phys = pmm.alloc(state.stack_pages) orelse return error.OutOfMemory;
     errdefer pmm.free(user_stack_phys, state.stack_pages);
@@ -97,8 +98,9 @@ pub fn execReplace(
 }
 
 fn allocKthread(parent: *proc.Process) !*proc.Thread {
-    const thread = try parent.heap.create(proc.Thread);
-    errdefer parent.heap.destroy(thread);
+    const allocator = heap.kernel_heap.allocator();
+    const thread = try allocator.create(proc.Thread);
+    errdefer allocator.destroy(thread);
     const stack = try kstack.alloc();
     errdefer kstack.free(stack.phys, stack.base);
     thread.* = .{
@@ -114,9 +116,9 @@ fn allocKthread(parent: *proc.Process) !*proc.Thread {
     return thread;
 }
 
-fn abandonKthread(parent: *proc.Process, thread: *proc.Thread) void {
+fn abandonKthread(thread: *proc.Thread) void {
     kstack.free(thread.stack_phys, thread.stack_base);
-    parent.heap.destroy(thread);
+    heap.kernel_heap.allocator().destroy(thread);
 }
 
 fn publishThread(parent: *proc.Process, thread: *proc.Thread, enqueue: bool) void {
@@ -152,12 +154,11 @@ pub fn stop(thread: *proc.Thread) void {
 
     const stack_phys = thread.stack_phys;
     const stack_base = thread.stack_base;
-    const parent_heap = thread.parent.heap;
     const this_cpu = cpu.current();
     const is_current = this_cpu.thread == thread;
     if (is_current) this_cpu.thread = null;
 
-    parent_heap.destroy(thread);
+    heap.kernel_heap.allocator().destroy(thread);
 
     if (is_current) {
         kstack.deferFree(stack_phys, stack_base);
@@ -188,7 +189,7 @@ fn setupUserArgv(stack_phys: usize, stack_va: usize, argv: []const []const u8) e
     const mem = virt.toHH([*]u8, stack_phys)[0..state.stack_size];
     var off: usize = state.stack_size;
 
-    var strs: [32]struct { va: usize, len: usize } = undefined;
+    var strs: [state.max_argv]struct { va: usize, len: usize } = undefined;
     if (argv.len > strs.len) return error.OutOfMemory;
     for (argv, 0..) |arg, i| {
         if (off < arg.len) return error.OutOfMemory;

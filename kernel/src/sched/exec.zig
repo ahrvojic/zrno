@@ -1,7 +1,6 @@
 const cpu = @import("../sys/cpu.zig");
 const elf = @import("../sys/elf.zig");
 const file = @import("../fs/file.zig");
-const heap = @import("../mm/heap.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
 const ramfs = @import("../fs/ramfs.zig");
@@ -22,7 +21,7 @@ pub fn spawnPathArgv(path: []const u8, argv: []const []const u8, stdin: u64, std
 
 fn spawn(path: []const u8, argv: []const []const u8, stdio: ?[3]u64) SpawnError!u64 {
     const image = ramfs.lookup(path) orelse return error.NoEnt;
-    const process = sched.startProcess(heap.kernel_heap.allocator(), true) catch |err| return spawnFail(err);
+    const process = sched.startProcess(true) catch |err| return spawnFail(err);
     errdefer sched.abortProcess(process, 1);
 
     if (stdio) |fds| {

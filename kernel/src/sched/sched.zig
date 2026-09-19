@@ -31,15 +31,15 @@ var ticks: u64 = 0;
 
 pub fn init() !void {
     state.expectUninit();
-    const allocator = heap.kernel_heap.allocator();
-    const kernel_process = try startProcess(allocator, true);
+    const kernel_process = try startProcess(true);
     // Fallback only; never linked into `threads`.
     state.idle_thread = try thread.startKernelThread(kernel_process, @intFromPtr(&idleThread), 0, false);
     state.initialized = true;
     logger.info("kernel pid={d} idle tid={d}", .{ kernel_process.pid, state.idle_thread.tid });
 }
 
-pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process {
+pub fn startProcess(enqueue: bool) !*proc.Process {
+    const allocator = heap.kernel_heap.allocator();
     const process = try allocator.create(proc.Process);
     errdefer allocator.destroy(process);
 
@@ -47,7 +47,6 @@ pub fn startProcess(allocator: std.mem.Allocator, enqueue: bool) !*proc.Process 
         .pid = 0,
         .parent = 0,
         .zombie = false,
-        .heap = allocator,
         .vmm = try vmm.VMM.cloneKernel(),
         .threads = .{},
         .node = .{},
@@ -333,7 +332,7 @@ fn reapZombie(process: *proc.Process) WaitResult {
 
 fn reapLocked(process: *proc.Process) void {
     state.dequeueProcess(process);
-    process.heap.destroy(process);
+    heap.kernel_heap.allocator().destroy(process);
 }
 
 fn nextReadyThread(start: ?*std.DoublyLinkedList.Node) ?*proc.Thread {

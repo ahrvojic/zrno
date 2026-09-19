@@ -19,6 +19,8 @@ pub const init_pid: u64 = 1;
 pub const user_stack_top: usize = elf.user_stack_top;
 pub const user_stack_slot: usize = elf.user_stack_slot;
 pub const user_mmap_top: usize = elf.user_mmap_top;
+// spawn/exec argv cap; child stack holds this many {ptr,len} entries.
+pub const max_argv: usize = 32;
 
 comptime {
     std.debug.assert(stack_size == elf.user_stack_window);

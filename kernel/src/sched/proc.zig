@@ -9,7 +9,6 @@ pub const Process = struct {
     parent: u64,
     // Exited; stays on the table until wait/reap.
     zombie: bool,
-    heap: std.mem.Allocator,
     vmm: vmm.VMM,
     threads: std.DoublyLinkedList,
     node: std.DoublyLinkedList.Node,
