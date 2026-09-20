@@ -103,6 +103,7 @@ export fn interruptStub() callconv(.naked) void {
         \\push %r15
         \\
         \\cld // DF=0 so user `std` cannot reverse kernel memcpy/memset
+        \\clac // AC=0 so user RFLAGS.AC cannot disable SMAP
         \\mov %rsp, %rdi
         \\call interruptDispatch
         \\
@@ -176,6 +177,7 @@ pub export fn syscallEntry() callconv(.naked) void {
         \\push %%r15
         \\
         \\cld
+        \\clac
         \\mov %%rsp, %%rdi
         \\call syscallDispatch
         \\

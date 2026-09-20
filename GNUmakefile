@@ -22,7 +22,8 @@ KZIGFLAGS ?= -Doptimize=ReleaseSafe
 UZIGFLAGS ?= -Doptimize=ReleaseSmall
 
 QEMU := qemu-system-x86_64
-QEMUFLAGS := -M q35 -m 2G -serial stdio
+# qemu64 omits SMEP/SMAP; the kernel requires both (and CR0.WP).
+QEMUFLAGS := -M q35 -m 2G -serial stdio -cpu qemu64,+smep,+smap
 
 .PHONY: all
 all: $(IMAGE_NAME).iso

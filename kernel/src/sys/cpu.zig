@@ -18,6 +18,12 @@ const msr_lstar = 0xc0000082;
 const msr_fmask = 0xc0000084;
 const efer_sce: u64 = 1 << 0;
 const syscall_feature: u32 = 1 << 11;
+const cr0_wp: u64 = 1 << 16;
+const cr4_smep: u64 = 1 << 20;
+const cr4_smap: u64 = 1 << 21;
+// CPUID.7.0:EBX
+const smep_feature: u32 = 1 << 7;
+const smap_feature: u32 = 1 << 20;
 const rflags_tf: u64 = 1 << 8;
 const rflags_if: u64 = 1 << 9;
 const rflags_df: u64 = 1 << 10;
@@ -139,8 +145,9 @@ pub const CPU = struct {
         self.gdt.load(&self.tss);
         self.idt.load();
         enableSyscall();
+        enableProtections();
         self.initialized = true;
-        logger.info("bsp gdt idt tss syscall", .{});
+        logger.info("bsp gdt idt tss syscall wp smep smap", .{});
     }
 
     /// IRQ and SYSCALL kernel stack top. `TSS.rsp[0]` for privilege-changing
@@ -312,6 +319,17 @@ fn enableSyscall() void {
     logger.info("syscall lstar=0x{x} star_user=0x{x}", .{ @intFromPtr(&ivt.syscallEntry), gdt.star_user });
 }
 
+fn enableProtections() void {
+    if (cpuid(0, 0).eax < 7) @panic("smep not supported");
+    const ebx = cpuid(7, 0).ebx;
+    if (ebx & smep_feature == 0) @panic("smep not supported");
+    if (ebx & smap_feature == 0) @panic("smap not supported");
+
+    writeCr0(readCr0() | cr0_wp);
+    writeCr4(readCr4() | cr4_smep | cr4_smap);
+    logger.info("wp smep smap", .{});
+}
+
 fn rdtsc() u64 {
     var hi: u32 = undefined;
     var lo: u32 = undefined;
@@ -470,6 +488,36 @@ pub fn popCli() void {
     if (this_cpu.ncli == 0 and this_cpu.intena) {
         interruptsOn();
     }
+}
+
+inline fn readCr0() u64 {
+    return asm volatile (
+        \\movq %%cr0, %[cr0]
+        : [cr0] "=r" (-> u64),
+    );
+}
+
+inline fn writeCr0(value: u64) void {
+    asm volatile (
+        \\movq %[value], %%cr0
+        :
+        : [value] "r" (value),
+        : .{ .memory = true });
+}
+
+inline fn readCr4() u64 {
+    return asm volatile (
+        \\movq %%cr4, %[cr4]
+        : [cr4] "=r" (-> u64),
+    );
+}
+
+inline fn writeCr4(value: u64) void {
+    asm volatile (
+        \\movq %[value], %%cr4
+        :
+        : [value] "r" (value),
+        : .{ .memory = true });
 }
 
 inline fn readFlags() u64 {
