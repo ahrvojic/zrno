@@ -20,10 +20,15 @@ pub const nr_poweroff: u64 = 15;
 pub const nr_pipe: u64 = 16;
 pub const nr_getdents: u64 = 17;
 pub const nr_uptime: u64 = 18;
+pub const nr_lseek: u64 = 19;
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
 pub const prot_exec: u64 = 4;
+
+pub const seek_set: u64 = 0;
+pub const seek_cur: u64 = 1;
+pub const seek_end: u64 = 2;
 
 // Packed dirent. Matches kernel/src/sys/syscall.zig. Name is `name_len` bytes.
 pub const dirent_name_max: usize = 112;
@@ -99,6 +104,10 @@ pub fn open(path: []const u8) i64 {
 
 pub fn close(fd: u64) i64 {
     return syscall3(nr_close, fd, 0, 0);
+}
+
+pub fn lseek(fd: u64, offset: i64, whence: u64) i64 {
+    return syscall3(nr_lseek, fd, @bitCast(offset), whence);
 }
 
 fn packArgv(argv: []const []const u8, strs: *[max_argv]UserStr) bool {

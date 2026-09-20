@@ -36,10 +36,15 @@ pub const nr_poweroff: u64 = 15; // never returns
 pub const nr_pipe: u64 = 16; // rdi = *[2]i64 {read, write}
 pub const nr_getdents: u64 = 17; // rdi=fd, rsi=buf, rdx=len; returns bytes
 pub const nr_uptime: u64 = 18; // returns ns since boot
+pub const nr_lseek: u64 = 19; // rdi=fd, rsi=offset i64, rdx=whence; returns pos
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
 pub const prot_exec: u64 = 4;
+
+pub const seek_set: u64 = 0;
+pub const seek_cur: u64 = 1;
+pub const seek_end: u64 = 2;
 
 // Packed dirent. 128 bytes; name is `name_len` bytes, not NUL-terminated.
 pub const dirent_name_max: usize = 112;
@@ -71,6 +76,7 @@ const ENOTDIR: i64 = 20;
 const EISDIR: i64 = 21;
 const EINVAL: i64 = 22;
 const EMFILE: i64 = 24;
+const ESPIPE: i64 = 29;
 const EPIPE: i64 = 32;
 const ENAMETOOLONG: i64 = 36;
 const ENOSYS: i64 = 38;
@@ -100,6 +106,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_pipe => sys_pipe(ctx),
         nr_getdents => sys_getdents(ctx),
         nr_uptime => sys_uptime(),
+        nr_lseek => sys_lseek(ctx),
         else => errval(ENOSYS),
     };
 }
@@ -208,6 +215,27 @@ fn sys_close(ctx: *cpu.Context) u64 {
     slot.* = null;
     f.release();
     return 0;
+}
+
+fn sys_lseek(ctx: *cpu.Context) u64 {
+    const f = fdFile(ctx.rdi) orelse return errval(EBADF);
+    const open = switch (f.kind) {
+        .file => |*o| o,
+        .dir => return errval(EISDIR),
+        .tty, .pipe_read, .pipe_write => return errval(ESPIPE),
+    };
+    const base: u64 = switch (ctx.rdx) {
+        seek_set => 0,
+        seek_cur => open.pos,
+        seek_end => open.bytes.len,
+        else => return errval(EINVAL),
+    };
+    const base_i = std.math.cast(i64, base) orelse return errval(EINVAL);
+    const offset: i64 = @bitCast(ctx.rsi);
+    const new_pos = std.math.add(i64, base_i, offset) catch return errval(EINVAL);
+    if (new_pos < 0) return errval(EINVAL);
+    open.pos = @intCast(new_pos);
+    return open.pos;
 }
 
 fn sys_spawn(ctx: *cpu.Context) u64 {
