@@ -35,6 +35,10 @@ all-hdd: $(IMAGE_NAME).hdd
 run: $(IMAGE_NAME).iso
 	$(QEMU) $(QEMUFLAGS) -cdrom $(IMAGE_NAME).iso -boot d
 
+.PHONY: test-qemu
+test-qemu: $(IMAGE_NAME).iso
+	sh scripts/test-qemu.sh $(IMAGE_NAME).iso $(QEMU) $(QEMUFLAGS)
+
 .PHONY: run-uefi
 run-uefi: ovmf $(IMAGE_NAME).iso
 	$(QEMU) $(QEMUFLAGS) -bios ovmf/OVMF.fd -cdrom $(IMAGE_NAME).iso -boot d
