@@ -53,11 +53,11 @@ pub fn parseU64(s: []const u8) ?u64 {
     return v;
 }
 
-pub fn copyFd(fd: u64) i64 {
+pub fn copyFd(src: u64, dst: u64) i64 {
     var buf: [256]u8 = undefined;
     while (true) {
-        const n = sys.read(fd, &buf);
+        const n = sys.read(src, &buf);
         if (n <= 0) return n;
-        sys.writeAll(1, buf[0..@intCast(n)]);
+        sys.writeAll(dst, buf[0..@intCast(n)]);
     }
 }

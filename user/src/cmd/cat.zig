@@ -18,7 +18,7 @@ pub fn main(argv: []const []const u8) u64 {
 }
 
 fn copy(fd: u64) u64 {
-    const n = lib.copyFd(fd);
+    const n = lib.copyFd(fd, 1);
     if (n < 0) {
         lib.printErr("cat: err ", n);
         return 1;
