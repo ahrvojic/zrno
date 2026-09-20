@@ -3,7 +3,7 @@ const sys = lib.sys;
 
 pub fn main() u64 {
     lib.print("type 'help'\n");
-    var buf: [128]u8 = undefined;
+    var buf: [256]u8 = undefined;
     while (true) {
         lib.print("> ");
         dispatch(readLine(&buf));
@@ -29,29 +29,12 @@ fn nextTok(ps: *[]u8) ?[]u8 {
     return tok;
 }
 
-fn readLine(buf: *[128]u8) []u8 {
-    var n: usize = 0;
-    while (true) {
-        var ch: [1]u8 = undefined;
-        const r = sys.read(0, &ch);
-        if (r <= 0) continue;
-        if (ch[0] == '\n') {
-            lib.print("\n");
-            return buf[0..n];
-        }
-        if (ch[0] == 0x08) {
-            if (n > 0) {
-                n -= 1;
-                lib.print("\x08");
-            }
-            continue;
-        }
-        if (n < buf.len) {
-            buf[n] = ch[0];
-            n += 1;
-            _ = sys.write(1, &ch);
-        }
-    }
+fn readLine(buf: *[256]u8) []u8 {
+    const r = sys.read(0, buf);
+    if (r <= 0) return buf[0..0];
+    const n: usize = @intCast(r);
+    if (buf[n - 1] == '\n') return buf[0 .. n - 1];
+    return buf[0..n];
 }
 
 fn help() void {

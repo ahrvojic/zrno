@@ -3,21 +3,13 @@ const std = @import("std");
 const Lock = @import("../lib/lock.zig");
 const sched = @import("../sched/sched.zig");
 const serial = @import("serial.zig");
+const tty_input = @import("tty_input.zig");
 const video = @import("video.zig");
 
 var row: usize = 0;
 var col: usize = 0;
 var lock: Lock.SpinLock = .{};
-
-// Wrapping indices fill the ring iff maxInt(InIndex)+1 == in_capacity.
-const in_capacity = 256;
-const InIndex = std.math.IntFittingRange(0, in_capacity - 1);
-comptime {
-    std.debug.assert(@as(usize, std.math.maxInt(InIndex)) + 1 == in_capacity);
-}
-var in_buf: [in_capacity]u8 = undefined;
-var in_head: InIndex = 0;
-var in_tail: InIndex = 0;
+var input: tty_input.Input = .{};
 var serial_saw_cr = false;
 
 pub fn writeBytes(string: []const u8) void {
@@ -26,19 +18,19 @@ pub fn writeBytes(string: []const u8) void {
     writeUnlocked(string);
 }
 
-/// Block until at least one byte is queued, then copy without consuming.
+/// Block until a cooked line is queued, then copy up to the first newline.
 pub fn peek(out: []u8) usize {
     if (out.len == 0) return 0;
     lock.lock();
     defer lock.unlock();
     waitData();
-    return copyOut(out);
+    return input.copyOut(out);
 }
 
 pub fn consume(n: usize) void {
     lock.lock();
     defer lock.unlock();
-    drop(n);
+    input.drop(n);
 }
 
 pub fn printUnsafe(comptime fmt: []const u8, args: anytype) void {
@@ -49,15 +41,14 @@ pub fn printUnsafe(comptime fmt: []const u8, args: anytype) void {
     writeUnlocked(writer.buffered());
 }
 
-// IRQ-safe: enqueue only.
+// IRQ-safe: cook into the line buffer and echo.
 pub fn enqueue(ch: u8) void {
-    if (!isInputChar(ch)) return;
     lock.lock();
     defer lock.unlock();
-    enqueueUnlocked(ch);
+    feedUnlocked(ch);
 }
 
-// Drain the UART into the input ring. Call from the timer IRQ before
+// Drain the UART into the cooked line. Call from the timer IRQ before
 // taking the sched lock (wakeup takes sched).
 pub fn pollSerial() void {
     lock.lock();
@@ -65,35 +56,14 @@ pub fn pollSerial() void {
     for (0..16) |_| {
         const raw = serial.readByte() orelse break;
         const ch = mapSerialByte(raw) orelse continue;
-        enqueueUnlocked(ch);
+        feedUnlocked(ch);
     }
 }
 
 fn waitData() void {
-    while (in_head == in_tail) {
-        sched.wait(&in_buf, &lock);
+    while (input.empty()) {
+        sched.wait(&input.in_buf, &lock);
     }
-}
-
-fn copyOut(out: []u8) usize {
-    var idx = in_head;
-    for (out, 0..) |*slot, n| {
-        if (idx == in_tail) return n;
-        slot.* = in_buf[idx];
-        idx +%= 1;
-    }
-    return out.len;
-}
-
-fn drop(n: usize) void {
-    for (0..n) |_| {
-        if (in_head == in_tail) return;
-        in_head +%= 1;
-    }
-}
-
-fn isInputChar(ch: u8) bool {
-    return ch == '\n' or ch == '\x08' or (ch >= 0x20 and ch <= 0x7e);
 }
 
 fn mapSerialByte(b: u8) ?u8 {
@@ -102,21 +72,16 @@ fn mapSerialByte(b: u8) ?u8 {
         return null;
     }
     serial_saw_cr = b == '\r';
-    const ch: u8 = switch (b) {
+    return switch (b) {
         '\r' => '\n',
         0x7f => '\x08',
         else => b,
     };
-    if (!isInputChar(ch)) return null;
-    return ch;
 }
 
-fn enqueueUnlocked(ch: u8) void {
-    const next = in_tail +% 1;
-    if (next == in_head) return;
-    in_buf[in_tail] = ch;
-    in_tail = next;
-    sched.wakeup(&in_buf);
+fn feedUnlocked(ch: u8) void {
+    if (input.feed(ch)) |e| writeUnlocked(&.{e});
+    if (ch == '\n' and !input.empty()) sched.wakeup(&input.in_buf);
 }
 
 fn writeUnlocked(string: []const u8) void {

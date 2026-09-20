@@ -18,4 +18,5 @@ test {
     _ = @import("dev/pmtimer.zig");
     _ = @import("dev/font.zig");
     _ = @import("fs/pipe.zig");
+    _ = @import("dev/tty_input.zig");
 }
