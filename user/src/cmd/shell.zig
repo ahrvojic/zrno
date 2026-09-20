@@ -153,9 +153,10 @@ fn waitPid(pid: i64) void {
         lib.printErr("wait: err ", w);
         return;
     }
-    lib.print("[");
+    if (status == 0) return;
+    lib.print("exit: ");
     lib.printU64(status);
-    lib.print("]\n");
+    lib.print("\n");
 }
 
 fn spawnWait(path: []const u8, ps: *[]u8) void {
