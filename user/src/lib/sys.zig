@@ -19,6 +19,7 @@ pub const nr_reboot: u64 = 14;
 pub const nr_poweroff: u64 = 15;
 pub const nr_pipe: u64 = 16;
 pub const nr_getdents: u64 = 17;
+pub const nr_uptime: u64 = 18;
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -86,6 +87,10 @@ pub fn yield() void {
 
 pub fn sleep(ms: u64) void {
     _ = syscall3(nr_sleep, ms, 0, 0);
+}
+
+pub fn uptime() u64 {
+    return @bitCast(syscall3(nr_uptime, 0, 0, 0));
 }
 
 pub fn open(path: []const u8) i64 {

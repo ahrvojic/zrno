@@ -35,6 +35,7 @@ pub const nr_reboot: u64 = 14; // never returns
 pub const nr_poweroff: u64 = 15; // never returns
 pub const nr_pipe: u64 = 16; // rdi = *[2]i64 {read, write}
 pub const nr_getdents: u64 = 17; // rdi=fd, rsi=buf, rdx=len; returns bytes
+pub const nr_uptime: u64 = 18; // returns ns since boot
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -98,6 +99,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_poweroff => reboot.poweroff(),
         nr_pipe => sys_pipe(ctx),
         nr_getdents => sys_getdents(ctx),
+        nr_uptime => sys_uptime(),
         else => errval(ENOSYS),
     };
 }
@@ -181,6 +183,11 @@ fn sys_yield() u64 {
 fn sys_sleep(ctx: *cpu.Context) u64 {
     sched.sleep(ctx.rdi);
     return 0;
+}
+
+fn sys_uptime() u64 {
+    if (cpu.nsSinceBoot()) |ns| return ns;
+    return sched.ticksSinceBoot() * (1_000_000_000 / sched.tick_hz);
 }
 
 fn sys_open(ctx: *cpu.Context) u64 {

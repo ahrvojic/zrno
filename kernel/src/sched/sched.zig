@@ -29,6 +29,10 @@ var limine_stack = true;
 // Local APIC timer ticks. 1 kHz so 1 tick = 1 ms (`tick_hz`).
 var ticks: u64 = 0;
 
+pub fn ticksSinceBoot() u64 {
+    return ticks;
+}
+
 pub fn init() !void {
     state.expectUninit();
     const kernel_process = try startProcess(true);

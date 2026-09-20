@@ -58,6 +58,7 @@ fn help() void {
     lib.print("help          commands\n");
     lib.print("yield         yield the CPU\n");
     lib.print("sleep [ms]    sleep (default 1000)\n");
+    lib.print("uptime        time since boot\n");
     lib.print("exit [code]   exit the shell\n");
     lib.print("reboot        reboot the machine\n");
     lib.print("poweroff      ACPI S5 power off\n");
@@ -76,6 +77,17 @@ fn optU64(arg: ?[]const u8, default: u64, usage: []const u8) ?u64 {
 
 fn doSleep(arg: ?[]const u8) void {
     sys.sleep(optU64(arg, 1000, "usage: sleep [ms]\n") orelse return);
+}
+
+fn doUptime() void {
+    const ms = sys.uptime() / 1_000_000;
+    lib.printU64(ms / 1000);
+    lib.print(".");
+    const frac = ms % 1000;
+    if (frac < 100) lib.print("0");
+    if (frac < 10) lib.print("0");
+    lib.printU64(frac);
+    lib.print("\n");
 }
 
 fn doExit(arg: ?[]const u8) void {
@@ -222,6 +234,8 @@ fn dispatch(line: []u8) void {
         sys.yield();
     } else if (lib.eql(cmd, "sleep")) {
         doSleep(nextTok(&rest));
+    } else if (lib.eql(cmd, "uptime")) {
+        doUptime();
     } else if (lib.eql(cmd, "exit")) {
         doExit(nextTok(&rest));
     } else if (lib.eql(cmd, "reboot")) {
