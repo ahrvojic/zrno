@@ -37,6 +37,7 @@ pub const nr_pipe: u64 = 16; // rdi = *[2]i64 {read, write}
 pub const nr_getdents: u64 = 17; // rdi=fd, rsi=buf, rdx=len; returns bytes
 pub const nr_uptime: u64 = 18; // returns ns since boot
 pub const nr_lseek: u64 = 19; // rdi=fd, rsi=offset i64, rdx=whence; returns pos
+pub const nr_ps: u64 = 20; // rdi=buf, rsi=len; returns bytes of PsInfo
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -58,7 +59,18 @@ comptime {
     std.debug.assert(ramfs.max_name <= dirent_name_max);
 }
 
+pub const ps_zombie: u64 = 1;
+pub const PsInfo = extern struct {
+    pid: u64,
+    ppid: u64,
+    flags: u64,
+};
+comptime {
+    std.debug.assert(@sizeOf(PsInfo) == 24);
+}
+
 const max_io: usize = pmm.page_size;
+const max_ps = max_io / @sizeOf(PsInfo);
 const io_chunk: usize = 256;
 const max_path: usize = 128;
 const max_argv: usize = state.max_argv;
@@ -107,6 +119,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_getdents => sys_getdents(ctx),
         nr_uptime => sys_uptime(),
         nr_lseek => sys_lseek(ctx),
+        nr_ps => sys_ps(ctx),
         else => errval(ENOSYS),
     };
 }
@@ -270,6 +283,38 @@ fn sys_getpid() u64 {
 
 fn sys_getppid() u64 {
     return currentProcess().parent;
+}
+
+fn sys_ps(ctx: *cpu.Context) u64 {
+    const addr: usize = @intCast(ctx.rdi);
+    const len: usize = @intCast(ctx.rsi);
+    if (checkIo(len)) |r| return r;
+    if (len < @sizeOf(PsInfo)) return errval(EINVAL);
+
+    var tmp: [max_ps]PsInfo = undefined;
+    const n = snapshotPs(tmp[0..@min(tmp.len, len / @sizeOf(PsInfo))]);
+    userSpace().copyToUser(addr, std.mem.sliceAsBytes(tmp[0..n])) catch return errval(EFAULT);
+    return n * @sizeOf(PsInfo);
+}
+
+fn snapshotPs(out: []PsInfo) usize {
+    state.expectInit();
+    state.lock.lock();
+    defer state.lock.unlock();
+    var n: usize = 0;
+    var node = state.processes.first;
+    while (node) |nd| {
+        if (n == out.len) break;
+        const p: *proc.Process = @fieldParentPtr("node", nd);
+        out[n] = .{
+            .pid = p.pid,
+            .ppid = p.parent,
+            .flags = if (p.zombie) ps_zombie else 0,
+        };
+        n += 1;
+        node = nd.next;
+    }
+    return n;
 }
 
 fn sys_exec(ctx: *cpu.Context) u64 {

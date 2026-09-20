@@ -21,6 +21,7 @@ pub const nr_pipe: u64 = 16;
 pub const nr_getdents: u64 = 17;
 pub const nr_uptime: u64 = 18;
 pub const nr_lseek: u64 = 19;
+pub const nr_ps: u64 = 20;
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -39,6 +40,16 @@ pub const Dirent = extern struct {
 };
 comptime {
     if (@sizeOf(Dirent) != 128) @compileError("Dirent must be 128 bytes");
+}
+
+pub const ps_zombie: u64 = 1;
+pub const PsInfo = extern struct {
+    pid: u64,
+    ppid: u64,
+    flags: u64,
+};
+comptime {
+    if (@sizeOf(PsInfo) != 24) @compileError("PsInfo must be 24 bytes");
 }
 
 pub const max_argv: usize = 32;
@@ -182,4 +193,8 @@ pub fn pipe(fds: *[2]i64) i64 {
 
 pub fn getdents(fd: u64, buf: []Dirent) i64 {
     return syscall3(nr_getdents, fd, @intFromPtr(buf.ptr), buf.len * @sizeOf(Dirent));
+}
+
+pub fn ps(buf: []PsInfo) i64 {
+    return syscall3(nr_ps, @intFromPtr(buf.ptr), buf.len * @sizeOf(PsInfo), 0);
 }
