@@ -37,7 +37,7 @@ pub fn init() void {
         return;
     }
 
-    const gas = hpet_table.info().address;
+    const gas = hpet_table.address();
     if (gas.address_space != acpi.gas_space_memory or gas.address == 0 or gas.bit_offset != 0) {
         logger.warn("HPET GAS unsupported space={d} addr=0x{x}", .{ gas.address_space, gas.address });
         return;

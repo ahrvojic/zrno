@@ -92,15 +92,6 @@ pub const BootArch = struct {
     cmos_rtc_not_present: bool,
 };
 
-pub const Info = struct {
-    sci_interrupt: u16,
-    smi_cmd_port: u32,
-    acpi_enable: u8,
-    acpi_disable: u8,
-    pm1a_ctrl_block: u32,
-    boot_arch: BootArch,
-};
-
 pub const PmTimer = struct {
     pub const Kind = enum { io, memory };
 
@@ -119,7 +110,7 @@ pub const Pm1 = struct {
     evt: u16 = 0,
 };
 
-var info_value: Info = undefined;
+var boot_arch_value: BootArch = undefined;
 var pm_timer_value: ?PmTimer = null;
 var reset_reg_value: ?ResetReg = null;
 var pm1a_value: Pm1 = .{};
@@ -127,13 +118,9 @@ var pm1b_value: Pm1 = .{};
 var dsdt_phys_value: ?usize = null;
 var initialized = false;
 
-pub fn info() Info {
-    expectInit();
-    return info_value;
-}
-
 pub fn bootArch() BootArch {
-    return info().boot_arch;
+    expectInit();
+    return boot_arch_value;
 }
 
 pub fn pmTimer() ?PmTimer {
@@ -174,24 +161,15 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
         panic("Hardware-reduced ACPI not supported!");
     }
 
-    const boot_arch = parseBootArch(sdt.revision, fadt.boot_arch_flags);
+    boot_arch_value = parseBootArch(sdt.revision, fadt.boot_arch_flags);
     logger.info("sci={d} smi_cmd=0x{x} 8042={} vga={} rtc={} legacy={}", .{
         fadt.sci_interrupt,
         fadt.smi_cmd_port,
-        boot_arch.has_8042,
-        !boot_arch.vga_not_present,
-        !boot_arch.cmos_rtc_not_present,
-        boot_arch.legacy_devices,
+        boot_arch_value.has_8042,
+        !boot_arch_value.vga_not_present,
+        !boot_arch_value.cmos_rtc_not_present,
+        boot_arch_value.legacy_devices,
     });
-
-    info_value = .{
-        .sci_interrupt = fadt.sci_interrupt,
-        .smi_cmd_port = fadt.smi_cmd_port,
-        .acpi_enable = fadt.acpi_enable,
-        .acpi_disable = fadt.acpi_disable,
-        .pm1a_ctrl_block = fadt.pm1a_ctrl_block,
-        .boot_arch = boot_arch,
-    };
 
     const bits: u8 = if (fadt.flags & tmr_val_ext != 0) 32 else 24;
     pm_timer_value = parsePmTimer(data, bits);

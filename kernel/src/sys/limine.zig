@@ -87,10 +87,6 @@ pub const Framebuffer = extern struct {
     edid: ?[*]u8,
     mode_count: u64,
     modes: [*]*VideoMode,
-
-    pub fn data(self: *Framebuffer) []u8 {
-        return self.address[0 .. self.pitch * self.height];
-    }
 };
 
 pub const FramebufferResponse = extern struct {
