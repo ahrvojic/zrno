@@ -204,7 +204,12 @@ fn setupUserArgv(stack_phys: usize, stack_va: usize, argv: []const []const u8) e
 
     off &= ~@as(usize, 15);
     const table_bytes = argv.len * 16;
-    if (off < table_bytes) return error.OutOfMemory;
+    // A C function starts 8 bytes below a 16-byte boundary, where `call` would
+    // have pushed a return address. Its first `push %rbp` then writes one slot
+    // further down. `_start` is entered by iretq and never returns, so that
+    // slot is left empty. rsp on the table itself would leave every later
+    // stack adjustment 8 bytes off from what the compiler emitted.
+    if (off < table_bytes + 8) return error.OutOfMemory;
     off -= table_bytes;
 
     const argv_va = stack_va + off;
@@ -216,7 +221,7 @@ fn setupUserArgv(stack_phys: usize, stack_va: usize, argv: []const []const u8) e
     }
 
     return .{
-        .rsp = @intCast(stack_va + off),
+        .rsp = @intCast(argv_va - 8),
         .argc = argv.len,
         .argv_va = @intCast(argv_va),
     };
