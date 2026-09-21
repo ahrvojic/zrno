@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
         .cpu_arch = .x86_64,
         .os_tag = .freestanding,
         .abi = .none,
-        // Kernel stays SSE-free so IRQ/SYSCALL do not clobber user FXSAVE state.
+        // Kernel stays SSE/AVX-free so IRQ/SYSCALL do not clobber user XSAVE state.
         .cpu_features_add = std.Target.x86.featureSet(&.{.soft_float}),
         .cpu_features_sub = std.Target.x86.featureSet(&.{
             Features.mmx,

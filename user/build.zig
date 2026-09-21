@@ -6,9 +6,8 @@ pub fn build(b: *std.Build) void {
         .cpu_arch = .x86_64,
         .os_tag = .freestanding,
         .abi = .none,
-        // SSE/SSE2 are in the x86_64 baseline; FXSAVE/FXRSTOR on context
-        // switch. No AVX: that needs XSAVE.
-        .cpu_features_sub = std.Target.x86.featureSet(&.{
+        // SSE/SSE2 are in the x86_64 baseline. AVX/AVX2 need XSAVE + YMM in XCR0.
+        .cpu_features_add = std.Target.x86.featureSet(&.{
             Features.avx,
             Features.avx2,
         }),

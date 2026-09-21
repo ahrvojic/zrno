@@ -22,8 +22,9 @@ KZIGFLAGS ?= -Doptimize=ReleaseSafe
 UZIGFLAGS ?= -Doptimize=ReleaseSmall
 
 QEMU := qemu-system-x86_64
-# qemu64 omits SMEP/SMAP; the kernel requires both (and CR0.WP).
-QEMUFLAGS := -M q35 -m 2G -serial stdio -cpu qemu64,+smep,+smap
+# qemu64 does not implement XSAVE/AVX (even with +avx). Broadwell has
+# SMEP, SMAP, AVX, and AVX2, which the kernel requires.
+QEMUFLAGS := -M q35 -m 2G -serial stdio -cpu Broadwell
 
 .PHONY: all
 all: $(IMAGE_NAME).iso

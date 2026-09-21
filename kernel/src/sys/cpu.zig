@@ -26,12 +26,16 @@ const cr0_ne: u64 = 1 << 5;
 const cr0_wp: u64 = 1 << 16;
 const cr4_osfxsr: u64 = 1 << 9;
 const cr4_osxmmexcpt: u64 = 1 << 10;
+const cr4_osxsave: u64 = 1 << 18;
 const cr4_smep: u64 = 1 << 20;
 const cr4_smap: u64 = 1 << 21;
 // CPUID.1:EDX
 const fpu_feature: u32 = 1 << 0;
 const fxsr_feature: u32 = 1 << 24;
 const sse_feature: u32 = 1 << 25;
+// CPUID.1:ECX
+const xsave_feature: u32 = 1 << 26;
+const avx_feature: u32 = 1 << 28;
 // CPUID.7.0:EBX
 const smep_feature: u32 = 1 << 7;
 const smap_feature: u32 = 1 << 20;
@@ -159,7 +163,7 @@ pub const CPU = struct {
         enableProtections();
         enableFpu();
         self.initialized = true;
-        logger.info("bsp gdt idt tss syscall wp smep smap fxsr", .{});
+        logger.info("bsp gdt idt tss syscall wp smep smap xsave", .{});
     }
 
     /// IRQ and SYSCALL kernel stack top. `TSS.rsp[0]` for privilege-changing
@@ -344,13 +348,23 @@ fn enableProtections() void {
 
 fn enableFpu() void {
     if (cpuid(0, 0).eax < 1) @panic("fpu not supported");
-    const edx = cpuid(1, 0).edx;
-    if (edx & fpu_feature == 0) @panic("fpu not supported");
-    if (edx & fxsr_feature == 0) @panic("fxsr not supported");
-    if (edx & sse_feature == 0) @panic("sse not supported");
+    const leaf1 = cpuid(1, 0);
+    if (leaf1.edx & fpu_feature == 0) @panic("fpu not supported");
+    if (leaf1.edx & fxsr_feature == 0) @panic("fxsr not supported");
+    if (leaf1.edx & sse_feature == 0) @panic("sse not supported");
+    if (leaf1.ecx & xsave_feature == 0) @panic("xsave not supported");
+    if (leaf1.ecx & avx_feature == 0) @panic("avx not supported");
+    if (cpuid(0, 0).eax < 0xd) @panic("xsave not supported");
+    const xstate = cpuid(0xd, 0);
+    if (xstate.eax & fpu.xcr0_mask != fpu.xcr0_mask) @panic("avx not supported");
 
     writeCr0((readCr0() | cr0_mp | cr0_ne) & ~(cr0_em | cr0_ts));
-    writeCr4(readCr4() | cr4_osfxsr | cr4_osxmmexcpt);
+    writeCr4(readCr4() | cr4_osfxsr | cr4_osxmmexcpt | cr4_osxsave);
+    xsetbv(0, fpu.xcr0_mask);
+
+    const xsave_bytes = cpuid(0xd, 0).ebx;
+    if (xsave_bytes == 0 or xsave_bytes > fpu.state_size) @panic("xsave area too large");
+
     asm volatile ("fninit");
     var mxcsr: u32 = fpu.mxcsr_default;
     asm volatile (
@@ -358,7 +372,7 @@ fn enableFpu() void {
         :
         : [ptr] "r" (&mxcsr),
         : .{ .memory = true });
-    logger.info("mp ne osfxsr osxmmexcpt", .{});
+    logger.info("mp ne osfxsr osxmmexcpt osxsave xcr0=0x{x} xsave={d}", .{ fpu.xcr0_mask, xsave_bytes });
 }
 
 pub const FpuState = fpu.State;
@@ -366,20 +380,38 @@ pub const initFpuState = fpu.initState;
 
 pub fn saveFpu(state: *FpuState) void {
     std.debug.assert(std.mem.isAligned(@intFromPtr(state), fpu.state_align));
+    const lo: u32 = @truncate(fpu.xcr0_mask);
+    const hi: u32 = @truncate(fpu.xcr0_mask >> 32);
     asm volatile (
-        \\fxsaveq (%[ptr])
+        \\xsave (%[ptr])
         :
         : [ptr] "r" (state),
+          [_] "{eax}" (lo),
+          [_] "{edx}" (hi),
         : .{ .memory = true });
 }
 
 pub fn restoreFpu(state: *const FpuState) void {
     std.debug.assert(std.mem.isAligned(@intFromPtr(state), fpu.state_align));
+    const lo: u32 = @truncate(fpu.xcr0_mask);
+    const hi: u32 = @truncate(fpu.xcr0_mask >> 32);
     asm volatile (
-        \\fxrstorq (%[ptr])
+        \\xrstor (%[ptr])
         :
         : [ptr] "r" (state),
+          [_] "{eax}" (lo),
+          [_] "{edx}" (hi),
         : .{ .memory = true });
+}
+
+fn xsetbv(reg: u32, value: u64) void {
+    asm volatile (
+        \\xsetbv
+        :
+        : [_] "{ecx}" (reg),
+          [_] "{eax}" (@as(u32, @truncate(value))),
+          [_] "{edx}" (@as(u32, @truncate(value >> 32))),
+    );
 }
 
 fn rdtsc() u64 {
