@@ -8,13 +8,12 @@ pub const user_stack_top: usize = user_space_end;
 pub const user_stack_window: usize = 16 * page_size;
 /// Not-present page below each mapped user stack.
 pub const user_stack_guard: usize = page_size;
-/// One mapped stack plus its guard. PT_LOAD must not overlap the first
-/// slot below `user_stack_top`.
+/// One mapped stack plus its guard.
 pub const user_stack_slot: usize = user_stack_window + user_stack_guard;
 /// Stack slots reserved below `user_stack_top` before anonymous mmap.
 const user_stack_region: usize = 0x1000_0000;
 /// Exclusive top of anonymous mmap; mappings grow down from here,
-/// below the user stacks.
+/// below the user stacks. PT_LOAD must stay below this.
 pub const user_mmap_top: usize = user_stack_top - user_stack_region;
 
 comptime {
@@ -197,11 +196,8 @@ fn checkIdent(ident: *const [std.elf.EI.NIDENT]u8) error{BadElf}!void {
 fn checkUserImageRange(addr: usize, len: usize) error{OutOfRange}!void {
     if (len == 0) return error.OutOfRange;
     if (addr < page_size) return error.OutOfRange;
-    if (addr >= user_space_end) return error.OutOfRange;
-    if (len > user_space_end - addr) return error.OutOfRange;
-
-    const stack_lo = user_stack_top - user_stack_slot;
-    if (addr < user_stack_top and addr + len > stack_lo) return error.OutOfRange;
+    if (addr >= user_mmap_top) return error.OutOfRange;
+    if (len > user_mmap_top - addr) return error.OutOfRange;
 }
 
 fn checkOverlaps(loads: []const Load) error{AlreadyMapped}!void {
@@ -424,12 +420,22 @@ test "reject first user stack slot including guard" {
     try std.testing.expectError(error.OutOfRange, parse(g.finish(.EXEC, .X86_64, user_stack_top - user_stack_slot)));
 }
 
-test "allow PT_LOAD just below the first stack slot" {
-    const vaddr = user_stack_top - user_stack_slot - page_size;
+test "allow PT_LOAD just below user_mmap_top" {
+    const vaddr = user_mmap_top - page_size;
     var f: Fixture = .{};
     f.addLoad(vaddr, rx(), "code", 0, page_size);
     const parsed = try parse(f.finish(.EXEC, .X86_64, vaddr));
     try std.testing.expectEqual(vaddr, parsed.entry);
+}
+
+test "reject PT_LOAD in the mmap and stack region" {
+    var f: Fixture = .{};
+    f.addLoad(user_mmap_top, rx(), "code", 0, page_size);
+    try std.testing.expectError(error.OutOfRange, parse(f.finish(.EXEC, .X86_64, user_mmap_top)));
+
+    var g: Fixture = .{};
+    g.addLoad(user_mmap_top - page_size, rx(), "code", page_size, page_size);
+    try std.testing.expectError(error.OutOfRange, parse(g.finish(.EXEC, .X86_64, user_mmap_top - page_size)));
 }
 
 test "reject kernel half" {

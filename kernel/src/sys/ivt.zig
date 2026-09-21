@@ -136,10 +136,21 @@ pub export var syscall_kernel_rsp: u64 = 0;
 
 // Same `cpu.Context` layout as `interruptStub` (vector/error slots unused),
 // then SYSRET when the iret frame is a clean 64-bit user context.
-// Non-canonical RIP (Intel #GP in kernel with user RSP) and kernel/non-user
-// CS/SS fall back to IRETQ.
+// Non-canonical RIP/RSP (Intel #GP in kernel) and kernel/non-user CS/SS
+// fall back to IRETQ. Kill here so IRETQ never sees a non-canonical RSP.
 export fn syscallDispatch(ctx: *cpu.Context) callconv(.c) void {
+    if (!sysretFrameOk(ctx)) {
+        killUser(ctx, "Non-canonical syscall frame");
+        return;
+    }
     syscall.handle(ctx);
+    if (!sysretFrameOk(ctx)) {
+        killUser(ctx, "Non-canonical syscall frame");
+    }
+}
+
+fn sysretFrameOk(ctx: *const cpu.Context) bool {
+    return vmm.userCanonical(ctx.rip) and vmm.userCanonical(ctx.rsp);
 }
 
 pub export fn syscallEntry() callconv(.naked) void {
@@ -206,6 +217,9 @@ pub export fn syscallEntry() callconv(.naked) void {
         \\testq %[tf_rf], 16(%%rsp)
         \\jnz 1f
         \\movq (%%rsp), %%rcx
+        \\sarq $47, %%rcx
+        \\jnz 1f
+        \\movq 24(%%rsp), %%rcx
         \\sarq $47, %%rcx
         \\jnz 1f
         \\movq (%%rsp), %%rcx

@@ -72,6 +72,11 @@ pub fn userRange(addr: usize, len: usize) bool {
     return len <= user_space_end - addr;
 }
 
+/// 0-canonical (bits 63:47 clear). SYSRET/IRET #GP in kernel if RIP or RSP is not.
+pub fn userCanonical(addr: usize) bool {
+    return addr >> 47 == 0;
+}
+
 const PageTable = extern struct {
     entries: [page_table_entries]PageTableEntry,
 
@@ -521,4 +526,11 @@ test "userRange empty length is always in range" {
 test "userRange rejects a span past the user half" {
     try std.testing.expect(!userRange(pmm.page_size, user_space_end - pmm.page_size + 1));
     try std.testing.expect(userRange(pmm.page_size, user_space_end - pmm.page_size));
+}
+
+test "userCanonical is 0-canonical only" {
+    try std.testing.expect(userCanonical(0));
+    try std.testing.expect(userCanonical((1 << 47) - 1));
+    try std.testing.expect(!userCanonical(1 << 47));
+    try std.testing.expect(!userCanonical(~@as(usize, 0)));
 }

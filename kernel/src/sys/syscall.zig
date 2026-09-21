@@ -163,9 +163,25 @@ fn sys_write(ctx: *cpu.Context) u64 {
         .pipe_read => return errval(EBADF),
         .pipe_write => |p| {
             var tmp: [io_chunk]u8 = undefined;
-            const n = @min(tmp.len, len);
-            userSpace().copyFromUser(tmp[0..n], addr) catch return errval(EFAULT);
-            return p.write(tmp[0..n]) catch return errval(EPIPE);
+            var copied: usize = 0;
+            const space = userSpace();
+            while (copied < len) {
+                const n = @min(tmp.len, len - copied);
+                space.copyFromUser(tmp[0..n], addr + copied) catch {
+                    if (copied == 0) return errval(EFAULT);
+                    return copied;
+                };
+                var off: usize = 0;
+                while (off < n) {
+                    const w = p.write(tmp[off..n]) catch {
+                        if (copied == 0) return errval(EPIPE);
+                        return copied;
+                    };
+                    off += w;
+                    copied += w;
+                }
+            }
+            return copied;
         },
         .tty => {
             var tmp: [io_chunk]u8 = undefined;
@@ -263,8 +279,10 @@ fn sys_spawn(ctx: *cpu.Context) u64 {
 
 fn sys_wait(ctx: *cpu.Context) u64 {
     const status_addr: usize = @intCast(ctx.rsi);
-    if (status_addr != 0 and !vmm.userRange(status_addr, @sizeOf(u64))) {
-        return errval(EFAULT);
+    // Probe writable before reaping: userRange is not enough (RO/unmapped).
+    if (status_addr != 0) {
+        var zero: u64 = 0;
+        userSpace().copyToUser(status_addr, std.mem.asBytes(&zero)) catch return errval(EFAULT);
     }
     const result = sched.waitProcess(ctx.rdi) catch |err| return switch (err) {
         error.NoChild => errval(ECHILD),
@@ -272,7 +290,7 @@ fn sys_wait(ctx: *cpu.Context) u64 {
     };
     if (status_addr != 0) {
         var code: u64 = result.code;
-        userSpace().copyToUser(status_addr, std.mem.asBytes(&code)) catch return errval(EFAULT);
+        userSpace().copyToUser(status_addr, std.mem.asBytes(&code)) catch return result.pid;
     }
     return result.pid;
 }

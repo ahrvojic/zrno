@@ -96,12 +96,9 @@ fn mapPages(space: *vmm.VMM, addr: usize, size: usize, flags: vmm.Flags) error{O
     errdefer unmapPages(space, addr, mapped);
     while (mapped < size) : (mapped += pmm.page_size) {
         const phys = pmm.alloc(1) orelse return error.OutOfMemory;
-        space.map(addr + mapped, phys, pmm.page_size, flags) catch |err| {
+        space.map(addr + mapped, phys, pmm.page_size, flags) catch {
             pmm.free(phys, 1);
-            switch (err) {
-                error.AlreadyMapped => @panic("page already mapped"),
-                else => return error.OutOfMemory,
-            }
+            return error.OutOfMemory;
         };
     }
 }
