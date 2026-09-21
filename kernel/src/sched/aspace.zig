@@ -118,8 +118,9 @@ pub fn mapAnon(len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
     const process = cpu.currentProcess();
     if (process.pid == state.kernel_pid) @panic("mmap kernel process");
 
+    // alignForward adds page_size-1 and panics on overflow in ReleaseSafe.
+    if (len == 0 or len > std.math.maxInt(usize) - (pmm.page_size - 1)) return error.Invalid;
     const size = std.mem.alignForward(usize, len, pmm.page_size);
-    if (len == 0 or size < len) return error.Invalid;
 
     state.lock.lock();
     const prepared: ?struct { old: usize, base: usize } = blk: {
