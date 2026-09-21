@@ -8,6 +8,11 @@ const video = @import("video.zig");
 
 var row: usize = 0;
 var col: usize = 0;
+// Cursor is on the glyph that filled this row. The next glyph opens a row.
+var pending: bool = false;
+// Continuation rows opened by a wrap. Backspace at column 0 climbs back.
+var wraps: usize = 0;
+var cursor_on: bool = false;
 var lock: Lock.SpinLock = .{};
 var input: tty_input.Input = .{};
 var serial_saw_cr = false;
@@ -99,35 +104,64 @@ fn putSerial(ch: u8) void {
     }
 }
 
-fn putVideo(ch: u8) void {
-    if (!video.isReady()) return;
+fn hideCursor() void {
+    if (!cursor_on) return;
+    video.invertCell(row, col);
+    cursor_on = false;
+}
 
-    switch (ch) {
-        '\n' => {
-            row += 1;
-            col = 0;
-        },
-        '\r' => {
-            col = 0;
-        },
-        '\x08' => { // backspace
-            if (col > 0) {
-                col -= 1;
-                video.plotChar(' ', row, col);
-            }
-        },
-        else => {
-            video.plotChar(ch, row, col);
-            col += 1;
-            if (col == video.maxCol()) {
-                col = 0;
-                row += 1;
-            }
-        },
-    }
+fn showCursor() void {
+    if (cursor_on or !video.isReady()) return;
+    video.invertCell(row, col);
+    cursor_on = true;
+}
 
+fn advanceRow() void {
+    row += 1;
+    col = 0;
     if (row == video.maxRow()) {
         video.scroll();
         row -= 1;
+    }
+}
+
+fn putVideo(ch: u8) void {
+    if (!video.isReady()) return;
+    hideCursor();
+    defer showCursor();
+
+    switch (ch) {
+        '\n' => {
+            pending = false;
+            wraps = 0;
+            advanceRow();
+        },
+        '\r' => {
+            pending = false;
+            wraps = 0;
+            col = 0;
+        },
+        '\x08' => {
+            if (pending) {
+                pending = false;
+            } else if (col > 0) {
+                col -= 1;
+            } else if (wraps > 0 and row > 0) {
+                wraps -= 1;
+                row -= 1;
+                col = video.maxCol() - 1;
+            } else return;
+            video.plotChar(' ', row, col);
+        },
+        else => {
+            if (pending) {
+                pending = false;
+                wraps += 1;
+                advanceRow();
+            }
+            video.plotChar(ch, row, col);
+            pending = col + 1 == video.maxCol();
+            if (!pending) col += 1;
+        },
     }
 }

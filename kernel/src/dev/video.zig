@@ -41,6 +41,22 @@ pub fn plotChar(ch: u8, row: usize, col: usize) void {
     }
 }
 
+pub fn invertCell(row: usize, col: usize) void {
+    const fb = frame();
+    if (row >= fb.max_row or col >= fb.max_col) return;
+
+    const pixels: [*]u32 = @ptrCast(@alignCast(fb.address));
+    const pitch_pixels = fb.pitch / @sizeOf(u32);
+    const y0 = row * font.builtin.height;
+    const x0 = col * font.builtin.width;
+    for (0..font.builtin.height) |y| {
+        for (0..font.builtin.width) |x| {
+            const pixel = &pixels[(y0 + y) * pitch_pixels + (x0 + x)];
+            pixel.* ^= 0xffffffff;
+        }
+    }
+}
+
 pub fn scroll() void {
     const fb = frame();
     const new_top = fb.pitch * font.builtin.height;

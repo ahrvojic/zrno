@@ -3,7 +3,9 @@ const std = @import("std");
 const Ring = @import("../lib/ring.zig").Ring;
 
 const in_capacity = 256;
-const line_capacity = 128;
+// The ring keeps one slot empty, and Enter appends a newline. A full line
+// must still commit when the ring is empty.
+const line_capacity = in_capacity - 2;
 
 fn isInputChar(ch: u8) bool {
     return ch == '\n' or ch == '\x08' or (ch >= 0x20 and ch <= 0x7e);
