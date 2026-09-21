@@ -302,8 +302,9 @@ fn sys_getppid() u64 {
 fn sys_ps(ctx: *cpu.Context) u64 {
     const addr: usize = @intCast(ctx.rdi);
     const len: usize = @intCast(ctx.rsi);
-    if (checkIo(len)) |r| return r;
+    // checkIo returns 0 for len == 0, and callers treat 0 as the end of the list.
     if (len < @sizeOf(PsInfo)) return errval(EINVAL);
+    if (checkIo(len)) |r| return r;
 
     var snap: [max_ps]sched.ProcessSnap = undefined;
     const n = sched.snapshotProcesses(snap[0..@min(snap.len, len / @sizeOf(PsInfo))]);
@@ -349,8 +350,9 @@ fn sys_getdents(ctx: *cpu.Context) u64 {
     };
     const addr: usize = @intCast(ctx.rsi);
     const len: usize = @intCast(ctx.rdx);
-    if (checkIo(len)) |r| return r;
+    // checkIo returns 0 for len == 0, and callers treat 0 as the end of the list.
     if (len < @sizeOf(Dirent)) return errval(EINVAL);
+    if (checkIo(len)) |r| return r;
 
     const ents = ramfs.entries();
     var copied: usize = 0;
