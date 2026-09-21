@@ -91,9 +91,11 @@ pub fn execReplace(
     process.brk_start = image_brk;
     process.brk = image_brk;
     thread.ctx = ctx.*;
+    cpu.initFpuState(thread.fpu);
     state.lock.unlock();
 
     process.vmm.switchTo();
+    cpu.restoreFpu(thread.fpu);
     aspace.dropAddressSpace(&old);
 }
 
@@ -103,10 +105,14 @@ fn allocKthread(parent: *proc.Process) !*proc.Thread {
     errdefer allocator.destroy(thread);
     const stack = try kstack.alloc();
     errdefer kstack.free(stack.phys, stack.base);
+    const fpu_state = try allocator.create(cpu.FpuState);
+    errdefer allocator.destroy(fpu_state);
+    cpu.initFpuState(fpu_state);
     thread.* = .{
         .tid = 0,
         .status = .ready,
         .parent = parent,
+        .fpu = fpu_state,
         .stack_phys = stack.phys,
         .stack_base = stack.base,
         .proc_node = .{},
@@ -117,6 +123,7 @@ fn allocKthread(parent: *proc.Process) !*proc.Thread {
 }
 
 fn abandonKthread(thread: *proc.Thread) void {
+    heap.kernel_heap.allocator().destroy(thread.fpu);
     kstack.free(thread.stack_phys, thread.stack_base);
     heap.kernel_heap.allocator().destroy(thread);
 }
@@ -154,11 +161,14 @@ pub fn stop(thread: *proc.Thread) void {
 
     const stack_phys = thread.stack_phys;
     const stack_base = thread.stack_base;
+    const fpu_state = thread.fpu;
     const this_cpu = cpu.current();
     const is_current = this_cpu.thread == thread;
     if (is_current) this_cpu.thread = null;
 
-    heap.kernel_heap.allocator().destroy(thread);
+    const allocator = heap.kernel_heap.allocator();
+    allocator.destroy(fpu_state);
+    allocator.destroy(thread);
 
     if (is_current) {
         kstack.deferFree(stack_phys, stack_base);

@@ -2,6 +2,7 @@ const logger = std.log.scoped(.cpu);
 
 const std = @import("std");
 
+const fpu = @import("fpu.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const ivt = @import("ivt.zig");
@@ -18,9 +19,19 @@ const msr_lstar = 0xc0000082;
 const msr_fmask = 0xc0000084;
 const efer_sce: u64 = 1 << 0;
 const syscall_feature: u32 = 1 << 11;
+const cr0_mp: u64 = 1 << 1;
+const cr0_em: u64 = 1 << 2;
+const cr0_ts: u64 = 1 << 3;
+const cr0_ne: u64 = 1 << 5;
 const cr0_wp: u64 = 1 << 16;
+const cr4_osfxsr: u64 = 1 << 9;
+const cr4_osxmmexcpt: u64 = 1 << 10;
 const cr4_smep: u64 = 1 << 20;
 const cr4_smap: u64 = 1 << 21;
+// CPUID.1:EDX
+const fpu_feature: u32 = 1 << 0;
+const fxsr_feature: u32 = 1 << 24;
+const sse_feature: u32 = 1 << 25;
 // CPUID.7.0:EBX
 const smep_feature: u32 = 1 << 7;
 const smap_feature: u32 = 1 << 20;
@@ -146,8 +157,9 @@ pub const CPU = struct {
         self.idt.load();
         enableSyscall();
         enableProtections();
+        enableFpu();
         self.initialized = true;
-        logger.info("bsp gdt idt tss syscall wp smep smap", .{});
+        logger.info("bsp gdt idt tss syscall wp smep smap fxsr", .{});
     }
 
     /// IRQ and SYSCALL kernel stack top. `TSS.rsp[0]` for privilege-changing
@@ -328,6 +340,46 @@ fn enableProtections() void {
     writeCr0(readCr0() | cr0_wp);
     writeCr4(readCr4() | cr4_smep | cr4_smap);
     logger.info("wp smep smap", .{});
+}
+
+fn enableFpu() void {
+    if (cpuid(0, 0).eax < 1) @panic("fpu not supported");
+    const edx = cpuid(1, 0).edx;
+    if (edx & fpu_feature == 0) @panic("fpu not supported");
+    if (edx & fxsr_feature == 0) @panic("fxsr not supported");
+    if (edx & sse_feature == 0) @panic("sse not supported");
+
+    writeCr0((readCr0() | cr0_mp | cr0_ne) & ~(cr0_em | cr0_ts));
+    writeCr4(readCr4() | cr4_osfxsr | cr4_osxmmexcpt);
+    asm volatile ("fninit");
+    var mxcsr: u32 = fpu.mxcsr_default;
+    asm volatile (
+        \\ldmxcsr (%[ptr])
+        :
+        : [ptr] "r" (&mxcsr),
+        : .{ .memory = true });
+    logger.info("mp ne osfxsr osxmmexcpt", .{});
+}
+
+pub const FpuState = fpu.State;
+pub const initFpuState = fpu.initState;
+
+pub fn saveFpu(state: *FpuState) void {
+    std.debug.assert(std.mem.isAligned(@intFromPtr(state), fpu.state_align));
+    asm volatile (
+        \\fxsaveq (%[ptr])
+        :
+        : [ptr] "r" (state),
+        : .{ .memory = true });
+}
+
+pub fn restoreFpu(state: *const FpuState) void {
+    std.debug.assert(std.mem.isAligned(@intFromPtr(state), fpu.state_align));
+    asm volatile (
+        \\fxrstorq (%[ptr])
+        :
+        : [ptr] "r" (state),
+        : .{ .memory = true });
 }
 
 fn rdtsc() u64 {

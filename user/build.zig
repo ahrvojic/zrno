@@ -6,19 +6,16 @@ pub fn build(b: *std.Build) void {
         .cpu_arch = .x86_64,
         .os_tag = .freestanding,
         .abi = .none,
-        .cpu_features_add = std.Target.x86.featureSet(&.{.soft_float}),
+        // SSE/SSE2 are in the x86_64 baseline; FXSAVE/FXRSTOR on context
+        // switch. No AVX: that needs XSAVE.
         .cpu_features_sub = std.Target.x86.featureSet(&.{
-            Features.mmx,
-            Features.sse,
-            Features.sse2,
             Features.avx,
             Features.avx2,
         }),
     });
 
     // Default ReleaseSmall: Debug/ReleaseSafe pull Zig's panic formatter
-    // (ubsan_rt + compiler-rt float helpers). No SSE: #NM is fatal until
-    // FXSAVE/XRSTOR.
+    // (ubsan_rt + compiler-rt) and userspace does not bundle compiler-rt.
     const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Prioritize performance, safety, or binary size") orelse .ReleaseSmall;
 
     const lib = userMod(b, b.path("src/lib/lib.zig"), target, optimize, &.{});

@@ -42,6 +42,9 @@ pub const Thread = struct {
     status: ThreadStatus,
     parent: *Process,
     ctx: cpu.Context = .{},
+    // Separate 16-byte-aligned FXSAVE image. Inline would raise Thread
+    // alignment and break `@fieldParentPtr` from the list nodes.
+    fpu: *cpu.FpuState,
     wait_chan: ?*const anyopaque = null,
     wake_tick: u64 = 0,
     stack_phys: usize,

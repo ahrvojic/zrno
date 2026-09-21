@@ -2,6 +2,10 @@ const lib = @import("lib");
 const sys = lib.sys;
 
 pub fn main() u64 {
+    // SSE canary: #NM or a wrong result kills init (and the boot).
+    var a: f64 = 1.5;
+    const p: *volatile f64 = &a;
+    if (p.* * 2.0 != 3.0) return 1;
     lib.print("READY.\n");
     const argv = [_][]const u8{"/shell"};
     var shell_pid: i64 = -1;

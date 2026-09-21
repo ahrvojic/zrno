@@ -6,6 +6,7 @@ test {
     _ = @import("mm/vmm.zig");
     _ = @import("sys/gdt.zig");
     _ = @import("sys/idt.zig");
+    _ = @import("sys/fpu.zig");
     _ = @import("sys/elf.zig");
     _ = @import("fs/ustar.zig");
     _ = @import("fs/ramfs.zig");

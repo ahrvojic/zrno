@@ -278,6 +278,7 @@ fn switchLocked(ctx: *cpu.Context) void {
 
     if (this_cpu.thread) |curr_thread| {
         curr_thread.ctx = ctx.*;
+        cpu.saveFpu(curr_thread.fpu);
         if (curr_thread.status == .running) {
             curr_thread.status = .ready;
         }
@@ -295,6 +296,7 @@ fn switchLocked(ctx: *cpu.Context) void {
     // Absolute top; ctx.rsp is the thread's SP.
     this_cpu.setIrqStack(@intCast(next.stack_base + state.stack_size));
     ctx.* = next.ctx;
+    cpu.restoreFpu(next.fpu);
 }
 
 fn wakeSleepers() void {
