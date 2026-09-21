@@ -21,7 +21,7 @@ pub const Flags = packed struct(u64) {
     cache_disable: bool = false, // PCD
     accessed: bool = false,
     dirty: bool = false,
-    huge: bool = false, // PS on PD/PDPT; PAT on 4K PTE
+    pat: bool = false, // PAT on a 4K PTE; PS on a PD/PDPT entry
     global: bool = false,
     _avl: u3 = 0,
     _phys: u40 = 0,
@@ -415,6 +415,7 @@ pub fn init() !void {
     }
 
     // Base revision 6 maps only selected memory-map types into the HHDM.
+    // Framebuffer pages are write-combining; every other direct-map entry stays write-back.
     var hhdm_bytes: usize = 0;
     logger.debug("mapping HHDM", .{});
     for (boot.info().memory_map.entries()) |entry| {
@@ -424,12 +425,23 @@ pub fn init() !void {
         const start = std.mem.alignBackward(usize, base, pmm.page_size);
         const end = std.mem.alignForward(usize, top, pmm.page_size);
         hhdm_bytes += end - start;
-        try mapHhdmRange(kernel_vmm.pt, base, top, .{ .present = true, .writable = true, .noexec = true }, .keep);
+        const flags: Flags = switch (entry.kind) {
+            .framebuffer => hhdm_fb_flags,
+            else => hhdm_ram_flags,
+        };
+        try mapHhdmRange(kernel_vmm.pt, base, top, flags, .keep);
     }
 
-    const text = try mapKernelSection(&kernel_vmm, "text", .{ .present = true });
-    const rodata = try mapKernelSection(&kernel_vmm, "rodata", .{ .present = true, .noexec = true });
-    const data = try mapKernelSection(&kernel_vmm, "data", .{ .present = true, .writable = true, .noexec = true });
+    // executable_and_modules also covers these frames. Drop the writable
+    // alias so text and rodata stay read-only beside the mappings below.
+    const text_range = sectionRange("text");
+    const rodata_range = sectionRange("rodata");
+    try mapHhdmRange(kernel_vmm.pt, text_range.phys, text_range.phys + text_range.size, hhdm_ro_flags, .remap);
+    try mapHhdmRange(kernel_vmm.pt, rodata_range.phys, rodata_range.phys + rodata_range.size, hhdm_ro_flags, .remap);
+
+    const text = try mapKernelSection(&kernel_vmm, text_range, .{ .present = true });
+    const rodata = try mapKernelSection(&kernel_vmm, rodata_range, .{ .present = true, .noexec = true });
+    const data = try mapKernelSection(&kernel_vmm, sectionRange("data"), .{ .present = true, .writable = true, .noexec = true });
 
     kernel_vmm.switchTo();
     logger.info("hhdm {d} MiB, kernel text={d} KiB rodata={d} KiB data={d} KiB cr3=0x{x}", .{
@@ -441,6 +453,16 @@ pub fn init() !void {
     });
 }
 
+const hhdm_ram_flags = Flags{ .present = true, .writable = true, .noexec = true };
+const hhdm_ro_flags = Flags{ .present = true, .noexec = true };
+// Limine PAT entry 5 (PWT|PAT, PCD clear) is write-combining.
+const hhdm_fb_flags = Flags{
+    .present = true,
+    .writable = true,
+    .write_through = true,
+    .pat = true,
+    .noexec = true,
+};
 const mmio_flags = Flags{ .present = true, .writable = true, .cache_disable = true, .noexec = true };
 
 fn mapHhdmRange(pt: *PageTable, base: usize, top: usize, flags: Flags, existing: enum { keep, remap }) !void {
@@ -462,7 +484,13 @@ fn mapHhdmRange(pt: *PageTable, base: usize, top: usize, flags: Flags, existing:
     }
 }
 
-fn mapKernelSection(vmm: *VMM, comptime section_name: []const u8, flags: Flags) !usize {
+const SectionRange = struct {
+    virt: usize,
+    phys: usize,
+    size: usize,
+};
+
+fn sectionRange(comptime section_name: []const u8) SectionRange {
     const section_start = @intFromPtr(@extern(*u8, .{ .name = section_name ++ "_start_addr" }));
     const section_end = @intFromPtr(@extern(*u8, .{ .name = section_name ++ "_end_addr" }));
 
@@ -471,11 +499,16 @@ fn mapKernelSection(vmm: *VMM, comptime section_name: []const u8, flags: Flags) 
 
     const virt_base: usize = @intCast(boot.info().kernel.virtual_base);
     const phys_base: usize = @intCast(boot.info().kernel.physical_base);
-    const phys_start = virt_start - virt_base + phys_base;
-    const size = virt_end - virt_start;
+    return .{
+        .virt = virt_start,
+        .phys = virt_start - virt_base + phys_base,
+        .size = virt_end - virt_start,
+    };
+}
 
-    try vmm.map(virt_start, phys_start, size, flags);
-    return size;
+fn mapKernelSection(vm: *VMM, range: SectionRange, flags: Flags) !usize {
+    try vm.map(range.virt, range.phys, range.size, flags);
+    return range.size;
 }
 
 inline fn flushTLB(virt_addr: usize) void {
@@ -502,10 +535,11 @@ inline fn switchPageTable(phys_addr: usize) void {
 }
 
 test "Flags construction" {
-    const flags = Flags{ .present = true, .writable = true, .noexec = true };
-    try std.testing.expectEqual(0x8000_0000_0000_0003, @as(u64, @bitCast(flags)));
-
+    try std.testing.expectEqual(0x8000_0000_0000_0003, @as(u64, @bitCast(hhdm_ram_flags)));
+    try std.testing.expectEqual(0x8000_0000_0000_0001, @as(u64, @bitCast(hhdm_ro_flags)));
     try std.testing.expectEqual(0x8000_0000_0000_0013, @as(u64, @bitCast(mmio_flags)));
+    // PAT index 5: PWT (bit 3) and PAT (bit 7), PCD clear.
+    try std.testing.expectEqual(0x8000_0000_0000_008b, @as(u64, @bitCast(hhdm_fb_flags)));
 }
 
 test "userRange rejects the null page" {
