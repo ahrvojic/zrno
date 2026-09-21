@@ -41,10 +41,7 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
         vec_double_fault => fatalException(ctx, "Double fault"),
         vec_machine_check => fatalException(ctx, "Machine check"),
         vec_page_fault => {
-            const fault_addr = asm volatile (
-                \\mov %%cr2, %[result]
-                : [result] "=r" (-> usize),
-            );
+            const fault_addr: usize = @intCast(cpu.readCr2());
 
             const reason: vmm.FaultReason = @bitCast(ctx.error_code);
             if (!reason.user and sched.isKernelStackGuard(fault_addr)) {
@@ -326,12 +323,8 @@ fn killUser(ctx: *cpu.Context, message: []const u8) void {
     // 128+vector: distinguishable from a normal exit(0..127).
     const code: u8 = 128 + @as(u8, @truncate(ctx.vector));
     if (ctx.vector == vec_page_fault) {
-        const cr2 = asm volatile (
-            \\mov %%cr2, %[result]
-            : [result] "=r" (-> u64),
-        );
         logger.warn("pid {d} {s}: vec={d} err={x:0>16} rip={x:0>16} rsp={x:0>16} cr2={x:0>16} exit={d}", .{
-            process.pid, message, ctx.vector, ctx.error_code, ctx.rip, ctx.rsp, cr2, code,
+            process.pid, message, ctx.vector, ctx.error_code, ctx.rip, ctx.rsp, cpu.readCr2(), code,
         });
     } else {
         logger.warn("pid {d} {s}: vec={d} err={x:0>16} rip={x:0>16} rsp={x:0>16} exit={d}", .{
@@ -347,11 +340,7 @@ fn fatalException(ctx: *cpu.Context, message: []const u8) noreturn {
 }
 
 fn printRegisters(ctx: *cpu.Context) void {
-    const cr2 = asm volatile (
-        \\mov %%cr2, %[result]
-        : [result] "=r" (-> u64),
-    );
-
+    const cr2 = cpu.readCr2();
     const cr3 = asm volatile (
         \\mov %%cr3, %[result]
         : [result] "=r" (-> u64),

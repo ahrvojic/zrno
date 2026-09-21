@@ -75,10 +75,22 @@ pub fn startProcess(enqueue: bool) !*proc.Process {
     return process;
 }
 
+fn processFromNode(n: *std.DoublyLinkedList.Node) *proc.Process {
+    return @fieldParentPtr("node", n);
+}
+
+fn threadFromSched(n: *std.DoublyLinkedList.Node) *proc.Thread {
+    return @fieldParentPtr("sched_node", n);
+}
+
+fn threadFromProc(n: *std.DoublyLinkedList.Node) *proc.Thread {
+    return @fieldParentPtr("proc_node", n);
+}
+
 fn findProcessLocked(pid: u64) ?*proc.Process {
     var node = state.processes.first;
     while (node) |n| {
-        const process: *proc.Process = @fieldParentPtr("node", n);
+        const process = processFromNode(n);
         if (process.pid == pid) return process;
         node = n.next;
     }
@@ -91,38 +103,35 @@ pub const WaitResult = struct { pid: u64, code: u8 };
 // child. Unrelated pids are ECHILD, not a hang.
 pub fn waitProcess(pid: u64) error{ NoChild, Invalid }!WaitResult {
     state.expectInit();
-    const cur = cpu.current().thread orelse @panic("wait with no thread");
-    const waiter = cur.parent;
+    const waiter = cpu.currentProcess();
     if (pid == waiter.pid) return error.Invalid;
 
     state.lock.lock();
     defer state.lock.unlock();
 
     while (true) {
-        if (pid == 0) {
-            var live = false;
-            var node = state.processes.first;
-            while (node) |n| {
-                const process: *proc.Process = @fieldParentPtr("node", n);
-                node = n.next;
-                if (!isWaitableChild(process, waiter.pid)) continue;
-                if (process.zombie) return reapZombie(process);
-                live = true;
-            }
-            if (!live) return error.NoChild;
-            waitLocked(waiter);
-            continue;
-        }
-
-        const process = findProcessLocked(pid) orelse return error.NoChild;
-        if (!isWaitableChild(process, waiter.pid)) return error.NoChild;
-        if (process.zombie) return reapZombie(process);
-        waitLocked(process);
+        const target = pickWaitTarget(pid, waiter.pid) orelse return error.NoChild;
+        if (target.zombie) return reapZombie(target);
+        waitLocked(if (pid == 0) waiter else target);
     }
 }
 
-fn isWaitableChild(process: *const proc.Process, parent_pid: u64) bool {
-    return process.parent == parent_pid;
+fn pickWaitTarget(pid: u64, parent_pid: u64) ?*proc.Process {
+    if (pid != 0) {
+        const process = findProcessLocked(pid) orelse return null;
+        if (process.parent != parent_pid) return null;
+        return process;
+    }
+    var live: ?*proc.Process = null;
+    var node = state.processes.first;
+    while (node) |n| {
+        const process = processFromNode(n);
+        node = n.next;
+        if (process.parent != parent_pid) continue;
+        if (process.zombie) return process;
+        if (live == null) live = process;
+    }
+    return live;
 }
 
 pub fn schedule(ctx: *cpu.Context) void {
@@ -159,7 +168,7 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
     var reparented = false;
     var pnode = state.processes.first;
     while (pnode) |n| {
-        const child: *proc.Process = @fieldParentPtr("node", n);
+        const child = processFromNode(n);
         pnode = n.next;
         if (child.parent != process.pid or child == process) continue;
         child.parent = state.init_pid;
@@ -182,8 +191,7 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
 // with the next thread. Kernel pid 0 is fatal.
 pub fn killCurrent(ctx: *cpu.Context, exit_code: u8) void {
     state.expectInit();
-    const t = cpu.current().thread orelse @panic("kill with no thread");
-    const process = t.parent;
+    const process = cpu.currentProcess();
     if (process.pid == state.kernel_pid) @panic("kill kernel process");
     exitProcess(process, exit_code);
     schedule(ctx);
@@ -210,7 +218,7 @@ pub fn yield() void {
 pub fn sleep(ms: u64) void {
     state.expectInit();
     if (ms == 0) return;
-    const t = cpu.current().thread orelse @panic("sleep with no thread");
+    const t = cpu.currentThread();
 
     state.lock.lock();
     t.status = .sleeping;
@@ -224,7 +232,7 @@ pub fn sleep(ms: u64) void {
 pub fn wait(chan: *const anyopaque, held: *Lock.SpinLock) void {
     state.expectInit();
     if (held == &state.lock) @panic("wait with sched lock");
-    const t = cpu.current().thread orelse @panic("wait with no thread");
+    const t = cpu.currentThread();
 
     // Take sched while `held` is already held (see lock.zig). IRQs stay
     // off across the handoff so wakeup cannot miss this waiter.
@@ -246,7 +254,7 @@ pub fn wakeup(chan: *const anyopaque) void {
 
 // Caller holds `state.lock`. Parks, then reacquires `state.lock` on resume.
 fn waitLocked(chan: *const anyopaque) void {
-    const t = cpu.current().thread orelse @panic("wait with no thread");
+    const t = cpu.currentThread();
     t.wait_chan = chan;
     t.status = .waiting;
     state.lock.unlock();
@@ -257,7 +265,7 @@ fn waitLocked(chan: *const anyopaque) void {
 fn wakeupLocked(chan: *const anyopaque) void {
     var node = state.threads.first;
     while (node) |n| {
-        const t: *proc.Thread = @fieldParentPtr("sched_node", n);
+        const t = threadFromSched(n);
         if (t.status == .waiting and t.wait_chan == chan) {
             t.wait_chan = null;
             t.status = .ready;
@@ -302,7 +310,7 @@ fn switchLocked(ctx: *cpu.Context) void {
 fn wakeSleepers() void {
     var node = state.threads.first;
     while (node) |n| {
-        const t: *proc.Thread = @fieldParentPtr("sched_node", n);
+        const t = threadFromSched(n);
         if (t.status == .sleeping and ticks >= t.wake_tick) {
             t.status = .ready;
         }
@@ -323,7 +331,7 @@ fn dismantleLocked(process: *proc.Process, exit_code: u8) void {
     process.zombie = true;
     var node = process.threads.first;
     while (node) |n| {
-        const t: *proc.Thread = @fieldParentPtr("proc_node", n);
+        const t = threadFromProc(n);
         node = n.next;
         thread.stop(t);
     }
@@ -345,9 +353,27 @@ fn nextReadyThread(start: ?*std.DoublyLinkedList.Node) ?*proc.Thread {
     const first = start orelse return null;
     var node: *std.DoublyLinkedList.Node = first;
     while (true) {
-        const t: *proc.Thread = @fieldParentPtr("sched_node", node);
+        const t = threadFromSched(node);
         if (t.status == .ready) return t;
         node = node.next orelse state.threads.first orelse return null;
         if (node == first) return null;
     }
+}
+
+pub const ProcessSnap = struct { pid: u64, ppid: u64, zombie: bool };
+
+pub fn snapshotProcesses(out: []ProcessSnap) usize {
+    state.expectInit();
+    state.lock.lock();
+    defer state.lock.unlock();
+    var n: usize = 0;
+    var node = state.processes.first;
+    while (node) |nd| {
+        if (n == out.len) break;
+        const p = processFromNode(nd);
+        out[n] = .{ .pid = p.pid, .ppid = p.parent, .zombie = p.zombie };
+        n += 1;
+        node = nd.next;
+    }
+    return n;
 }

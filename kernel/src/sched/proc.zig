@@ -34,7 +34,6 @@ pub const ThreadStatus = enum {
     running,
     sleeping,
     waiting,
-    stopped,
 };
 
 pub const Thread = struct {

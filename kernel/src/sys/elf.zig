@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
+
 pub const page_size = @import("../lib/mem.zig").page_size;
 pub const user_space_end = @import("../lib/mem.zig").user_space_end;
 /// Exclusive top of user stacks; stacks grow down from here.
@@ -45,24 +47,20 @@ pub const Load = struct {
 
 pub const Image = struct {
     entry: usize,
-    loads: [max_loads]Load = undefined,
-    nloads: usize = 0,
+    loads: BoundedArray(Load, max_loads) = .{},
 
     fn constSlice(self: *const Image) []const Load {
-        return self.loads[0..self.nloads];
+        return self.loads.constSlice();
     }
 
     fn append(self: *Image, item: Load) error{BadElf}!void {
-        if (self.nloads >= max_loads) return error.BadElf;
-        self.loads[self.nloads] = item;
-        self.nloads += 1;
+        self.loads.append(item) catch return error.BadElf;
     }
 };
 
 pub fn parse(image: []const u8) error{ BadElf, WritableExecutable, OutOfRange, AlreadyMapped }!Image {
     const ehdr = try peek(std.elf.Elf64_Ehdr, image, 0);
     try checkIdent(&ehdr.e_ident);
-    if (ehdr.e_type == .DYN) return error.BadElf;
     if (ehdr.e_type != .EXEC) return error.BadElf;
     if (ehdr.e_machine != .X86_64) return error.BadElf;
     if (ehdr.e_version != 1) return error.BadElf;
@@ -83,7 +81,7 @@ pub fn parse(image: []const u8) error{ BadElf, WritableExecutable, OutOfRange, A
         if (phdr.p_type != std.elf.PT_LOAD) continue;
         try result.append(try parseLoad(image, phdr));
     }
-    if (result.nloads == 0) return error.BadElf;
+    if (result.loads.len == 0) return error.BadElf;
     try checkOverlaps(result.constSlice());
     try checkEntry(result);
     return result;
@@ -384,11 +382,12 @@ test "parse ET_EXEC x86-64 little-endian" {
     const image = f.finish(.EXEC, .X86_64, 0x400000);
     const parsed = try parse(image);
     try std.testing.expectEqual(0x400000, parsed.entry);
-    try std.testing.expectEqual(1, parsed.nloads);
-    try std.testing.expectEqual(0x400000, parsed.loads[0].map_vaddr);
-    try std.testing.expectEqual(page_size, parsed.loads[0].map_size);
-    try std.testing.expect(parsed.loads[0].flags.executable);
-    try std.testing.expect(!parsed.loads[0].flags.writable);
+    const segs = parsed.constSlice();
+    try std.testing.expectEqual(1, segs.len);
+    try std.testing.expectEqual(0x400000, segs[0].map_vaddr);
+    try std.testing.expectEqual(page_size, segs[0].map_size);
+    try std.testing.expect(segs[0].flags.executable);
+    try std.testing.expect(!segs[0].flags.writable);
 }
 
 test "reject ET_DYN" {

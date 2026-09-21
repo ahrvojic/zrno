@@ -30,7 +30,6 @@ pub const Walker = struct {
             self.offset += padded;
 
             const typeflag = hdr[156];
-            if (typeflag == '5') continue;
             if (typeflag != 0 and typeflag != '0') continue;
 
             return .{

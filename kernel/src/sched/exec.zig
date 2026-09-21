@@ -20,19 +20,17 @@ pub fn spawnPathArgv(path: []const u8, argv: []const []const u8, stdin: u64, std
 }
 
 fn spawn(path: []const u8, argv: []const []const u8, stdio: ?[3]u64) SpawnError!u64 {
-    const image = ramfs.lookup(path) orelse return error.NoEnt;
     const process = sched.startProcess(true) catch |err| return spawnFail(err);
     errdefer sched.abortProcess(process, 1);
 
     if (stdio) |fds| {
-        const t = cpu.current().thread orelse @panic("user spawn with no thread");
+        const t = cpu.currentThread();
         file.installStdioFrom(&process.fds, &t.parent.fds, fds) catch |err| return spawnFail(err);
     } else {
         file.installStdio(&process.fds) catch |err| return spawnFail(err);
     }
 
-    var space: VmmSpace = .{ .vmm = &process.vmm };
-    const loaded = elf.load(&space, image) catch |err| return spawnFail(err);
+    const loaded = try loadPath(&process.vmm, path);
     process.brk_start = loaded.brk;
     process.brk = loaded.brk;
     _ = sched.startUserThread(process, loaded.entry, argv, true) catch |err| return spawnFail(err);
@@ -40,13 +38,17 @@ fn spawn(path: []const u8, argv: []const []const u8, stdio: ?[3]u64) SpawnError!
 }
 
 pub fn execPath(process: *proc.Process, ctx: *cpu.Context, path: []const u8, argv: []const []const u8) SpawnError!void {
-    const image = ramfs.lookup(path) orelse return error.NoEnt;
     var new_vmm = vmm.VMM.cloneKernel() catch |err| return spawnFail(err);
     errdefer new_vmm.destroy();
 
-    var space: VmmSpace = .{ .vmm = &new_vmm };
-    const loaded = elf.load(&space, image) catch |err| return spawnFail(err);
+    const loaded = try loadPath(&new_vmm, path);
     sched.execReplace(process, ctx, new_vmm, loaded.entry, loaded.brk, argv) catch |err| return spawnFail(err);
+}
+
+fn loadPath(vm: *vmm.VMM, path: []const u8) SpawnError!elf.Loaded {
+    const image = ramfs.lookup(path) orelse return error.NoEnt;
+    var space: VmmSpace = .{ .vmm = vm };
+    return elf.load(&space, image) catch |err| spawnFail(err);
 }
 
 fn spawnFail(err: anyerror) SpawnError {

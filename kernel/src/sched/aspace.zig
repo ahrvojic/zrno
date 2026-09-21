@@ -45,8 +45,7 @@ const BrkChange = struct {
 // The stored break is byte-granular; mapping is page-aligned.
 pub fn setBrk(addr: usize) error{ Invalid, OutOfMemory }!usize {
     state.expectInit();
-    const thr = cpu.current().thread orelse @panic("brk with no thread");
-    const process = thr.parent;
+    const process = cpu.currentProcess();
 
     state.lock.lock();
     if (addr == 0) {
@@ -116,27 +115,25 @@ fn unmapPages(space: *vmm.VMM, addr: usize, size: usize) void {
 // syscall). Eager map, NX. Grows down from `user_mmap_top`.
 pub fn mapAnon(len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
     state.expectInit();
-    if (len == 0) return error.Invalid;
-    const thr = cpu.current().thread orelse @panic("mmap with no thread");
-    const process = thr.parent;
+    const process = cpu.currentProcess();
     if (process.pid == state.kernel_pid) @panic("mmap kernel process");
 
     const size = std.mem.alignForward(usize, len, pmm.page_size);
-    if (size < len) return error.Invalid;
+    if (len == 0 or size < len) return error.Invalid;
 
     state.lock.lock();
-    const old = process.mmap_next;
-    if (old < size) {
-        state.lock.unlock();
-        return error.OutOfMemory;
-    }
-    const base = old - size;
-    if (base < process.brk or state.user_mmap_top - base > max_mmap) {
-        state.lock.unlock();
-        return error.OutOfMemory;
-    }
-    process.mmap_next = base;
-    state.lock.unlock();
+    const prepared: ?struct { old: usize, base: usize } = blk: {
+        defer state.lock.unlock();
+        const old = process.mmap_next;
+        if (old < size) break :blk null;
+        const base = old - size;
+        if (base < process.brk or state.user_mmap_top - base > max_mmap) break :blk null;
+        process.mmap_next = base;
+        break :blk .{ .old = old, .base = base };
+    };
+    const c = prepared orelse return error.OutOfMemory;
+    const old = c.old;
+    const base = c.base;
 
     const flags = vmm.Flags{
         .present = true,

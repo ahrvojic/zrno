@@ -40,7 +40,7 @@ pub fn init() !void {
         }
         logger.warn("PM timer calibration failed", .{});
     }
-    if (pit.hasChannel2()) {
+    if (pit.probeChannel2()) {
         if (calibratePit(bsp)) |icr| {
             bsp.lapicTimerPeriodic(icr);
             logger.info("{d} Hz lapic via pit ch2 icr={d}", .{ sched.tick_hz, icr });

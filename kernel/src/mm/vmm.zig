@@ -108,38 +108,31 @@ const PageTable = extern struct {
     }
 
     pub fn unmapPage(self: *PageTable, virt_addr: usize) !void {
-        const pml4_idx = (virt_addr >> 39) & page_table_index_mask;
-        const pml3_idx = (virt_addr >> 30) & page_table_index_mask;
-        const pml2_idx = (virt_addr >> 21) & page_table_index_mask;
-        const pml1_idx = (virt_addr >> 12) & page_table_index_mask;
+        const w = try self.walk(virt_addr, false, false);
 
-        const pml3 = self.getNextLevel(pml4_idx, false, false) orelse return error.PTENotFound;
-        const pml2 = pml3.getNextLevel(pml3_idx, false, false) orelse return error.PTENotFound;
-        const pml1 = pml2.getNextLevel(pml2_idx, false, false) orelse return error.PTENotFound;
-
-        const entry = &pml1.entries[pml1_idx];
+        const entry = w.pte();
         if (!entry.getFlags().present) return error.NotMapped;
         entry.setAddress(0);
         entry.setFlags(.{});
         flushTLB(virt_addr);
 
         // Kernel L3/L2/L1 are shared with clones; never release them.
-        if (pml4_idx >= kernel_pml4_start) return;
+        if (w.pml4_idx >= kernel_pml4_start) return;
 
-        if (!pml1.isEmpty()) return;
-        pmm.free(pml2.entries[pml2_idx].getAddress(), 1);
-        pml2.entries[pml2_idx].setAddress(0);
-        pml2.entries[pml2_idx].setFlags(.{});
+        if (!w.pml1.isEmpty()) return;
+        pmm.free(w.pml2.entries[w.pml2_idx].getAddress(), 1);
+        w.pml2.entries[w.pml2_idx].setAddress(0);
+        w.pml2.entries[w.pml2_idx].setFlags(.{});
 
-        if (!pml2.isEmpty()) return;
-        pmm.free(pml3.entries[pml3_idx].getAddress(), 1);
-        pml3.entries[pml3_idx].setAddress(0);
-        pml3.entries[pml3_idx].setFlags(.{});
+        if (!w.pml2.isEmpty()) return;
+        pmm.free(w.pml3.entries[w.pml3_idx].getAddress(), 1);
+        w.pml3.entries[w.pml3_idx].setAddress(0);
+        w.pml3.entries[w.pml3_idx].setFlags(.{});
 
-        if (!pml3.isEmpty()) return;
-        pmm.free(self.entries[pml4_idx].getAddress(), 1);
-        self.entries[pml4_idx].setAddress(0);
-        self.entries[pml4_idx].setFlags(.{});
+        if (!w.pml3.isEmpty()) return;
+        pmm.free(self.entries[w.pml4_idx].getAddress(), 1);
+        self.entries[w.pml4_idx].setAddress(0);
+        self.entries[w.pml4_idx].setFlags(.{});
     }
 
     fn expectMappedRange(self: *PageTable, virt_addr: usize, size: usize) !void {
@@ -164,7 +157,21 @@ const PageTable = extern struct {
         return true;
     }
 
-    pub fn virtToPTE(self: *PageTable, virt_addr: usize, allocate: bool, user: bool) !*PageTableEntry {
+    const Walk = struct {
+        pml4_idx: usize,
+        pml3_idx: usize,
+        pml2_idx: usize,
+        pml1_idx: usize,
+        pml3: *PageTable,
+        pml2: *PageTable,
+        pml1: *PageTable,
+
+        fn pte(self: Walk) *PageTableEntry {
+            return &self.pml1.entries[self.pml1_idx];
+        }
+    };
+
+    fn walk(self: *PageTable, virt_addr: usize, allocate: bool, user: bool) error{PTENotFound}!Walk {
         const pml4_idx = (virt_addr >> 39) & page_table_index_mask;
         const pml3_idx = (virt_addr >> 30) & page_table_index_mask;
         const pml2_idx = (virt_addr >> 21) & page_table_index_mask;
@@ -173,7 +180,19 @@ const PageTable = extern struct {
         const pml3 = self.getNextLevel(pml4_idx, allocate, user) orelse return error.PTENotFound;
         const pml2 = pml3.getNextLevel(pml3_idx, allocate, user) orelse return error.PTENotFound;
         const pml1 = pml2.getNextLevel(pml2_idx, allocate, user) orelse return error.PTENotFound;
-        return &pml1.entries[pml1_idx];
+        return .{
+            .pml4_idx = pml4_idx,
+            .pml3_idx = pml3_idx,
+            .pml2_idx = pml2_idx,
+            .pml1_idx = pml1_idx,
+            .pml3 = pml3,
+            .pml2 = pml2,
+            .pml1 = pml1,
+        };
+    }
+
+    pub fn virtToPTE(self: *PageTable, virt_addr: usize, allocate: bool, user: bool) !*PageTableEntry {
+        return (try self.walk(virt_addr, allocate, user)).pte();
     }
 
     pub fn getNextLevel(self: *PageTable, index: usize, allocate: bool, user: bool) ?*PageTable {
@@ -286,41 +305,30 @@ pub const VMM = struct {
 
     // Copy through the HHDM so a kernel #PF cannot deadlock on the VMM lock.
     pub fn copyFromUser(self: *VMM, dest: []u8, user_addr: usize) error{Fault}!void {
-        if (dest.len == 0) return;
-        if (!userRange(user_addr, dest.len)) return error.Fault;
-
-        self.expectInit();
-        self.lock.lock();
-        defer self.lock.unlock();
-
-        var off: usize = 0;
-        while (off < dest.len) {
-            const va = user_addr + off;
-            const page_off = va & (pmm.page_size - 1);
-            const chunk = @min(dest.len - off, pmm.page_size - page_off);
-            const phys = try self.userPagePhysLocked(va, false);
-            const page = virt.toHH([*]u8, phys);
-            @memcpy(dest[off..][0..chunk], page[page_off..][0..chunk]);
-            off += chunk;
-        }
+        return self.copyUser(user_addr, dest, false);
     }
 
     pub fn copyToUser(self: *VMM, user_addr: usize, src: []const u8) error{Fault}!void {
-        if (src.len == 0) return;
-        if (!userRange(user_addr, src.len)) return error.Fault;
+        return self.copyUser(user_addr, @constCast(src), true);
+    }
+
+    fn copyUser(self: *VMM, user_addr: usize, kernel: []u8, to_user: bool) error{Fault}!void {
+        if (kernel.len == 0) return;
+        if (!userRange(user_addr, kernel.len)) return error.Fault;
 
         self.expectInit();
         self.lock.lock();
         defer self.lock.unlock();
 
         var off: usize = 0;
-        while (off < src.len) {
+        while (off < kernel.len) {
             const va = user_addr + off;
             const page_off = va & (pmm.page_size - 1);
-            const chunk = @min(src.len - off, pmm.page_size - page_off);
-            const phys = try self.userPagePhysLocked(va, true);
-            const page = virt.toHH([*]u8, phys);
-            @memcpy(page[page_off..][0..chunk], src[off..][0..chunk]);
+            const chunk = @min(kernel.len - off, pmm.page_size - page_off);
+            const phys = try self.userPagePhysLocked(va, to_user);
+            const k = kernel[off..][0..chunk];
+            const u = virt.toHH([*]u8, phys)[page_off..][0..chunk];
+            if (to_user) @memcpy(u, k) else @memcpy(k, u);
             off += chunk;
         }
     }

@@ -239,16 +239,17 @@ pub const CPU = struct {
 
     /// Masked one-shot. Counts down from `initial`; does not interrupt.
     pub fn lapicTimerArm(self: *const CPU, initial: u32) void {
-        self.expectLapicInit();
-        self.lapicWrite(lapic_reg_timer_dcr, lapic_timer_div16);
-        self.lapicWrite(lapic_reg_lvt_timer, @as(u32, ivt.vec_timer) | lapic_lvt_masked);
-        self.lapicWrite(lapic_reg_timer_icr, initial);
+        self.programTimer(lapic_lvt_masked, initial);
     }
 
     pub fn lapicTimerPeriodic(self: *const CPU, initial: u32) void {
+        self.programTimer(lapic_lvt_periodic, initial);
+    }
+
+    fn programTimer(self: *const CPU, lvt: u32, initial: u32) void {
         self.expectLapicInit();
         self.lapicWrite(lapic_reg_timer_dcr, lapic_timer_div16);
-        self.lapicWrite(lapic_reg_lvt_timer, @as(u32, ivt.vec_timer) | lapic_lvt_periodic);
+        self.lapicWrite(lapic_reg_lvt_timer, @as(u32, ivt.vec_timer) | lvt);
         self.lapicWrite(lapic_reg_timer_icr, initial);
     }
 
@@ -379,29 +380,34 @@ pub const FpuState = fpu.State;
 pub const initFpuState = fpu.initState;
 
 pub fn saveFpu(state: *FpuState) void {
-    std.debug.assert(std.mem.isAligned(@intFromPtr(state), fpu.state_align));
-    const lo: u32 = @truncate(fpu.xcr0_mask);
-    const hi: u32 = @truncate(fpu.xcr0_mask >> 32);
-    asm volatile (
-        \\xsave (%[ptr])
-        :
-        : [ptr] "r" (state),
-          [_] "{eax}" (lo),
-          [_] "{edx}" (hi),
-        : .{ .memory = true });
+    xsaveOp(false, state);
 }
 
 pub fn restoreFpu(state: *const FpuState) void {
-    std.debug.assert(std.mem.isAligned(@intFromPtr(state), fpu.state_align));
+    xsaveOp(true, state);
+}
+
+fn xsaveOp(comptime restore: bool, ptr: *const FpuState) void {
+    std.debug.assert(std.mem.isAligned(@intFromPtr(ptr), fpu.state_align));
     const lo: u32 = @truncate(fpu.xcr0_mask);
     const hi: u32 = @truncate(fpu.xcr0_mask >> 32);
-    asm volatile (
-        \\xrstor (%[ptr])
-        :
-        : [ptr] "r" (state),
-          [_] "{eax}" (lo),
-          [_] "{edx}" (hi),
-        : .{ .memory = true });
+    if (restore) {
+        asm volatile (
+            \\xrstor (%[ptr])
+            :
+            : [ptr] "r" (ptr),
+              [_] "{eax}" (lo),
+              [_] "{edx}" (hi),
+            : .{ .memory = true });
+    } else {
+        asm volatile (
+            \\xsave (%[ptr])
+            :
+            : [ptr] "r" (ptr),
+              [_] "{eax}" (lo),
+              [_] "{edx}" (hi),
+            : .{ .memory = true });
+    }
 }
 
 fn xsetbv(reg: u32, value: u64) void {
@@ -532,6 +538,14 @@ pub fn current() *CPU {
     return &bsp_value;
 }
 
+pub fn currentThread() *proc.Thread {
+    return current().thread orelse @panic("no current thread");
+}
+
+pub fn currentProcess() *proc.Process {
+    return currentThread().parent;
+}
+
 pub inline fn interruptsOn() void {
     asm volatile ("sti");
 }
@@ -572,6 +586,13 @@ pub fn popCli() void {
     if (this_cpu.ncli == 0 and this_cpu.intena) {
         interruptsOn();
     }
+}
+
+pub fn readCr2() u64 {
+    return asm volatile (
+        \\movq %%cr2, %[cr2]
+        : [cr2] "=r" (-> u64),
+    );
 }
 
 inline fn readCr0() u64 {

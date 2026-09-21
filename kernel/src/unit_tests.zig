@@ -2,6 +2,7 @@
 //! kernel decls (Limine, privileged asm, MMIO) stay unanalyzed.
 test {
     _ = @import("lib/bounded_array.zig");
+    _ = @import("lib/ring.zig");
     _ = @import("mm/heap_core.zig");
     _ = @import("mm/vmm.zig");
     _ = @import("sys/gdt.zig");

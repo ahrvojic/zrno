@@ -11,29 +11,25 @@ const Captured = struct {
     height: usize,
     pitch: usize,
     bpp: u16,
+    max_row: usize = 0,
+    max_col: usize = 0,
 };
 
 var captured: ?Captured = null;
 var initialized = false;
 var ready = false;
 
-var address: [*]u8 = undefined;
-var height: usize = undefined;
-var pitch: usize = undefined;
-var max_row: usize = undefined;
-var max_col: usize = undefined;
-
 pub fn isReady() bool {
     return ready;
 }
 
 pub fn plotChar(ch: u8, row: usize, col: usize) void {
-    expectReady();
-    if (row >= max_row or col >= max_col) return;
+    const fb = frame();
+    if (row >= fb.max_row or col >= fb.max_col) return;
 
     const glyph = font.builtin.glyph(ch);
-    const pixels: [*]u32 = @ptrCast(@alignCast(address));
-    const pitch_pixels = pitch / @sizeOf(u32);
+    const pixels: [*]u32 = @ptrCast(@alignCast(fb.address));
+    const pitch_pixels = fb.pitch / @sizeOf(u32);
     const y0 = row * font.builtin.height;
     const x0 = col * font.builtin.width;
 
@@ -46,23 +42,26 @@ pub fn plotChar(ch: u8, row: usize, col: usize) void {
 }
 
 pub fn scroll() void {
-    expectReady();
-    const new_top = pitch * font.builtin.height;
-    const fb = address[0 .. pitch * height];
-    std.mem.copyForwards(u8, fb, fb[new_top..]);
-    for (0..max_col) |col| {
-        plotChar(' ', max_row - 1, col);
+    const fb = frame();
+    const new_top = fb.pitch * font.builtin.height;
+    const pixels = fb.address[0 .. fb.pitch * fb.height];
+    std.mem.copyForwards(u8, pixels, pixels[new_top..]);
+    for (0..fb.max_col) |col| {
+        plotChar(' ', fb.max_row - 1, col);
     }
 }
 
 pub fn maxRow() usize {
-    expectReady();
-    return max_row;
+    return frame().max_row;
 }
 
 pub fn maxCol() usize {
+    return frame().max_col;
+}
+
+fn frame() Captured {
     expectReady();
-    return max_col;
+    return captured.?;
 }
 
 /// Copy Limine framebuffer metadata into BSS. Call before `boot.drop()`.
@@ -102,11 +101,15 @@ pub fn init() !void {
         return;
     }
 
-    address = info.address;
-    height = info.height;
-    pitch = info.pitch;
-    max_col = info.width / font.builtin.width;
-    max_row = info.height / font.builtin.height;
+    captured = .{
+        .address = info.address,
+        .width = info.width,
+        .height = info.height,
+        .pitch = info.pitch,
+        .bpp = info.bpp,
+        .max_col = info.width / font.builtin.width,
+        .max_row = info.height / font.builtin.height,
+    };
     ready = true;
     logger.info("{d}x{d} {d}bpp pitch={d}", .{ info.width, info.height, info.bpp, info.pitch });
 }

@@ -62,7 +62,7 @@ pub fn pollSerial() void {
 
 fn waitData() void {
     while (input.empty()) {
-        sched.wait(&input.in_buf, &lock);
+        sched.wait(&input.in.buf, &lock);
     }
 }
 
@@ -81,7 +81,7 @@ fn mapSerialByte(b: u8) ?u8 {
 
 fn feedUnlocked(ch: u8) void {
     if (input.feed(ch)) |e| writeUnlocked(&.{e});
-    if (ch == '\n' and !input.empty()) sched.wakeup(&input.in_buf);
+    if (ch == '\n' and !input.empty()) sched.wakeup(&input.in.buf);
 }
 
 fn writeUnlocked(string: []const u8) void {

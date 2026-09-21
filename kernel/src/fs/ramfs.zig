@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
 const ustar = @import("ustar.zig");
 
 pub const max_files: usize = 32;
@@ -16,20 +17,17 @@ pub const Entry = struct {
 };
 
 pub const Table = struct {
-    files: [max_files]Entry = undefined,
-    nfiles: usize = 0,
+    files: BoundedArray(Entry, max_files) = .{},
 
     pub fn mount(self: *Table, archive: []const u8) error{ BadTar, TooManyFiles }!void {
-        self.nfiles = 0;
+        self.files.len = 0;
         var it = ustar.walk(archive);
         while (try it.next()) |file| {
             if (file.name.len == 0) continue;
-            if (self.nfiles >= max_files) return error.TooManyFiles;
             const n = @min(file.name.len, max_name);
             var e: Entry = .{ .data = file.data, .name_len = n };
             @memcpy(e.name_buf[0..n], file.name[0..n]);
-            self.files[self.nfiles] = e;
-            self.nfiles += 1;
+            self.files.append(e) catch return error.TooManyFiles;
         }
     }
 
@@ -43,7 +41,7 @@ pub const Table = struct {
     }
 
     pub fn entries(self: *const Table) []const Entry {
-        return self.files[0..self.nfiles];
+        return self.files.constSlice();
     }
 };
 

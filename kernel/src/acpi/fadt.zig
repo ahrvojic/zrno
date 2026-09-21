@@ -79,17 +79,11 @@ const sci_en: u16 = 1 << 0;
 const sci_en_spins: u32 = 0xfffff;
 
 // IAPC_BOOT_ARCH (ACPI 2.0 / FADT revision 3+).
-const iapc_legacy_devices: u16 = 1 << 0;
 const iapc_8042: u16 = 1 << 1;
-const iapc_vga_not_present: u16 = 1 << 2;
-const iapc_cmos_rtc_not_present: u16 = 1 << 5;
 const fadt_rev_iapc: u8 = 3;
 
 pub const BootArch = struct {
-    legacy_devices: bool,
     has_8042: bool,
-    vga_not_present: bool,
-    cmos_rtc_not_present: bool,
 };
 
 pub const PmTimer = struct {
@@ -162,13 +156,11 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
     }
 
     boot_arch_value = parseBootArch(sdt.revision, fadt.boot_arch_flags);
-    logger.info("sci={d} smi_cmd=0x{x} 8042={} vga={} rtc={} legacy={}", .{
+    logger.info("sci={d} smi_cmd=0x{x} boot_arch=0x{x} 8042={}", .{
         fadt.sci_interrupt,
         fadt.smi_cmd_port,
+        fadt.boot_arch_flags,
         boot_arch_value.has_8042,
-        !boot_arch_value.vga_not_present,
-        !boot_arch_value.cmos_rtc_not_present,
-        boot_arch_value.legacy_devices,
     });
 
     const bits: u8 = if (fadt.flags & tmr_val_ext != 0) 32 else 24;
@@ -193,17 +185,10 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
 }
 
 fn parsePmTimer(data: []const u8, bits: u8) ?PmTimer {
-    const x_off = @offsetOf(FADT, "x_pm_timer_block");
-    if (data.len >= x_off + @sizeOf(acpi.GenericAddress)) {
-        const x = std.mem.bytesAsValue(
-            acpi.GenericAddress,
-            data[x_off..][0..@sizeOf(acpi.GenericAddress)],
-        ).*;
+    if (readGas(data, @offsetOf(FADT, "x_pm_timer_block"))) |x| {
         if (fromGas(x, bits)) |tmr| return tmr;
     }
-
-    const blk = std.mem.readInt(u32, data[@offsetOf(FADT, "pm_timer_block")..][0..4], .little);
-    if (blk != 0 and blk <= std.math.maxInt(u16)) {
+    if (legacyIo16(data, @offsetOf(FADT, "pm_timer_block"))) |blk| {
         return .{ .kind = .io, .address = blk, .bits = bits };
     }
     return null;
@@ -220,22 +205,32 @@ fn fromGas(gas: acpi.GenericAddress, bits: u8) ?PmTimer {
     return .{ .kind = kind, .address = gas.address, .bits = bits };
 }
 
+fn readGas(data: []const u8, off: usize) ?acpi.GenericAddress {
+    if (data.len < off + @sizeOf(acpi.GenericAddress)) return null;
+    return std.mem.bytesAsValue(
+        acpi.GenericAddress,
+        data[off..][0..@sizeOf(acpi.GenericAddress)],
+    ).*;
+}
+
+fn io16(gas: acpi.GenericAddress) ?u16 {
+    if (gas.address_space != acpi.gas_space_io) return null;
+    if (gas.address == 0 or gas.address > std.math.maxInt(u16) or gas.bit_offset != 0) return null;
+    return @intCast(gas.address);
+}
+
+fn legacyIo16(data: []const u8, off: usize) ?u16 {
+    if (data.len < off + 4) return null;
+    const blk = std.mem.readInt(u32, data[off..][0..4], .little);
+    if (blk == 0 or blk > std.math.maxInt(u16)) return null;
+    return @intCast(blk);
+}
+
 fn parseIoCtrl(data: []const u8, x_off: usize, legacy_off: usize) u16 {
-    if (data.len >= x_off + @sizeOf(acpi.GenericAddress)) {
-        const gas = std.mem.bytesAsValue(
-            acpi.GenericAddress,
-            data[x_off..][0..@sizeOf(acpi.GenericAddress)],
-        ).*;
-        if (gas.address_space == acpi.gas_space_io and gas.address != 0 and
-            gas.address <= std.math.maxInt(u16) and gas.bit_offset == 0)
-        {
-            return @intCast(gas.address);
-        }
+    if (readGas(data, x_off)) |gas| {
+        if (io16(gas)) |a| return a;
     }
-    if (data.len < legacy_off + 4) return 0;
-    const blk = std.mem.readInt(u32, data[legacy_off..][0..4], .little);
-    if (blk != 0 and blk <= std.math.maxInt(u16)) return @intCast(blk);
-    return 0;
+    return legacyIo16(data, legacy_off) orelse 0;
 }
 
 fn readDsdtPhys(fadt: *align(1) const FADT, data: []const u8) ?usize {
@@ -255,33 +250,17 @@ fn parseResetReg(data: []const u8) ?ResetReg {
     const flags = std.mem.readInt(u32, data[@offsetOf(FADT, "flags")..][0..4], .little);
     if (flags & reset_reg_sup == 0) return null;
 
-    const gas = std.mem.bytesAsValue(
-        acpi.GenericAddress,
-        data[@offsetOf(FADT, "reset_reg")..][0..@sizeOf(acpi.GenericAddress)],
-    ).*;
-    if (gas.address_space != acpi.gas_space_io) return null;
-    if (gas.address == 0 or gas.address > std.math.maxInt(u16) or gas.bit_offset != 0) return null;
+    const gas = readGas(data, @offsetOf(FADT, "reset_reg")) orelse return null;
+    const addr = io16(gas) orelse return null;
     const width: u8 = if (gas.bit_width == 0) 8 else gas.bit_width;
     if (width != 8) return null;
-    return .{ .address = @intCast(gas.address), .value = data[val_off] };
+    return .{ .address = addr, .value = data[val_off] };
 }
 
 fn parseBootArch(revision: u8, flags: u16) BootArch {
-    // ACPI 1.0 has no IAPC_BOOT_ARCH; assume a PC with 8042, VGA, RTC.
-    if (revision < fadt_rev_iapc) {
-        return .{
-            .legacy_devices = true,
-            .has_8042 = true,
-            .vga_not_present = false,
-            .cmos_rtc_not_present = false,
-        };
-    }
-    return .{
-        .legacy_devices = flags & iapc_legacy_devices != 0,
-        .has_8042 = flags & iapc_8042 != 0,
-        .vga_not_present = flags & iapc_vga_not_present != 0,
-        .cmos_rtc_not_present = flags & iapc_cmos_rtc_not_present != 0,
-    };
+    // ACPI 1.0 has no IAPC_BOOT_ARCH; assume a PC with 8042.
+    if (revision < fadt_rev_iapc) return .{ .has_8042 = true };
+    return .{ .has_8042 = flags & iapc_8042 != 0 };
 }
 
 fn enableAcpi(fadt: *align(1) const FADT) !void {

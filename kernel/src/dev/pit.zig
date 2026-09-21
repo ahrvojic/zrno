@@ -43,10 +43,6 @@ pub fn probeChannel2() bool {
     return ch2_present;
 }
 
-pub fn hasChannel2() bool {
-    return probeChannel2();
-}
-
 pub fn startChannel2(count: u16) void {
     if (!probeChannel2()) @panic("pit ch2 missing");
     nmi_saved = port.inb(port_nmi);

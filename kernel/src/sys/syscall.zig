@@ -7,7 +7,6 @@ const exec = @import("../sched/exec.zig");
 const file = @import("../fs/file.zig");
 const pmm = @import("../mm/pmm.zig");
 const pipe = @import("../fs/pipe.zig");
-const proc = @import("../sched/proc.zig");
 const ramfs = @import("../fs/ramfs.zig");
 const reboot = @import("reboot.zig");
 const sched = @import("../sched/sched.zig");
@@ -161,48 +160,43 @@ fn sys_write(ctx: *cpu.Context) u64 {
         .file => return errval(EACCES),
         .dir => return errval(EISDIR),
         .pipe_read => return errval(EBADF),
-        .pipe_write => |p| {
-            var tmp: [io_chunk]u8 = undefined;
-            var copied: usize = 0;
-            const space = userSpace();
-            while (copied < len) {
-                const n = @min(tmp.len, len - copied);
-                space.copyFromUser(tmp[0..n], addr + copied) catch {
-                    if (copied == 0) return errval(EFAULT);
-                    return copied;
-                };
-                var off: usize = 0;
-                while (off < n) {
-                    const w = p.write(tmp[off..n]) catch {
-                        if (copied == 0) return errval(EPIPE);
-                        return copied;
-                    };
-                    off += w;
-                    copied += w;
-                }
-            }
-            return copied;
-        },
-        .tty => {
-            var tmp: [io_chunk]u8 = undefined;
-            var copied: usize = 0;
-            const space = userSpace();
-            while (copied < len) {
-                const n = @min(tmp.len, len - copied);
-                space.copyFromUser(tmp[0..n], addr + copied) catch {
-                    if (copied == 0) return errval(EFAULT);
-                    return copied;
-                };
-                tty.writeBytes(tmp[0..n]);
-                copied += n;
-            }
-            return copied;
-        },
+        .pipe_write => |p| return writeUser(addr, len, p),
+        .tty => return writeUser(addr, len, TtySink{}),
     }
 }
 
+const TtySink = struct {
+    fn write(_: @This(), buf: []const u8) error{Broken}!usize {
+        tty.writeBytes(buf);
+        return buf.len;
+    }
+};
+
+fn writeUser(addr: usize, len: usize, sink: anytype) u64 {
+    var tmp: [io_chunk]u8 = undefined;
+    var copied: usize = 0;
+    const space = userSpace();
+    while (copied < len) {
+        const n = @min(tmp.len, len - copied);
+        space.copyFromUser(tmp[0..n], addr + copied) catch {
+            if (copied == 0) return errval(EFAULT);
+            return copied;
+        };
+        var off: usize = 0;
+        while (off < n) {
+            const w = sink.write(tmp[off..n]) catch {
+                if (copied == 0) return errval(EPIPE);
+                return copied;
+            };
+            off += w;
+            copied += w;
+        }
+    }
+    return copied;
+}
+
 fn sys_exit(ctx: *cpu.Context) u64 {
-    const process = currentProcess();
+    const process = cpu.currentProcess();
     if (process.pid == 0) @panic("kernel process exit");
     const code: u8 = @truncate(ctx.rdi);
     logger.info("pid {d} exit {d}", .{ process.pid, code });
@@ -228,13 +222,16 @@ fn sys_uptime() u64 {
 
 fn sys_open(ctx: *cpu.Context) u64 {
     var buf: [max_path]u8 = undefined;
-    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return pathErr(err);
+    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return switch (err) {
+        error.Fault => errval(EFAULT),
+        error.NameTooLong => errval(ENAMETOOLONG),
+    };
     const kind: file.File.Kind = if (ramfs.isRoot(path))
         .{ .dir = .{ .pos = 0 } }
     else
         .{ .file = .{ .bytes = ramfs.lookup(path) orelse return errval(ENOENT), .pos = 0 } };
     const fd = firstFreeFd(0) orelse return errval(EMFILE);
-    currentProcess().fds[fd] = file.File.create(kind) catch return errval(ENOMEM);
+    cpu.currentProcess().fds[fd] = file.File.create(kind) catch return errval(ENOMEM);
     return fd;
 }
 
@@ -269,12 +266,11 @@ fn sys_lseek(ctx: *cpu.Context) u64 {
 
 fn sys_spawn(ctx: *cpu.Context) u64 {
     var buf: [max_path]u8 = undefined;
-    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return pathErr(err);
     var storage: ArgvStorage = .{};
-    const argv = copyUserArgv(ctx.rdx, ctx.r10, &storage) catch |err| return argvErr(err);
+    const pa = copyPathArgv(ctx, &buf, &storage) catch |err| return argvErr(err);
     var stdio: [3]u64 = undefined;
     userSpace().copyFromUser(std.mem.asBytes(&stdio), @intCast(ctx.r8)) catch return errval(EFAULT);
-    return exec.spawnPathArgv(path, argv, stdio[0], stdio[1], stdio[2]) catch |err| return spawnErr(err);
+    return exec.spawnPathArgv(pa.path, pa.argv, stdio[0], stdio[1], stdio[2]) catch |err| return spawnErr(err);
 }
 
 fn sys_wait(ctx: *cpu.Context) u64 {
@@ -296,11 +292,11 @@ fn sys_wait(ctx: *cpu.Context) u64 {
 }
 
 fn sys_getpid() u64 {
-    return currentProcess().pid;
+    return cpu.currentProcess().pid;
 }
 
 fn sys_getppid() u64 {
-    return currentProcess().parent;
+    return cpu.currentProcess().parent;
 }
 
 fn sys_ps(ctx: *cpu.Context) u64 {
@@ -309,38 +305,25 @@ fn sys_ps(ctx: *cpu.Context) u64 {
     if (checkIo(len)) |r| return r;
     if (len < @sizeOf(PsInfo)) return errval(EINVAL);
 
+    var snap: [max_ps]sched.ProcessSnap = undefined;
+    const n = sched.snapshotProcesses(snap[0..@min(snap.len, len / @sizeOf(PsInfo))]);
     var tmp: [max_ps]PsInfo = undefined;
-    const n = snapshotPs(tmp[0..@min(tmp.len, len / @sizeOf(PsInfo))]);
+    for (snap[0..n], 0..) |s, i| {
+        tmp[i] = .{
+            .pid = s.pid,
+            .ppid = s.ppid,
+            .flags = if (s.zombie) ps_zombie else 0,
+        };
+    }
     userSpace().copyToUser(addr, std.mem.sliceAsBytes(tmp[0..n])) catch return errval(EFAULT);
     return n * @sizeOf(PsInfo);
 }
 
-fn snapshotPs(out: []PsInfo) usize {
-    state.expectInit();
-    state.lock.lock();
-    defer state.lock.unlock();
-    var n: usize = 0;
-    var node = state.processes.first;
-    while (node) |nd| {
-        if (n == out.len) break;
-        const p: *proc.Process = @fieldParentPtr("node", nd);
-        out[n] = .{
-            .pid = p.pid,
-            .ppid = p.parent,
-            .flags = if (p.zombie) ps_zombie else 0,
-        };
-        n += 1;
-        node = nd.next;
-    }
-    return n;
-}
-
 fn sys_exec(ctx: *cpu.Context) u64 {
     var buf: [max_path]u8 = undefined;
-    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return pathErr(err);
     var storage: ArgvStorage = .{};
-    const argv = copyUserArgv(ctx.rdx, ctx.r10, &storage) catch |err| return argvErr(err);
-    exec.execPath(currentProcess(), ctx, path, argv) catch |err| return spawnErr(err);
+    const pa = copyPathArgv(ctx, &buf, &storage) catch |err| return argvErr(err);
+    exec.execPath(cpu.currentProcess(), ctx, pa.path, pa.argv) catch |err| return spawnErr(err);
     return 0;
 }
 
@@ -353,7 +336,6 @@ fn sys_mmap(ctx: *cpu.Context) u64 {
     const len: usize = @intCast(ctx.rsi);
     const prot = ctx.rdx;
     if (addr != 0) return errval(EINVAL);
-    if (len == 0) return errval(EINVAL);
     if (prot & prot_exec != 0) return errval(EINVAL);
     if (prot & (prot_read | prot_write) == 0) return errval(EINVAL);
     return sched.mapAnon(len, prot & prot_write != 0) catch |err| mmErr(err);
@@ -392,29 +374,32 @@ fn sys_getdents(ctx: *cpu.Context) u64 {
 fn sys_pipe(ctx: *cpu.Context) u64 {
     const addr: usize = @intCast(ctx.rdi);
     const pair = twoFreeFds() orelse return errval(EMFILE);
-    const p = pipe.Pipe.create() catch return errval(ENOMEM);
-    const r = file.File.create(.{ .pipe_read = p }) catch {
-        p.destroy();
-        return errval(ENOMEM);
-    };
-    const w = file.File.create(.{ .pipe_write = p }) catch {
-        r.release();
-        return errval(ENOMEM);
-    };
+    const rw = createPipePair() catch return errval(ENOMEM);
     var fds_out: [2]i64 = .{ @intCast(pair[0]), @intCast(pair[1]) };
     userSpace().copyToUser(addr, std.mem.asBytes(&fds_out)) catch {
-        r.release();
-        w.release();
+        rw[0].release();
+        rw[1].release();
         return errval(EFAULT);
     };
-    const fds = &currentProcess().fds;
-    fds[pair[0]] = r;
-    fds[pair[1]] = w;
+    const fds = &cpu.currentProcess().fds;
+    fds[pair[0]] = rw[0];
+    fds[pair[1]] = rw[1];
     return 0;
 }
 
+fn createPipePair() error{OutOfMemory}![2]*file.File {
+    const p = try pipe.Pipe.create();
+    const r = file.File.create(.{ .pipe_read = p }) catch {
+        p.destroy();
+        return error.OutOfMemory;
+    };
+    errdefer r.release();
+    const w = try file.File.create(.{ .pipe_write = p });
+    return .{ r, w };
+}
+
 fn firstFreeFd(start: usize) ?usize {
-    const fds = &currentProcess().fds;
+    const fds = &cpu.currentProcess().fds;
     for (fds[start..], start..) |slot, fd| {
         if (slot == null) return fd;
     }
@@ -447,6 +432,15 @@ const ArgvStorage = struct {
     }
 };
 
+fn copyPathArgv(ctx: *const cpu.Context, path_buf: []u8, storage: *ArgvStorage) error{ Fault, NameTooLong, TooMany }!struct {
+    path: []const u8,
+    argv: []const []const u8,
+} {
+    const path = try copyUserString(ctx.rdi, ctx.rsi, path_buf);
+    const argv = try copyUserArgv(ctx.rdx, ctx.r10, storage);
+    return .{ .path = path, .argv = argv };
+}
+
 fn copyUserArgv(addr: u64, n: u64, storage: *ArgvStorage) error{ Fault, NameTooLong, TooMany }![]const []const u8 {
     if (n > max_argv) return error.TooMany;
     if (n == 0) return storage.slice();
@@ -462,14 +456,9 @@ fn copyUserArgv(addr: u64, n: u64, storage: *ArgvStorage) error{ Fault, NameTooL
     return storage.slice();
 }
 
-fn currentProcess() *proc.Process {
-    const thread = cpu.current().thread orelse @panic("syscall with no thread");
-    return thread.parent;
-}
-
 fn fdSlot(fd: u64) ?*file.Fd {
     if (fd >= file.max_fds) return null;
-    return &currentProcess().fds[@intCast(fd)];
+    return &cpu.currentProcess().fds[@intCast(fd)];
 }
 
 fn fdFile(fd: u64) ?*file.File {
@@ -478,14 +467,7 @@ fn fdFile(fd: u64) ?*file.File {
 }
 
 fn userSpace() *vmm.VMM {
-    return &currentProcess().vmm;
-}
-
-fn pathErr(err: error{ Fault, NameTooLong }) u64 {
-    return switch (err) {
-        error.Fault => errval(EFAULT),
-        error.NameTooLong => errval(ENAMETOOLONG),
-    };
+    return &cpu.currentProcess().vmm;
 }
 
 fn argvErr(err: error{ Fault, NameTooLong, TooMany }) u64 {

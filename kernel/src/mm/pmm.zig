@@ -208,30 +208,13 @@ fn allocAlignedNoZero(pages: usize, align_pages: usize) ?usize {
 }
 
 fn allocInner(start: usize, pages: usize, align_pages: usize) ?usize {
-    const first = if (align_pages <= 1)
-        findRun(start, pages)
-    else
-        findAlignedRun(start, pages, align_pages);
-    const idx = first orelse return null;
+    const idx = findAlignedRun(start, pages, align_pages) orelse return null;
     const end = idx + pages;
     for (idx..end) |i| {
         bitmap.setBit(i);
     }
     last_used_index = end;
     return idx * page_size;
-}
-
-fn findRun(start: usize, pages: usize) ?usize {
-    var run: usize = 0;
-    const end = for (start..highest_page_index) |idx| {
-        if (bitmap.testBit(idx)) {
-            run = 0;
-        } else {
-            run += 1;
-            if (run == pages) break idx + 1;
-        }
-    } else return null;
-    return end - pages;
 }
 
 fn findAlignedRun(start: usize, pages: usize, align_pages: usize) ?usize {

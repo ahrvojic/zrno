@@ -43,12 +43,9 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, argv: []const []const u
     const thread = try allocKthread(parent);
     errdefer abandonKthread(thread);
 
-    const user_stack_phys = pmm.alloc(state.stack_pages) orelse return error.OutOfMemory;
-    errdefer pmm.free(user_stack_phys, state.stack_pages);
     const user_stack_base = try aspace.takeUserStack(parent);
     errdefer aspace.giveUserStack(parent, user_stack_base);
-
-    try setupUserImage(&parent.vmm, user_stack_phys, user_stack_base, pc, argv, &thread.ctx);
+    try setupUserStack(&parent.vmm, user_stack_base, pc, argv, &thread.ctx);
 
     publishThread(parent, thread, enqueue);
     return thread;
@@ -65,21 +62,18 @@ pub fn execReplace(
     argv: []const []const u8,
 ) !void {
     state.expectInit();
-    const thread = cpu.current().thread orelse @panic("exec with no thread");
+    const thread = cpu.currentThread();
     if (thread.parent != process) @panic("exec of other process");
     if (process.pid == state.kernel_pid) @panic("exec kernel process");
 
-    const user_stack_phys = pmm.alloc(state.stack_pages) orelse return error.OutOfMemory;
-    errdefer pmm.free(user_stack_phys, state.stack_pages);
-
     var space = new_vmm;
     const user_stack_base = state.user_stack_top - state.stack_size;
-    try setupUserImage(&space, user_stack_phys, user_stack_base, entry, argv, ctx);
+    try setupUserStack(&space, user_stack_base, entry, argv, ctx);
 
     state.lock.lock();
     var node = process.threads.first;
     while (node) |n| {
-        const t: *proc.Thread = @fieldParentPtr("proc_node", n);
+        const t: *proc.Thread = threadFromProc(n);
         node = n.next;
         if (t != thread) stop(t);
     }
@@ -137,14 +131,15 @@ fn publishThread(parent: *proc.Process, thread: *proc.Thread, enqueue: bool) voi
     if (enqueue) state.enqueueThread(thread);
 }
 
-fn setupUserImage(
+fn setupUserStack(
     space: *vmm.VMM,
-    stack_phys: usize,
     stack_base: usize,
     pc: usize,
     argv: []const []const u8,
     ctx: *cpu.Context,
 ) !void {
+    const stack_phys = pmm.alloc(state.stack_pages) orelse return error.OutOfMemory;
+    errdefer pmm.free(stack_phys, state.stack_pages);
     // Page below `stack_base` is the slot guard; left unmapped.
     try space.map(stack_base, stack_phys, state.stack_size, user_stack_flags);
     errdefer space.unmap(stack_base, state.stack_size) catch {};
@@ -154,7 +149,6 @@ fn setupUserImage(
 
 // Caller holds `state.lock`.
 pub fn stop(thread: *proc.Thread) void {
-    thread.status = .stopped;
     thread.wait_chan = null;
     state.dequeueThread(thread);
     thread.parent.threads.remove(&thread.proc_node);
@@ -230,6 +224,10 @@ fn setupUserArgv(stack_phys: usize, stack_va: usize, argv: []const []const u8) e
 
 fn writeU64(mem: []u8, off: usize, value: usize) void {
     std.mem.writeInt(u64, mem[off..][0..8], @intCast(value), .little);
+}
+
+fn threadFromProc(n: *std.DoublyLinkedList.Node) *proc.Thread {
+    return @fieldParentPtr("proc_node", n);
 }
 
 fn kernelThreadReturned() callconv(.c) noreturn {

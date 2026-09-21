@@ -25,30 +25,27 @@ const lsr_dr: u8 = 1 << 0;
 const lsr_thre: u8 = 0x20;
 const thre_spins: u32 = 0xffff;
 
-var io_base: u16 = com1_io;
 var present = false;
 var initialized = false;
 
 pub fn init() void {
-    const base = com1_io;
-    io_base = base;
     present = false;
     initialized = true;
 
-    if (!scratchOk(base)) return;
+    if (!scratchOk(com1_io)) return;
 
     // DLAB off so offset 1 is IER, then 115200 8N1, FIFO, DTR|RTS|OUT2.
-    port.outb(base + lcr, lcr_8n1);
-    port.outb(base + ier, 0x00);
-    port.outb(base + lcr, lcr_8n1 | lcr_dlab);
-    port.outb(base + data, 0x01);
-    port.outb(base + ier, 0x00);
-    port.outb(base + lcr, lcr_8n1);
-    port.outb(base + iir_fcr, fcr_init);
-    port.outb(base + mcr, mcr_dtr_rts_out2);
+    port.outb(com1_io + lcr, lcr_8n1);
+    port.outb(com1_io + ier, 0x00);
+    port.outb(com1_io + lcr, lcr_8n1 | lcr_dlab);
+    port.outb(com1_io + data, 0x01);
+    port.outb(com1_io + ier, 0x00);
+    port.outb(com1_io + lcr, lcr_8n1);
+    port.outb(com1_io + iir_fcr, fcr_init);
+    port.outb(com1_io + mcr, mcr_dtr_rts_out2);
 
     present = true;
-    logger.info("COM1 0x{x} {d} 8N1", .{ base, baud });
+    logger.info("COM1 0x{x} {d} 8N1", .{ com1_io, baud });
 }
 
 pub fn write(bytes: []const u8) void {
@@ -56,14 +53,14 @@ pub fn write(bytes: []const u8) void {
     if (!present) return;
     for (bytes) |byte| {
         if (!waitThre()) return;
-        port.outb(io_base + data, byte);
+        port.outb(com1_io + data, byte);
     }
 }
 
 pub fn readByte() ?u8 {
     if (!present) return null;
-    if (port.inb(io_base + lsr) & lsr_dr == 0) return null;
-    return port.inb(io_base + data);
+    if (port.inb(com1_io + lsr) & lsr_dr == 0) return null;
+    return port.inb(com1_io + data);
 }
 
 fn scratchOk(base: u16) bool {
@@ -75,7 +72,7 @@ fn scratchOk(base: u16) bool {
 
 fn waitThre() bool {
     var spins: u32 = 0;
-    while (port.inb(io_base + lsr) & lsr_thre == 0) {
+    while (port.inb(com1_io + lsr) & lsr_thre == 0) {
         if (spins == thre_spins) return false;
         spins += 1;
         asm volatile ("pause");

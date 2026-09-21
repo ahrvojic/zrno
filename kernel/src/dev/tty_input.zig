@@ -1,12 +1,8 @@
 const std = @import("std");
 
-// Wrapping indices fill the ring iff maxInt(InIndex)+1 == in_capacity.
-const in_capacity = 256;
-const InIndex = std.math.IntFittingRange(0, in_capacity - 1);
-comptime {
-    std.debug.assert(@as(usize, std.math.maxInt(InIndex)) + 1 == in_capacity);
-}
+const Ring = @import("../lib/ring.zig").Ring;
 
+const in_capacity = 256;
 const line_capacity = 128;
 
 fn isInputChar(ch: u8) bool {
@@ -17,12 +13,10 @@ fn isInputChar(ch: u8) bool {
 pub const Input = struct {
     line_buf: [line_capacity]u8 = undefined,
     line_len: usize = 0,
-    in_buf: [in_capacity]u8 = undefined,
-    in_head: InIndex = 0,
-    in_tail: InIndex = 0,
+    in: Ring(in_capacity) = .{},
 
     pub fn empty(self: *const Input) bool {
-        return self.in_head == self.in_tail;
+        return self.in.empty();
     }
 
     pub fn feed(self: *Input, ch: u8) ?u8 {
@@ -47,42 +41,21 @@ pub const Input = struct {
     }
 
     pub fn copyOut(self: *const Input, out: []u8) usize {
-        var idx = self.in_head;
-        for (out, 0..) |*slot, n| {
-            if (idx == self.in_tail) return n;
-            slot.* = self.in_buf[idx];
-            idx +%= 1;
-            if (slot.* == '\n') return n + 1;
-        }
-        return out.len;
+        return self.in.copyOutUntil(out, '\n');
     }
 
     pub fn drop(self: *Input, n: usize) void {
-        for (0..n) |_| {
-            if (self.in_head == self.in_tail) return;
-            self.in_head +%= 1;
-        }
+        self.in.drop(n);
     }
 
     fn commit(self: *Input) void {
-        if (self.line_len + 1 > self.ringFree()) {
+        if (self.line_len + 1 > self.in.room()) {
             self.line_len = 0;
             return;
         }
-        for (self.line_buf[0..self.line_len]) |c| self.put(c);
-        self.put('\n');
+        _ = self.in.put(self.line_buf[0..self.line_len]);
+        self.in.putByte('\n');
         self.line_len = 0;
-    }
-
-    fn put(self: *Input, ch: u8) void {
-        const next = self.in_tail +% 1;
-        if (next == self.in_head) return;
-        self.in_buf[self.in_tail] = ch;
-        self.in_tail = next;
-    }
-
-    fn ringFree(self: *const Input) usize {
-        return in_capacity - 1 - @as(usize, self.in_tail -% self.in_head);
     }
 };
 
@@ -162,8 +135,8 @@ test "line overflow drops extra printables" {
 
 test "ring wrap still commits a line" {
     var in: Input = .{};
-    in.in_head = @intCast(in_capacity - 2);
-    in.in_tail = @intCast(in_capacity - 2);
+    in.in.head = @intCast(in_capacity - 2);
+    in.in.tail = @intCast(in_capacity - 2);
     _ = in.feed('a');
     _ = in.feed('b');
     _ = in.feed('\n');
