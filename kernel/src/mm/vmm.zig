@@ -308,10 +308,11 @@ pub const VMM = struct {
     pub fn mapMmio(self: *VMM, phys_addr: usize, size: usize) !void {
         self.expectInit();
         std.debug.assert(size > 0);
+        const top = std.math.add(usize, phys_addr, size) catch return error.Overflow;
         self.lock.lock();
         defer self.lock.unlock();
         // reserved_mapped (and overlaps) are already in the HHDM as writeback.
-        try mapHhdmRange(self.pt, phys_addr, phys_addr + size, mmio_flags, .remap);
+        try mapHhdmRange(self.pt, phys_addr, top, mmio_flags, .remap);
     }
 
     pub fn virtToPhys(self: *VMM, virt_addr: usize) !usize {
@@ -446,9 +447,10 @@ pub fn init() !void {
     for (boot.info().memory_map.entries()) |entry| {
         if (!entry.kind.inHhdm()) continue;
         const base: usize = @intCast(entry.base);
-        const top: usize = @intCast(entry.base + entry.length);
+        const length: usize = @intCast(entry.length);
+        const top = std.math.add(usize, base, length) catch return error.Overflow;
         const start = std.mem.alignBackward(usize, base, pmm.page_size);
-        const end = std.mem.alignForward(usize, top, pmm.page_size);
+        const end = try pageAlignForward(top);
         hhdm_bytes += end - start;
         const flags: Flags = switch (entry.kind) {
             .framebuffer => hhdm_fb_flags,
@@ -461,8 +463,10 @@ pub fn init() !void {
     // alias so text and rodata stay read-only beside the mappings below.
     const text_range = sectionRange("text");
     const rodata_range = sectionRange("rodata");
-    try mapHhdmRange(kernel_vmm.pt, text_range.phys, text_range.phys + text_range.size, hhdm_ro_flags, .remap);
-    try mapHhdmRange(kernel_vmm.pt, rodata_range.phys, rodata_range.phys + rodata_range.size, hhdm_ro_flags, .remap);
+    const text_top = std.math.add(usize, text_range.phys, text_range.size) catch return error.Overflow;
+    const rodata_top = std.math.add(usize, rodata_range.phys, rodata_range.size) catch return error.Overflow;
+    try mapHhdmRange(kernel_vmm.pt, text_range.phys, text_top, hhdm_ro_flags, .remap);
+    try mapHhdmRange(kernel_vmm.pt, rodata_range.phys, rodata_top, hhdm_ro_flags, .remap);
 
     const text = try mapKernelSection(&kernel_vmm, text_range, .{ .present = true });
     const rodata = try mapKernelSection(&kernel_vmm, rodata_range, .{ .present = true, .noexec = true });
@@ -490,9 +494,17 @@ const hhdm_fb_flags = Flags{
 };
 const mmio_flags = Flags{ .present = true, .writable = true, .cache_disable = true, .noexec = true };
 
+// alignForward adds page_size-1 and panics on overflow in ReleaseSafe.
+fn pageAlignForward(addr: usize) error{Overflow}!usize {
+    const add = pmm.page_size - 1;
+    const padded = std.math.add(usize, addr, add) catch return error.Overflow;
+    return padded & ~add;
+}
+
 fn mapHhdmRange(pt: *PageTable, base: usize, top: usize, flags: Flags, existing: enum { keep, remap }) !void {
+    if (top < base) return error.Overflow;
     var addr = std.mem.alignBackward(usize, base, pmm.page_size);
-    const end = std.mem.alignForward(usize, top, pmm.page_size);
+    const end = try pageAlignForward(top);
     while (addr < end) : (addr += pmm.page_size) {
         const va = virt.toHH(usize, addr);
         pt.mapPage(va, addr, flags) catch |err| switch (err) {
@@ -557,6 +569,16 @@ inline fn switchPageTable(phys_addr: usize) void {
         :
         : [phys_addr] "r" (phys_addr),
         : .{ .memory = true });
+}
+
+test "pageAlignForward rejects an end in the last page" {
+    try std.testing.expectEqual(@as(usize, 0), try pageAlignForward(0));
+    try std.testing.expectEqual(pmm.page_size, try pageAlignForward(1));
+    try std.testing.expectEqual(pmm.page_size, try pageAlignForward(pmm.page_size));
+    const last_aligned = std.math.maxInt(usize) - (pmm.page_size - 1);
+    try std.testing.expectEqual(last_aligned, try pageAlignForward(last_aligned));
+    try std.testing.expectError(error.Overflow, pageAlignForward(last_aligned + 1));
+    try std.testing.expectError(error.Overflow, pageAlignForward(std.math.maxInt(usize)));
 }
 
 test "Flags construction" {
