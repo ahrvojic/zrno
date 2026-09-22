@@ -30,7 +30,7 @@ pub const Input = struct {
                 return '\x08';
             },
             '\n' => {
-                self.commit();
+                if (!self.commit()) return null;
                 return '\n';
             },
             else => {
@@ -50,14 +50,15 @@ pub const Input = struct {
         self.in.drop(n);
     }
 
-    fn commit(self: *Input) void {
+    fn commit(self: *Input) bool {
         if (self.line_len + 1 > self.in.room()) {
             self.line_len = 0;
-            return;
+            return false;
         }
         _ = self.in.put(self.line_buf[0..self.line_len]);
         self.in.putByte('\n');
         self.line_len = 0;
+        return true;
     }
 };
 
@@ -116,9 +117,12 @@ test "full line is dropped when the ring has no space" {
     var in: Input = .{};
     var one: [1]u8 = .{'x'};
     const filled = in_capacity - 1;
-    for (0..filled) |_| _ = in.feed('\n');
+    for (0..filled) |_| {
+        try std.testing.expectEqual(@as(?u8, '\n'), in.feed('\n'));
+    }
+    try std.testing.expectEqual(null, in.feed('\n'));
     _ = in.feed('z');
-    _ = in.feed('\n');
+    try std.testing.expectEqual(null, in.feed('\n'));
     in.drop(filled);
     try std.testing.expectEqual(0, in.copyOut(&one));
 }
