@@ -2,6 +2,8 @@ const std = @import("std");
 
 pub const block_size: usize = 512;
 pub const max_name: usize = 100;
+const chksum_off: usize = 148;
+const chksum_len: usize = 8;
 
 pub const File = struct {
     name: []const u8,
@@ -21,6 +23,7 @@ pub const Walker = struct {
             const hdr = self.archive[self.offset..][0..block_size];
             self.offset += block_size;
             if (isZero(hdr)) return null;
+            try checkChecksum(hdr);
 
             const size = try parseOctal(hdr[124..136]);
             const padded = try paddedSize(size);
@@ -107,6 +110,7 @@ pub fn Archive(comptime max_blocks: usize) type {
             hdr[156] = typeflag;
             @memcpy(hdr[257..263], "ustar\x00");
             @memcpy(hdr[263..265], "00");
+            writeChecksum(hdr);
             self.used += block_size;
 
             if (data.len != 0) {
@@ -124,6 +128,25 @@ pub fn Archive(comptime max_blocks: usize) type {
 }
 
 pub const Fixture = Archive(16);
+
+fn headerChecksum(hdr: []const u8) usize {
+    var sum: usize = 0;
+    for (hdr, 0..) |b, i| {
+        sum += if (i >= chksum_off and i < chksum_off + chksum_len) ' ' else b;
+    }
+    return sum;
+}
+
+fn writeChecksum(hdr: []u8) void {
+    const sum = headerChecksum(hdr);
+    writeOctal(hdr[chksum_off .. chksum_off + 7], sum);
+    hdr[chksum_off + 7] = ' ';
+}
+
+fn checkChecksum(hdr: []const u8) error{BadTar}!void {
+    const stored = try parseOctal(hdr[chksum_off..][0..chksum_len]);
+    if (stored != headerChecksum(hdr)) return error.BadTar;
+}
 
 fn writeOctal(dst: []u8, value: usize) void {
     const digits = dst.len - 1;
@@ -209,7 +232,16 @@ test "space-terminated octal size" {
     var f: Fixture = .{};
     f.addFile("n", "ab");
     f.buf[124..136].* = "00000000002 ".*;
+    writeChecksum(f.buf[0..block_size]);
     var it = walk(f.finish());
     const a = (try it.next()).?;
     try std.testing.expectEqualStrings("ab", a.data);
+}
+
+test "reject bad checksum" {
+    var f: Fixture = .{};
+    f.addFile("a", "x");
+    f.buf[chksum_off] ^= 1;
+    var it = walk(f.finish());
+    try std.testing.expectError(error.BadTar, it.next());
 }

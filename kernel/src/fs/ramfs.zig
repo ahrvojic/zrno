@@ -21,6 +21,7 @@ pub const Table = struct {
 
     pub fn mount(self: *Table, archive: []const u8) error{ BadTar, TooManyFiles }!void {
         self.files.len = 0;
+        errdefer self.files.len = 0;
         var it = ustar.walk(archive);
         while (try it.next()) |file| {
             if (file.name.len == 0) continue;
@@ -112,5 +113,16 @@ test "mount rejects more than max_files" {
     }
     var t: Table = .{};
     try std.testing.expectError(error.TooManyFiles, t.mount(tar.finish()));
-    try std.testing.expectEqual(max_files, t.entries().len);
+    try std.testing.expectEqual(@as(usize, 0), t.entries().len);
+}
+
+test "mount drops a partial table on BadTar" {
+    var tar: ustar.Fixture = .{};
+    tar.addFile("init", "elf");
+    tar.addFile("tail", "x");
+    const archive = tar.finish();
+    var t: Table = .{};
+    try std.testing.expectError(error.BadTar, t.mount(archive[0 .. ustar.block_size * 3]));
+    try std.testing.expectEqual(@as(usize, 0), t.entries().len);
+    try std.testing.expect(t.lookup("init") == null);
 }
