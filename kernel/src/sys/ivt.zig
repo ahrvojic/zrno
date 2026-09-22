@@ -254,7 +254,7 @@ pub fn makeHandler(comptime vector: u8) InterruptHandler {
             };
 
             // `push imm8` sign-extends, so vectors >= 128 become 0xff..xx.
-            // Force a 32-bit immediate (bit 31 clear) to zero-extend into the u64 slot.
+            // The immediate must be a non-negative imm32 so sign-extension preserves the vector.
             const vector64: u64 = vector;
 
             if (comptime has_error_code) {
