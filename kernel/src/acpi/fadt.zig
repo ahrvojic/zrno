@@ -180,7 +180,9 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
     };
     dsdt_phys_value = readDsdtPhys(fadt, data);
 
-    try enableAcpi(fadt);
+    // SCI_EN is in the control block poweroff writes. That is the extended
+    // port when the FADT publishes one; the legacy field may be zero.
+    try enableAcpi(fadt, pm1a_value.cnt);
     initialized = true;
 }
 
@@ -263,24 +265,23 @@ fn parseBootArch(revision: u8, flags: u16) BootArch {
     return .{ .has_8042 = flags & iapc_8042 != 0 };
 }
 
-fn enableAcpi(fadt: *align(1) const FADT) !void {
+fn enableAcpi(fadt: *align(1) const FADT, pm1a_cnt: u16) !void {
     if (fadt.smi_cmd_port == 0 or fadt.acpi_enable == 0) return;
     if (fadt.smi_cmd_port > std.math.maxInt(u16)) return error.InvalidFadt;
 
     const smi_cmd: u16 = @intCast(fadt.smi_cmd_port);
-    if (inAcpiMode(fadt.pm1a_ctrl_block)) {
+    if (inAcpiMode(pm1a_cnt)) {
         logger.debug("already in ACPI mode", .{});
         return;
     }
 
     logger.info("enable ACPI mode via SMI_CMD 0x{x}", .{smi_cmd});
     port.outb(smi_cmd, fadt.acpi_enable);
-    waitAcpiMode(fadt.pm1a_ctrl_block);
+    waitAcpiMode(pm1a_cnt);
 }
 
-fn waitAcpiMode(pm1a_ctrl_block: u32) void {
-    if (pm1a_ctrl_block == 0 or pm1a_ctrl_block > std.math.maxInt(u16)) return;
-    const cnt: u16 = @intCast(pm1a_ctrl_block);
+fn waitAcpiMode(cnt: u16) void {
+    if (cnt == 0) return;
     var spins: u32 = 0;
     while (port.inw(cnt) & sci_en == 0) : (spins += 1) {
         if (spins >= sci_en_spins) {
@@ -290,9 +291,9 @@ fn waitAcpiMode(pm1a_ctrl_block: u32) void {
     }
 }
 
-fn inAcpiMode(pm1a_ctrl_block: u32) bool {
-    if (pm1a_ctrl_block == 0 or pm1a_ctrl_block > std.math.maxInt(u16)) return false;
-    return port.inw(@intCast(pm1a_ctrl_block)) & sci_en != 0;
+fn inAcpiMode(cnt: u16) bool {
+    if (cnt == 0) return false;
+    return port.inw(cnt) & sci_en != 0;
 }
 
 fn expectInit() void {
@@ -348,4 +349,28 @@ test "parseResetReg rejects missing flag, short table, and bad GAS" {
     var offset = ioResetGas(0xcf9, 8);
     offset.bit_offset = 1;
     try std.testing.expect(parseResetReg(&resetFixture(reset_reg_sup, offset, 0x06)) == null);
+}
+
+test "parseIoCtrl prefers the extended PM1 control port" {
+    const gas_len = @sizeOf(acpi.GenericAddress);
+    var data = [_]u8{0} ** (@offsetOf(FADT, "x_pm1a_ctrl_block") + gas_len);
+    const gas = ioResetGas(0x604, 16);
+    @memcpy(data[@offsetOf(FADT, "x_pm1a_ctrl_block")..][0..gas_len], std.mem.asBytes(&gas));
+
+    // Legacy field left at 0: firmware that publishes only X_PM1a_CNT_BLK.
+    try std.testing.expectEqual(@as(u16, 0x604), parseIoCtrl(&data, @offsetOf(FADT, "x_pm1a_ctrl_block"), @offsetOf(FADT, "pm1a_ctrl_block")));
+
+    std.mem.writeInt(u32, data[@offsetOf(FADT, "pm1a_ctrl_block")..][0..4], 0x400, .little);
+    try std.testing.expectEqual(@as(u16, 0x604), parseIoCtrl(&data, @offsetOf(FADT, "x_pm1a_ctrl_block"), @offsetOf(FADT, "pm1a_ctrl_block")));
+}
+
+test "parseIoCtrl uses the legacy PM1 control port when the extended block is unused" {
+    var legacy_only = [_]u8{0} ** (@offsetOf(FADT, "pm1a_ctrl_block") + 4);
+    std.mem.writeInt(u32, legacy_only[@offsetOf(FADT, "pm1a_ctrl_block")..][0..4], 0x604, .little);
+    try std.testing.expectEqual(@as(u16, 0x604), parseIoCtrl(&legacy_only, @offsetOf(FADT, "x_pm1a_ctrl_block"), @offsetOf(FADT, "pm1a_ctrl_block")));
+
+    const gas_len = @sizeOf(acpi.GenericAddress);
+    var zero_x = [_]u8{0} ** (@offsetOf(FADT, "x_pm1a_ctrl_block") + gas_len);
+    std.mem.writeInt(u32, zero_x[@offsetOf(FADT, "pm1a_ctrl_block")..][0..4], 0x604, .little);
+    try std.testing.expectEqual(@as(u16, 0x604), parseIoCtrl(&zero_x, @offsetOf(FADT, "x_pm1a_ctrl_block"), @offsetOf(FADT, "pm1a_ctrl_block")));
 }
