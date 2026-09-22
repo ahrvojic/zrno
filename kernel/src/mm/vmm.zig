@@ -60,8 +60,21 @@ const PageTableEntry = extern struct {
 
 const page_table_entries = pmm.page_size / @sizeOf(PageTableEntry);
 const page_table_index_mask = page_table_entries - 1;
-// Canonical higher half: PML4 indices [256, 512).
+// Canonical higher half: PML4 indices [256, 512). init preallocates these
+// L3s and cloneKernel shares them with every address space.
 const kernel_pml4_start = page_table_entries / 2;
+const kernel_half_start: usize = kernel_pml4_start << 39;
+
+fn kernelHalf(virt_addr: usize) bool {
+    return virt_addr >= kernel_half_start;
+}
+
+// True when [virt_addr, virt_addr + size) includes a higher-half byte.
+fn rangeIntersectsKernelHalf(virt_addr: usize, size: usize) bool {
+    if (size == 0) return false;
+    if (kernelHalf(virt_addr)) return true;
+    return size > kernel_half_start - virt_addr;
+}
 
 pub const user_space_end = mem.user_space_end;
 
@@ -81,6 +94,8 @@ const PageTable = extern struct {
     entries: [page_table_entries]PageTableEntry,
 
     pub fn mapPage(self: *PageTable, virt_addr: usize, phys_addr: usize, flags: Flags) !void {
+        // A user leaf here would set U on an L3 shared with every address space.
+        if (flags.user and kernelHalf(virt_addr)) @panic("user map in kernel half");
         const entry = try self.virtToPTE(virt_addr, true, flags.user);
         const entry_flags = entry.getFlags();
 
@@ -177,9 +192,9 @@ const PageTable = extern struct {
         const pml2_idx = (virt_addr >> 21) & page_table_index_mask;
         const pml1_idx = (virt_addr >> 12) & page_table_index_mask;
 
-        const pml3 = self.getNextLevel(pml4_idx, allocate, user) orelse return error.PTENotFound;
-        const pml2 = pml3.getNextLevel(pml3_idx, allocate, user) orelse return error.PTENotFound;
-        const pml1 = pml2.getNextLevel(pml2_idx, allocate, user) orelse return error.PTENotFound;
+        const pml3 = self.descend(pml4_idx, allocate, user, virt_addr) orelse return error.PTENotFound;
+        const pml2 = pml3.descend(pml3_idx, allocate, user, virt_addr) orelse return error.PTENotFound;
+        const pml1 = pml2.descend(pml2_idx, allocate, user, virt_addr) orelse return error.PTENotFound;
         return .{
             .pml4_idx = pml4_idx,
             .pml3_idx = pml3_idx,
@@ -193,6 +208,15 @@ const PageTable = extern struct {
 
     pub fn virtToPTE(self: *PageTable, virt_addr: usize, allocate: bool, user: bool) !*PageTableEntry {
         return (try self.walk(virt_addr, allocate, user)).pte();
+    }
+
+    fn descend(self: *PageTable, index: usize, allocate: bool, user: bool, virt_addr: usize) ?*PageTable {
+        const entry = &self.entries[index];
+        const before = entry.getFlags();
+        const next = self.getNextLevel(index, allocate, user) orelse return null;
+        // Setting U on a present directory leaves a cached U=0 entry (SDM 4.10.4).
+        if (before.present and allocate and user and !before.user) flushTLB(virt_addr);
+        return next;
     }
 
     pub fn getNextLevel(self: *PageTable, index: usize, allocate: bool, user: bool) ?*PageTable {
@@ -255,6 +279,7 @@ pub const VMM = struct {
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(size, pmm.page_size));
+        if (flags.user and rangeIntersectsKernelHalf(virt_addr, size)) @panic("user map in kernel half");
 
         self.lock.lock();
         defer self.lock.unlock();
@@ -568,6 +593,25 @@ test "userRange empty length is always in range" {
 test "userRange rejects a span past the user half" {
     try std.testing.expect(!userRange(pmm.page_size, user_space_end - pmm.page_size + 1));
     try std.testing.expect(userRange(pmm.page_size, user_space_end - pmm.page_size));
+}
+
+test "kernel half starts at PML4 index 256" {
+    try std.testing.expectEqual(@as(usize, 1) << 47, kernel_half_start);
+    try std.testing.expect(!kernelHalf(0));
+    try std.testing.expect(!kernelHalf(user_space_end - 1));
+    try std.testing.expect(!kernelHalf(kernel_half_start - 1));
+    try std.testing.expect(kernelHalf(kernel_half_start));
+    try std.testing.expect(kernelHalf(0xffff_ff00_0000_0000));
+    try std.testing.expect(kernelHalf(0xffffffff80000000));
+}
+
+test "a user mapping must not reach the shared kernel half" {
+    try std.testing.expect(!rangeIntersectsKernelHalf(pmm.page_size, pmm.page_size));
+    try std.testing.expect(!rangeIntersectsKernelHalf(kernel_half_start - pmm.page_size, pmm.page_size));
+    try std.testing.expect(!rangeIntersectsKernelHalf(kernel_half_start, 0));
+    try std.testing.expect(rangeIntersectsKernelHalf(kernel_half_start - pmm.page_size, pmm.page_size * 2));
+    try std.testing.expect(rangeIntersectsKernelHalf(kernel_half_start, pmm.page_size));
+    try std.testing.expect(rangeIntersectsKernelHalf(std.math.maxInt(usize) - pmm.page_size + 1, pmm.page_size));
 }
 
 test "userCanonical is 0-canonical only" {
