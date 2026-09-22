@@ -11,8 +11,8 @@ const vmm = @import("../mm/vmm.zig");
 
 const cap_period_shift: u6 = 32;
 const cap_count_size: u64 = 1 << 13;
-const cfg_enable: u64 = 1 << 0;
-const cfg_legacy: u64 = 1 << 1;
+const cfg_enable: u32 = 1 << 0;
+const cfg_legacy: u32 = 1 << 1;
 
 const reg_cap: u32 = 0x00;
 const reg_config: u32 = 0x10;
@@ -59,18 +59,19 @@ pub fn init() void {
     };
 
     counter_64 = cap & cap_count_size != 0;
-    // Disable first: spec forbids changing LEG_RT_CNF while ENABLE_CNF is 1.
-    const cfg = read32(reg_config);
-    write32(reg_config, cfg & ~@as(u32, @truncate(cfg_enable)));
-    // Do not enable legacy replacement: it steals ISA IRQ 0/8 from the PIT/RTC.
-    write32(reg_config, (cfg & ~@as(u32, @truncate(cfg_legacy))) | @as(u32, @truncate(cfg_enable)));
+    // Spec forbids changing LEG_RT_CNF while ENABLE_CNF is 1. Halt, then
+    // clear legacy replacement (IRQ 0/8 stay with the PIT/RTC), then enable.
+    const stores = configStores(read32(reg_config));
+    write32(reg_config, stores[0]);
+    write32(reg_config, stores[1]);
+    write32(reg_config, stores[2]);
 
     const a = readCounter();
     pauseLoop(tick_spins);
     const b = readCounter();
     if (b == a) {
         logger.warn("HPET counter is not ticking", .{});
-        write32(reg_config, read32(reg_config) & ~@as(u32, @truncate(cfg_enable)));
+        write32(reg_config, read32(reg_config) & ~cfg_enable);
         mmio_base = 0;
         return;
     }
@@ -145,9 +146,30 @@ fn expectUninit() void {
     if (initialized) @panic("hpet already initialized");
 }
 
+fn configStores(cfg: u32) [3]u32 {
+    const halt = cfg & ~cfg_enable;
+    const no_legacy = halt & ~cfg_legacy;
+    return .{ halt, no_legacy, no_legacy | cfg_enable };
+}
+
 fn freqFromPeriodFs(period_fs: u32) ?u64 {
     if (period_fs == 0 or period_fs > max_period_fs) return null;
     return fs_per_s / period_fs;
+}
+
+test "configStores halts, then clears legacy, then enables" {
+    const other: u32 = 1 << 4;
+    const both = cfg_enable | cfg_legacy | other;
+    const stores = configStores(both);
+    try std.testing.expectEqual(cfg_legacy | other, stores[0]);
+    try std.testing.expectEqual(other, stores[1]);
+    try std.testing.expectEqual(cfg_enable | other, stores[2]);
+
+    const already_halted = cfg_legacy | other;
+    const halted = configStores(already_halted);
+    try std.testing.expectEqual(already_halted, halted[0]);
+    try std.testing.expectEqual(other, halted[1]);
+    try std.testing.expectEqual(cfg_enable | other, halted[2]);
 }
 
 test "freqFromPeriodFs rejects 0 and periods above 100 ns" {
