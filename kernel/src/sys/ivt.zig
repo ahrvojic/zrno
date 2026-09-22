@@ -27,11 +27,17 @@ pub const vec_yield = 0x90;
 pub const vec_apic_spurious = 255;
 
 // IDT IST index (1-7). TSS.ist[index - 1] is the stack pointer.
+// NMI is not masked by FMASK.IF. SYSCALL leaves RSP on the user stack for
+// one instruction, and IST 0 would push that NMI onto it.
 pub const ist_double_fault: u8 = 1;
 pub const ist_page_fault: u8 = 2;
+pub const ist_nmi: u8 = 3;
 comptime {
+    std.debug.assert(ist_nmi >= 1 and ist_nmi <= 7);
     std.debug.assert(ist_double_fault >= 1 and ist_double_fault <= 7);
     std.debug.assert(ist_page_fault >= 1 and ist_page_fault <= 7);
+    std.debug.assert(ist_nmi != ist_double_fault);
+    std.debug.assert(ist_nmi != ist_page_fault);
     std.debug.assert(ist_page_fault != ist_double_fault);
 }
 
@@ -127,7 +133,7 @@ export fn interruptStub() callconv(.naked) void {
 
 // SYSCALL does not switch stacks. Entry stashes user RSP here, then loads
 // `syscall_kernel_rsp` (kept equal to TSS.rsp[0]). Single-CPU; FMASK holds
-// IF off so this is not re-entered.
+// IF off so this is not re-entered. An NMI in that window uses `ist_nmi`.
 pub export var syscall_user_rsp: u64 = 0;
 pub export var syscall_kernel_rsp: u64 = 0;
 

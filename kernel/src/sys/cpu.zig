@@ -125,6 +125,7 @@ pub const Context = extern struct {
     ss: u64 = 0,
 };
 
+const nmi_stack_size = 2 * pmm.page_size;
 const df_stack_size = 2 * pmm.page_size;
 const pf_stack_size = 16 * pmm.page_size;
 
@@ -132,7 +133,9 @@ pub const CPU = struct {
     gdt: gdt.GDT = .{},
     idt: idt.IDT = .{},
     tss: gdt.TSS = .{},
-    // Dedicated stacks for #DF / #PF (IST). BSS so they are valid before PMM.
+    // Dedicated stacks for NMI / #DF / #PF (IST). BSS so they are valid before PMM.
+    // NMI must not share the page-fault stack: a fault during NMI reloads that IST.
+    nmi_stack: [nmi_stack_size]u8 align(16) = undefined,
     df_stack: [df_stack_size]u8 align(16) = undefined,
     pf_stack: [pf_stack_size]u8 align(16) = undefined,
     // HH-mapped MMIO; unused when x2apic is set.
@@ -151,9 +154,10 @@ pub const CPU = struct {
         // interpret the TSS itself as permission bits).
         self.tss.iopb_offset = @sizeOf(gdt.TSS);
 
-        // IDT IST n uses TSS.ist[n - 1]. Set before LTR so #DF / #PF are
+        // IDT IST n uses TSS.ist[n - 1]. Set before LTR so NMI / #DF / #PF are
         // safe from the moment the TSS is loaded. #PF has its own stack
         // so the handler does not run on a nearly-full kernel stack.
+        self.tss.ist[ivt.ist_nmi - 1] = @intFromPtr(&self.nmi_stack) + self.nmi_stack.len;
         self.tss.ist[ivt.ist_double_fault - 1] = @intFromPtr(&self.df_stack) + self.df_stack.len;
         self.tss.ist[ivt.ist_page_fault - 1] = @intFromPtr(&self.pf_stack) + self.pf_stack.len;
 

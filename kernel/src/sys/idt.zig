@@ -32,18 +32,22 @@ const IDTEntry = packed struct(u128) {
     }
 };
 
+fn gateIst(vector: u8) u8 {
+    return switch (vector) {
+        ivt.vec_nmi => ivt.ist_nmi,
+        ivt.vec_double_fault => ivt.ist_double_fault,
+        ivt.vec_page_fault => ivt.ist_page_fault,
+        else => 0,
+    };
+}
+
 pub const IDT = struct {
     entries: [256]IDTEntry align(16) = undefined,
 
     pub fn load(self: *IDT) void {
         inline for (0..self.entries.len) |i| {
             const handler = ivt.makeHandler(i);
-            const ist: u8 = switch (i) {
-                ivt.vec_double_fault => ivt.ist_double_fault,
-                ivt.vec_page_fault => ivt.ist_page_fault,
-                else => 0,
-            };
-            self.entries[i] = IDTEntry.make(@intFromPtr(handler), ist, interrupt_gate);
+            self.entries[i] = IDTEntry.make(@intFromPtr(handler), gateIst(@intCast(i)), interrupt_gate);
         }
 
         const idtr = IDTR{
