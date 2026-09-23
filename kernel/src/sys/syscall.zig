@@ -37,6 +37,9 @@ pub const nr_getdents: u64 = 17; // rdi=fd, rsi=buf, rdx=len; returns bytes
 pub const nr_uptime: u64 = 18; // returns ns since boot
 pub const nr_lseek: u64 = 19; // rdi=fd, rsi=offset i64, rdx=whence; returns pos
 pub const nr_ps: u64 = 20; // rdi=buf, rsi=len; returns bytes of PsInfo
+pub const nr_thread: u64 = 21; // rdi=entry, rsi=arg; new thread in this process, returns tid
+pub const nr_thread_exit: u64 = 22; // rdi=code; last thread exits the process
+pub const nr_gettid: u64 = 23;
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -119,6 +122,9 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_uptime => sys_uptime(),
         nr_lseek => sys_lseek(ctx),
         nr_ps => sys_ps(ctx),
+        nr_thread => sys_thread(ctx),
+        nr_thread_exit => sys_thread_exit(ctx),
+        nr_gettid => sys_gettid(),
         else => errval(ENOSYS),
     };
 }
@@ -203,6 +209,28 @@ fn sys_exit(ctx: *cpu.Context) u64 {
     sched.exitProcess(process, code);
     sched.yield();
     unreachable;
+}
+
+fn sys_thread(ctx: *cpu.Context) u64 {
+    const process = cpu.currentProcess();
+    if (process.pid == state.kernel_pid) return errval(EINVAL);
+    const entry: usize = @intCast(ctx.rdi);
+    if (!userText(entry)) return errval(EINVAL);
+    const thread = sched.createUserThread(process, entry, ctx.rsi) catch return errval(ENOMEM);
+    return thread.tid;
+}
+
+fn sys_thread_exit(ctx: *cpu.Context) u64 {
+    if (cpu.currentProcess().pid == state.kernel_pid) @panic("kernel process exit");
+    sched.exitThread(@truncate(ctx.rdi));
+}
+
+fn sys_gettid() u64 {
+    return cpu.currentThread().tid;
+}
+
+fn userText(addr: usize) bool {
+    return addr >= pmm.page_size and addr < vmm.user_space_end;
 }
 
 fn sys_yield() u64 {

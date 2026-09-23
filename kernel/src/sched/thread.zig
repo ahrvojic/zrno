@@ -46,8 +46,26 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, argv: []const []const u
     const user_stack_base = try aspace.takeUserStack(parent);
     errdefer aspace.giveUserStack(parent, user_stack_base);
     try setupUserStack(&parent.vmm, user_stack_base, pc, argv, &thread.ctx);
+    thread.user_stack = user_stack_base;
 
     publishThread(parent, thread, enqueue);
+    return thread;
+}
+
+// One more thread in `parent`. Same page tables and file descriptors.
+// `pc(arg)` is entered by iretq with rdi = arg; the word at rsp is 0, so
+// a `ret` faults instead of running off the stack. The thread must
+// `thread_exit`. Enqueued; it runs after the caller leaves the syscall.
+pub fn createUserThread(parent: *proc.Process, pc: usize, arg: u64) !*proc.Thread {
+    const thread = try allocKthread(parent);
+    errdefer abandonKthread(thread);
+
+    const user_stack_base = try aspace.takeUserStack(parent);
+    errdefer aspace.giveUserStack(parent, user_stack_base);
+    try setupThreadStack(&parent.vmm, user_stack_base, pc, arg, &thread.ctx);
+    thread.user_stack = user_stack_base;
+
+    publishThread(parent, thread, true);
     return thread;
 }
 
@@ -84,6 +102,7 @@ pub fn execReplace(
     process.mmap_next = state.user_mmap_top;
     process.brk_start = image_brk;
     process.brk = image_brk;
+    thread.user_stack = user_stack_base;
     thread.ctx = ctx.*;
     cpu.initFpuState(thread.fpu);
     state.lock.unlock();
@@ -145,6 +164,27 @@ fn setupUserStack(
     errdefer space.unmap(stack_base, state.stack_size) catch {};
     const frame = try setupUserArgv(stack_phys, stack_base, argv);
     applyUserRegs(ctx, pc, frame);
+}
+
+fn setupThreadStack(
+    space: *vmm.VMM,
+    stack_base: usize,
+    pc: usize,
+    arg: u64,
+    ctx: *cpu.Context,
+) !void {
+    const stack_phys = pmm.alloc(state.stack_pages) orelse return error.OutOfMemory;
+    errdefer pmm.free(stack_phys, state.stack_pages);
+    try space.map(stack_base, stack_phys, state.stack_size, user_stack_flags);
+    errdefer space.unmap(stack_base, state.stack_size) catch {};
+    const mem = virt.toHH([*]u8, stack_phys)[0..state.stack_size];
+    // Same entry slot as `_start`: rsp ≡ 8 (mod 16), empty return word.
+    writeU64(mem, state.stack_size - @sizeOf(u64), 0);
+    applyUserRegs(ctx, pc, .{
+        .rsp = @intCast(stack_base + state.stack_size - @sizeOf(u64)),
+        .argc = 0,
+        .argv_va = arg,
+    });
 }
 
 // Caller holds `state.lock`.

@@ -22,6 +22,9 @@ pub const nr_getdents: u64 = 17;
 pub const nr_uptime: u64 = 18;
 pub const nr_lseek: u64 = 19;
 pub const nr_ps: u64 = 20;
+pub const nr_thread: u64 = 21;
+pub const nr_thread_exit: u64 = 22;
+pub const nr_gettid: u64 = 23;
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -157,6 +160,22 @@ pub fn waitStatus(pid: u64, status: ?*u64) i64 {
 
 pub fn getpid() i64 {
     return syscall3(nr_getpid, 0, 0, 0);
+}
+
+pub fn gettid() i64 {
+    return syscall3(nr_gettid, 0, 0, 0);
+}
+
+/// Start `entry(arg)` on a new stack in this process. Same page tables and
+/// file descriptors. `entry` is `callconv(.c)` and is entered by iretq with
+/// the argument in rdi. It must call `threadExit`; a return faults.
+pub fn thread(entry: *const fn (u64) callconv(.c) noreturn, arg: u64) i64 {
+    return syscall3(nr_thread, @intFromPtr(entry), arg, 0);
+}
+
+pub fn threadExit(code: u64) noreturn {
+    _ = syscall3(nr_thread_exit, code, 0, 0);
+    unreachable;
 }
 
 pub fn getppid() i64 {

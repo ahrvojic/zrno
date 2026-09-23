@@ -28,9 +28,20 @@ pub fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
 pub fn giveUserStack(parent: *proc.Process, base: usize) void {
     state.lock.lock();
     defer state.lock.unlock();
+    releaseUserStackLocked(parent, base);
+}
+
+// Caller holds `state.lock`. Rewinds the cursor when `base` is the newest
+// slot. An older slot stays a hole until exec or process exit; the caller
+// frees the frames.
+pub fn releaseUserStackLocked(parent: *proc.Process, base: usize) void {
     if (parent.user_stack_next == base - pmm.page_size) {
         parent.user_stack_next = base + state.stack_size;
     }
+}
+
+pub fn unmapUserStack(space: *vmm.VMM, base: usize) void {
+    unmapPages(space, base, state.stack_size);
 }
 
 const BrkChange = struct {

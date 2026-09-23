@@ -17,6 +17,7 @@ const vmm = @import("../mm/vmm.zig");
 
 pub const tick_hz = state.tick_hz;
 pub const startUserThread = thread.startUserThread;
+pub const createUserThread = thread.createUserThread;
 pub const execReplace = thread.execReplace;
 pub const setBrk = aspace.setBrk;
 pub const mapAnon = aspace.mapAnon;
@@ -148,6 +149,43 @@ pub fn tick(ctx: *cpu.Context) void {
     ticks +%= 1;
     wakeSleepers();
     switchLocked(ctx);
+}
+
+// End this thread. The last thread exits the process: same zombie, same
+// `wait`, fds closed. An earlier thread unmaps its own user stack and
+// leaves the process running.
+pub fn exitThread(exit_code: u8) noreturn {
+    state.expectInit();
+    const process = cpu.currentProcess();
+    if (process.pid == state.kernel_pid) @panic("kernel thread exit");
+
+    state.lock.lock();
+    const self = cpu.currentThread();
+    if (hasSibling(process, self)) {
+        const base = self.user_stack;
+        if (base == 0) @panic("thread exit without user stack");
+        aspace.releaseUserStackLocked(process, base);
+        aspace.unmapUserStack(&process.vmm, base);
+        thread.stop(self);
+        state.lock.unlock();
+        yield();
+        unreachable;
+    }
+    state.lock.unlock();
+
+    logger.info("pid {d} exit {d}", .{ process.pid, exit_code });
+    exitProcess(process, exit_code);
+    yield();
+    unreachable;
+}
+
+fn hasSibling(process: *proc.Process, self: *proc.Thread) bool {
+    var node = process.threads.first;
+    while (node) |n| {
+        if (threadFromProc(n) != self) return true;
+        node = n.next;
+    }
+    return false;
 }
 
 pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
