@@ -14,6 +14,9 @@ const vmm = @import("../mm/vmm.zig");
 
 const msr_lapic = 0x1b;
 const msr_efer = 0xc0000080;
+const msr_pat = 0x277;
+// Architectural defaults, except index 5 is WC. Framebuffer PTEs select that index.
+const pat_wc_at_5: u64 = 0x0007_0106_0007_0406;
 const msr_star = 0xc0000081;
 const msr_lstar = 0xc0000082;
 const msr_fmask = 0xc0000084;
@@ -165,6 +168,7 @@ pub const CPU = struct {
         self.idt.load();
         enableSyscall();
         enableProtections();
+        writeMSR(msr_pat, pat_wc_at_5);
         enableFpu();
         self.initialized = true;
         logger.info("bsp gdt idt tss syscall wp smep smap xsave", .{});

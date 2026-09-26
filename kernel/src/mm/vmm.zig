@@ -3,6 +3,7 @@ const logger = std.log.scoped(.vmm);
 const std = @import("std");
 
 const boot = @import("../sys/boot.zig");
+const bootinfo = @import("bootinfo");
 const Lock = @import("../lib/lock.zig");
 const mem = @import("../lib/mem.zig");
 const pmm = @import("pmm.zig");
@@ -440,11 +441,10 @@ pub fn init() !void {
         _ = kernel_vmm.pt.getNextLevel(i, true, false) orelse return error.OutOfMemory;
     }
 
-    // Base revision 6 maps only selected memory-map types into the HHDM.
     // Framebuffer pages are write-combining; every other direct-map entry stays write-back.
     var hhdm_bytes: usize = 0;
     logger.debug("mapping HHDM", .{});
-    for (boot.info().memory_map.entries()) |entry| {
+    for (boot.info().mmap) |entry| {
         if (!entry.kind.inHhdm()) continue;
         const base: usize = @intCast(entry.base);
         const length: usize = @intCast(entry.length);
@@ -459,7 +459,7 @@ pub fn init() !void {
         try mapHhdmRange(kernel_vmm.pt, base, top, flags, .keep);
     }
 
-    // executable_and_modules also covers these frames. Drop the writable
+    // The modules range also covers these frames. Drop the writable
     // alias so text and rodata stay read-only beside the mappings below.
     const text_range = sectionRange("text");
     const rodata_range = sectionRange("rodata");
@@ -484,7 +484,7 @@ pub fn init() !void {
 
 const hhdm_ram_flags = Flags{ .present = true, .writable = true, .noexec = true };
 const hhdm_ro_flags = Flags{ .present = true, .noexec = true };
-// Limine PAT entry 5 (PWT|PAT, PCD clear) is write-combining.
+// PAT index 5 (PWT|PAT, PCD clear). `cpu.init` makes that entry write-combining.
 const hhdm_fb_flags = Flags{
     .present = true,
     .writable = true,
@@ -534,8 +534,8 @@ fn sectionRange(comptime section_name: []const u8) SectionRange {
     const virt_start = std.mem.alignBackward(usize, section_start, pmm.page_size);
     const virt_end = std.mem.alignForward(usize, section_end, pmm.page_size);
 
-    const virt_base: usize = @intCast(boot.info().kernel.virtual_base);
-    const phys_base: usize = @intCast(boot.info().kernel.physical_base);
+    const virt_base: usize = bootinfo.kernel_virt;
+    const phys_base: usize = @intCast(boot.info().kernel_phys);
     return .{
         .virt = virt_start,
         .phys = virt_start - virt_base + phys_base,

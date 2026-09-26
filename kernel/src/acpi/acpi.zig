@@ -68,9 +68,9 @@ const ACPI = struct {
     use_xsdt: bool = false,
 
     pub fn load(self: *ACPI) !void {
-        // Base revision 6 returns a virtual (HHDM) pointer. Table
-        // addresses inside RSDP/XSDP are still physical.
-        const rsdp: *align(1) const RSDP = @ptrCast(boot.info().rsdp.address);
+        // The loader passes a physical address. Table addresses inside
+        // RSDP/XSDP are physical too; both are read through the higher half.
+        const rsdp: *align(1) const RSDP = virt.toHH(*align(1) const RSDP, @intCast(boot.info().rsdp_phys));
         try verifyRsdp(rsdp);
 
         const oem = std.mem.trimEnd(u8, &rsdp.oem_id, " \x00");

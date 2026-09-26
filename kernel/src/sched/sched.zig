@@ -24,8 +24,8 @@ pub const mapAnon = aspace.mapAnon;
 pub const isKernelStackGuard = kstack.isGuard;
 pub const isUserStackGuard = aspace.isUserStackGuard;
 
-// First `switchLocked` still runs on the Limine stack (`thread == null`).
-var limine_stack = true;
+// First `switchLocked` still runs on the boot stack (`thread == null`).
+var boot_stack = true;
 
 // Local APIC timer ticks. 1 kHz so 1 tick = 1 ms (`tick_hz`).
 var ticks: u64 = 0;
@@ -316,8 +316,8 @@ fn switchLocked(ctx: *cpu.Context) void {
     kstack.reapDoomed();
     aspace.reapDoomedPt();
     const this_cpu = cpu.current();
-    if (limine_stack and this_cpu.thread != null) {
-        limine_stack = false;
+    if (boot_stack and this_cpu.thread != null) {
+        boot_stack = false;
         pmm.reclaimBootloader();
     }
     var start: ?*std.DoublyLinkedList.Node = null;

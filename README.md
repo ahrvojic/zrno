@@ -1,6 +1,6 @@
 # zrno
 
-A simple kernel that relies on the [Limine](https://limine-bootloader.org) bootloader.
+A simple kernel. A small UEFI loader in `boot/` hands it the memory map, framebuffer, ACPI root, and initramfs.
 
 Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 
@@ -21,23 +21,16 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 
 ## Requirements
 
-Host tools that need to be installed locally. Limine (and OVMF, for UEFI QEMU targets) are fetched by the makefile.
+Host tools that need to be installed locally. OVMF is fetched by the makefile.
 
-To build the ISO and run it (`make run`):
+To build and run (`make run`):
 
 - [GNU make](https://www.gnu.org/software/make/) 4.x
 - [Zig](https://ziglang.org) 0.16.0
 - [QEMU](https://www.qemu.org) (`qemu-system-x86_64`)
-- [xorriso](https://www.gnu.org/software/xorriso/)
-- A C compiler (`cc`), used to build Limine's `bios-install` helper
-- `curl` and `tar`, used to fetch Limine if it is not already present
+- `curl` and `tar` (`curl` fetches OVMF; `tar` packs the initramfs)
 
-HDD images (`make all-hdd` / `make run-hdd`) also need:
-
-- `sgdisk` (package `gdisk` or `gptfdisk`)
-- [mtools](https://www.gnu.org/software/mtools/) (`mformat`, `mmd`, `mcopy`)
-
-`make run` attaches COM1 to the terminal (`-serial stdio`). Kernel logs and panics go there (115200 8N1). After boot, `/shell` accepts `help`, `reboot`, and `poweroff` (S5; QEMU exits).
+`make run` serves `esp/` to OVMF as a FAT disk and attaches COM1 to the terminal (`-serial stdio`). Kernel logs and panics go there (115200 8N1). After boot, `/shell` accepts `help`, `reboot`, and `poweroff` (S5; QEMU exits).
 
 ## References
 

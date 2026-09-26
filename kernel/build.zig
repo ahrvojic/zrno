@@ -19,8 +19,8 @@ pub fn build(b: *std.Build) void {
 
     const optimize = b.standardOptimizeOption(.{});
 
-    const limine = b.createModule(.{
-        .root_source_file = b.path("src/sys/limine.zig"),
+    const bootinfo = b.createModule(.{
+        .root_source_file = b.path("../common/bootinfo.zig"),
     });
 
     const options = b.addOptions();
@@ -35,12 +35,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .code_model = .kernel,
-        .pic = true,
+        // Fixed link address. The bootloader does not apply relocations.
+        .pic = false,
         .red_zone = false,
         // RBP walks in panicImpl. ReleaseSafe would otherwise omit them.
         .omit_frame_pointer = false,
         .imports = &.{
-            .{ .name = "limine", .module = limine },
+            .{ .name = "bootinfo", .module = bootinfo },
             .{ .name = "build_options", .module = options.createModule() },
             .{ .name = "437_US.F16", .module = font },
         },
@@ -55,7 +56,6 @@ pub fn build(b: *std.Build) void {
     // The self-hosted x86 backend cannot encode kernel asm (port I/O,
     // CR3, AT&T memory operands, jumps to exported stubs).
     kernel.use_llvm = true;
-    // LTO can discard Limine request symbols.
     kernel.lto = .none;
 
     b.installArtifact(kernel);
@@ -66,6 +66,7 @@ pub fn build(b: *std.Build) void {
             .target = b.graph.host,
             .optimize = optimize,
             .imports = &.{
+                .{ .name = "bootinfo", .module = bootinfo },
                 .{ .name = "437_US.F16", .module = font },
             },
         }),

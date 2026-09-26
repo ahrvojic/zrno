@@ -1,16 +1,16 @@
 #!/bin/sh
-# Boot the ISO on serial, wait for READY., run a couple of shell commands,
-# poweroff, and check the output. Usage: test-qemu.sh ISO QEMU [QEMUFLAGS...]
+# Boot on serial, wait for READY., run a couple of shell commands,
+# poweroff, and check the output.
+# Usage: test-qemu.sh QEMU [QEMUFLAGS...]
+# QEMUFLAGS includes firmware and the disk.
 
 set -eu
 
-if [ "$#" -lt 2 ]; then
-    echo "usage: $0 ISO QEMU [QEMUFLAGS...]" >&2
+if [ "$#" -lt 1 ]; then
+    echo "usage: $0 QEMU [QEMUFLAGS...]" >&2
     exit 2
 fi
 
-iso=$1
-shift
 qemu=$1
 shift
 
@@ -39,12 +39,12 @@ fail() {
 
 # RDWR so open does not block waiting for the other end.
 exec 3<>"$fifo"
-"$qemu" "$@" -display none -no-reboot -cdrom "$iso" -boot d \
+"$qemu" "$@" -display none -no-reboot \
     < "$fifo" > "$out" 2>&1 &
 qpid=$!
 
 n=0
-while [ "$n" -lt 30 ]; do
+while [ "$n" -lt 90 ]; do
     if grep -Fq "READY." "$out"; then
         break
     fi
@@ -56,7 +56,7 @@ while [ "$n" -lt 30 ]; do
     n=$((n + 1))
     sleep 1
 done
-[ "$n" -lt 30 ] || fail "timeout waiting for READY."
+[ "$n" -lt 90 ] || fail "timeout waiting for READY."
 
 printf 'echo hi | cat\nls\nthread\npoweroff\n' >&3
 exec 3>&-

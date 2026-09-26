@@ -7,65 +7,34 @@ endif
 
 override IMAGE_NAME := zrno
 
-# Pin the bootloader release. Limine does not guarantee protocol or config
-# compatibility across versions; /releases/latest can break a working kernel.
-LIMINE_VERSION := 12.6.1
-
-# Host toolchain for building the Limine install helper.
-HOST_CC := cc
-HOST_CFLAGS := -g -O2 -pipe
-HOST_CPPFLAGS :=
-HOST_LDFLAGS :=
-HOST_LIBS :=
-
 KZIGFLAGS ?= -Doptimize=ReleaseSafe
 UZIGFLAGS ?= -Doptimize=ReleaseSmall
+BZIGFLAGS ?= -Doptimize=ReleaseSafe
 
 QEMU := qemu-system-x86_64
 # qemu64 does not implement XSAVE/AVX (even with +avx). Broadwell has
 # SMEP, SMAP, AVX, and AVX2, which the kernel requires.
 QEMUFLAGS := -M q35 -m 2G -serial stdio -cpu Broadwell
 
-.PHONY: all
-all: $(IMAGE_NAME).iso
+# QEMU's fat: drive is the ESP. No mtools or sgdisk: the firmware sees a
+# FAT disk whose root is this directory.
+ESP := esp
+QEMU_DISK := -drive file=fat:rw:$(abspath $(ESP)),format=raw,media=disk
 
-.PHONY: all-hdd
-all-hdd: $(IMAGE_NAME).hdd
+.PHONY: all
+all: $(ESP)/EFI/BOOT/BOOTX64.EFI
 
 .PHONY: run
-run: $(IMAGE_NAME).iso
-	$(QEMU) $(QEMUFLAGS) -cdrom $(IMAGE_NAME).iso -boot d
+run: ovmf $(ESP)/EFI/BOOT/BOOTX64.EFI
+	$(QEMU) $(QEMUFLAGS) -bios ovmf/OVMF.fd $(QEMU_DISK)
 
 .PHONY: test-qemu
-test-qemu: $(IMAGE_NAME).iso
-	sh scripts/test-qemu.sh $(IMAGE_NAME).iso $(QEMU) $(QEMUFLAGS)
-
-.PHONY: run-uefi
-run-uefi: ovmf $(IMAGE_NAME).iso
-	$(QEMU) $(QEMUFLAGS) -bios ovmf/OVMF.fd -cdrom $(IMAGE_NAME).iso -boot d
-
-.PHONY: run-hdd
-run-hdd: $(IMAGE_NAME).hdd
-	$(QEMU) $(QEMUFLAGS) -hda $(IMAGE_NAME).hdd
-
-.PHONY: run-hdd-uefi
-run-hdd-uefi: ovmf $(IMAGE_NAME).hdd
-	$(QEMU) $(QEMUFLAGS) -bios ovmf/OVMF.fd -hda $(IMAGE_NAME).hdd
+test-qemu: ovmf $(ESP)/EFI/BOOT/BOOTX64.EFI
+	sh scripts/test-qemu.sh $(QEMU) -bios ovmf/OVMF.fd $(QEMU_DISK) $(QEMUFLAGS)
 
 ovmf:
 	mkdir -p ovmf
 	cd ovmf && curl -Lo OVMF.fd https://retrage.github.io/edk2-nightly/bin/RELEASEX64_OVMF.fd
-
-limine/limine:
-	rm -rf limine limine-binary
-	curl -L https://github.com/Limine-Bootloader/Limine/releases/download/v$(LIMINE_VERSION)/limine-binary.tar.gz | tar -xz
-	mv limine-binary limine
-	$(MAKE) -C limine \
-		CC="$(HOST_CC)" \
-		CFLAGS="$(HOST_CFLAGS)" \
-		CPPFLAGS="$(HOST_CPPFLAGS)" \
-		LDFLAGS="$(HOST_LDFLAGS)" \
-		LIBS="$(HOST_LIBS)"
 
 USER_PROGS := $(sort $(patsubst user/src/cmd/%.zig,%,$(wildcard user/src/cmd/*.zig)))
 USER_SRCS := $(wildcard user/src/cmd/*.zig) $(wildcard user/src/lib/*.zig) \
@@ -79,6 +48,10 @@ user:
 kernel:
 	cd kernel && zig build $(KZIGFLAGS)
 
+.PHONY: boot
+boot:
+	cd boot && zig build $(BZIGFLAGS)
+
 user/initramfs.tar: $(USER_SRCS)
 	cd user && zig build $(UZIGFLAGS)
 	rm -rf user/.initramfs
@@ -87,40 +60,21 @@ user/initramfs.tar: $(USER_SRCS)
 	tar --format=ustar -cf $@ -C user/.initramfs $(USER_PROGS)
 	rm -rf user/.initramfs
 
-$(IMAGE_NAME).iso: limine/limine kernel user/initramfs.tar
-	rm -rf iso_root
-	mkdir -p iso_root/boot
-	cp -v kernel/zig-out/bin/kernel user/initramfs.tar iso_root/boot/
-	mkdir -p iso_root/boot/limine
-	cp -v limine.conf limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
-	mkdir -p iso_root/EFI/BOOT
-	cp -v limine/BOOTX64.EFI iso_root/EFI/BOOT/
-	cp -v limine/BOOTIA32.EFI iso_root/EFI/BOOT/
-	xorriso -as mkisofs -R -r -J -b boot/limine/limine-bios-cd.bin \
-		-no-emul-boot -boot-load-size 4 -boot-info-table -hfsplus \
-		-apm-block-size 2048 --efi-boot boot/limine/limine-uefi-cd.bin \
-		-efi-boot-part --efi-boot-image --protective-msdos-label \
-		iso_root -o $(IMAGE_NAME).iso
-	./limine/limine bios-install $(IMAGE_NAME).iso
-	rm -rf iso_root
-
-$(IMAGE_NAME).hdd: limine/limine kernel user/initramfs.tar
-	rm -f $(IMAGE_NAME).hdd
-	dd if=/dev/zero bs=1M count=0 seek=64 of=$(IMAGE_NAME).hdd
-	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00 -m 1
-	./limine/limine bios-install $(IMAGE_NAME).hdd
-	mformat -i $(IMAGE_NAME).hdd@@1M
-	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
-	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/zig-out/bin/kernel user/initramfs.tar ::/boot
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf limine/limine-bios.sys ::/boot/limine
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTIA32.EFI ::/EFI/BOOT
+# OVMF boots \EFI\BOOT\BOOTX64.EFI and the loader reads \boot\kernel and
+# \boot\initramfs.tar from the same volume.
+$(ESP)/EFI/BOOT/BOOTX64.EFI: boot kernel user/initramfs.tar
+	rm -rf $(ESP)
+	mkdir -p $(ESP)/EFI/BOOT $(ESP)/boot
+	cp -f boot/zig-out/bin/BOOTX64.efi $(ESP)/EFI/BOOT/BOOTX64.EFI
+	cp -f kernel/zig-out/bin/kernel $(ESP)/boot/kernel
+	cp -f user/initramfs.tar $(ESP)/boot/initramfs.tar
 
 .PHONY: clean
 clean:
-	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
+	rm -rf iso_root $(ESP) $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
 	rm -rf kernel/.zig-cache kernel/zig-cache kernel/zig-out
 	rm -rf user/.zig-cache user/zig-cache user/zig-out
+	rm -rf boot/.zig-cache boot/zig-cache boot/zig-out
 	rm -rf user/.initramfs
 	rm -f user/initramfs.tar
 

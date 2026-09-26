@@ -7,6 +7,7 @@ const build_options = @import("build_options");
 const acpi = @import("acpi/acpi.zig");
 const apic = @import("dev/apic.zig");
 const boot = @import("sys/boot.zig");
+const bootinfo = @import("bootinfo");
 const cpu = @import("sys/cpu.zig");
 const debug = @import("lib/debug.zig");
 const exec = @import("sched/exec.zig");
@@ -46,20 +47,20 @@ fn log(
     debug.print(writer.buffered());
 }
 
-export fn _start() callconv(.c) noreturn {
-    main() catch |err| {
+export fn _start(info: *const bootinfo.BootInfo) callconv(.c) noreturn {
+    main(info) catch |err| {
         var buf: [64]u8 = undefined;
         var writer: std.Io.Writer = .fixed(&buf);
         debug.printTo(&writer, "Kernel init failed: {s}", .{@errorName(err)});
         @panic(writer.buffered());
     };
-    // IF still off: `int` works, a timer cannot run on the Limine stack.
+    // IF still off: `int` works, a timer cannot run on the boot stack.
     // Not a scheduled thread: yield discards this context and never returns.
     sched.yield();
     unreachable;
 }
 
-pub fn main() !void {
+pub fn main(info: *const bootinfo.BootInfo) !void {
     cpu.interruptsOff();
 
     // Port I/O only: no heap, paging, or ACPI. First so boot panics print.
@@ -69,19 +70,16 @@ pub fn main() !void {
     logger.info("zrno {s}", .{build_options.version});
     cpu.logIdentity();
 
-    try boot.init();
+    try boot.init(info);
     try cpu.init();
     try pmm.init();
     try vmm.init();
     heap.init();
     try acpi.init();
 
-    // HHDM offset is already in BSS. Copy framebuffer config before the
-    // Limine response goes away; pixels stay reserved via the memory map.
+    // Framebuffer fields were copied in boot.init. Pixels stay reserved
+    // via the memory map. Ramfs aliases the initramfs for the rest of boot.
     video.capture();
-
-    // Module cmdline/address/length are already in BSS (boot.init). File
-    // bytes stay in executable_and_modules. Limine responses are now unused.
     boot.drop();
 
     try cpu.bsp().initLapic();

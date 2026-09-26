@@ -1,5 +1,5 @@
 //! Host test root. Each `_ = @import` includes that file's tests; unused
-//! kernel decls (Limine, privileged asm, MMIO) stay unanalyzed.
+//! kernel decls (boot info, privileged asm, MMIO) stay unanalyzed.
 test {
     _ = @import("lib/bounded_array.zig");
     _ = @import("lib/ring.zig");

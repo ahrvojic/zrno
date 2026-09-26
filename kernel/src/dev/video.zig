@@ -4,6 +4,7 @@ const std = @import("std");
 
 const boot = @import("../sys/boot.zig");
 const font = @import("font.zig");
+const virt = @import("../lib/virt.zig");
 
 const Captured = struct {
     address: [*]u8,
@@ -80,16 +81,14 @@ fn frame() Captured {
     return captured.?;
 }
 
-/// Copy Limine framebuffer metadata into BSS. Call before `boot.drop()`.
+/// Copy framebuffer metadata out of boot info. Call before `boot.drop()`.
 pub fn capture() void {
-    const fbs = boot.info().framebuffers orelse return;
-    if (fbs.framebuffer_count < 1) return;
-    const src = fbs.framebuffers()[0];
+    const src = boot.info().fb orelse return;
     captured = .{
-        .address = src.address,
-        .width = @intCast(src.width),
-        .height = @intCast(src.height),
-        .pitch = @intCast(src.pitch),
+        .address = virt.toHH([*]u8, @intCast(src.phys)),
+        .width = src.width,
+        .height = src.height,
+        .pitch = src.pitch,
         .bpp = src.bpp,
     };
 }
@@ -98,7 +97,7 @@ pub fn init() !void {
     if (initialized) @panic("video already initialized");
     initialized = true;
 
-    // GOP/Limine FB is independent of FADT VGA_NOT_PRESENT (legacy VGA
+    // GOP framebuffer is independent of FADT VGA_NOT_PRESENT (legacy VGA
     // I/O). Missing or unusable FB: stay on serial; do not panic.
     const info = captured orelse {
         logger.warn("no framebuffer", .{});
@@ -126,6 +125,8 @@ pub fn init() !void {
         .max_col = info.width / font.builtin.width,
         .max_row = info.height / font.builtin.height,
     };
+    // Firmware drew its splash here. ExitBootServices leaves those pixels.
+    @memset(info.address[0 .. info.pitch * info.height], 0);
     ready = true;
     logger.info("{d}x{d} {d}bpp pitch={d}", .{ info.width, info.height, info.bpp, info.pitch });
 }

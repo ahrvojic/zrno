@@ -1,26 +1,25 @@
-/* ELF64 / x86-64; Limine loads ELF. */
+/* ELF64 / x86-64. The UEFI loader copies PT_LOAD and jumps to _start. */
 OUTPUT_FORMAT(elf64-x86-64)
 OUTPUT_ARCH(i386:x86-64)
 
-/* Kernel entry; exported from main.zig. */
+/* Kernel entry; exported from main.zig. BootInfo arrives in rdi. */
 ENTRY(_start)
 
-/* PT_LOAD p_flags are the MMU permissions Limine installs (PF_X=1, PF_W=2, PF_R=4). */
+/* PT_LOAD p_flags describe the final permissions (PF_X=1, PF_W=2, PF_R=4).
+ * The loader maps the image writable; vmm installs these splits. */
 PHDRS
 {
     text     PT_LOAD    FLAGS(0x05); /* PF_X | PF_R */
     rodata   PT_LOAD    FLAGS(0x04); /* PF_R */
     data     PT_LOAD    FLAGS(0x06); /* PF_W | PF_R */
-    dynamic  PT_DYNAMIC FLAGS(0x06); /* PIE relocations (pic = true in build.zig) */
 }
 
 SECTIONS
 {
     /*
      * Higher half, at the start of the top 2GiB.
-     * Limine requires load addresses >= 0xffffffff80000000, and Zig's
-     * code_model=.kernel (signed 32-bit immediates) needs the whole image
-     * inside that 2GiB window.
+     * Zig's code_model=.kernel (signed 32-bit immediates) needs the whole
+     * image inside that 2GiB window. The loader maps this address.
      */
     . = 0xffffffff80000000;
 
@@ -51,18 +50,7 @@ SECTIONS
 
     .data : {
         *(.data .data.*)
-
-        /* Limine scans these for request magics and writes response pointers.
-         * KEEP so section GC cannot drop the markers. */
-        KEEP(*(.limine_requests_start))
-        KEEP(*(.limine_requests))
-        KEEP(*(.limine_requests_end))
     } :data
-
-    /* PT_DYNAMIC for Limine's PIE relocator; also part of the RW load segment. */
-    .dynamic : {
-        *(.dynamic)
-    } :data :dynamic
 
     /* Last in :data so the file is not padded with BSS zeros (memsz > filesz). */
     .bss : {
@@ -72,10 +60,19 @@ SECTIONS
 
     data_end_addr = .;
 
-    /* Freestanding: no unwind tables, ELF notes, or PT_INTERP dynamic linker. */
+    /* Freestanding: no unwind tables, ELF notes, dynamic linker, or relocations. */
     /DISCARD/ : {
         *(.eh_frame*)
         *(.note .note.*)
         *(.interp)
+        *(.dynamic)
+        *(.dynsym)
+        *(.dynstr)
+        *(.hash)
+        *(.gnu.hash)
+        *(.got)
+        *(.got.plt)
+        *(.rela*)
+        *(.rel*)
     }
 }

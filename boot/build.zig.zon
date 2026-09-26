@@ -1,0 +1,12 @@
+.{
+    .name = .zrno_boot,
+    .version = "1.0.0",
+    .dependencies = .{},
+    .fingerprint = 0x923068fd6238516d,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

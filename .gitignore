@@ -1,9 +1,13 @@
 iso_root/
+esp/
 limine/
 limine-binary/
 ovmf/
 *.iso
 *.hdd
+boot/.zig-cache/
+boot/zig-cache/
+boot/zig-out/
 user/.zig-cache/
 user/zig-cache/
 user/zig-out/
