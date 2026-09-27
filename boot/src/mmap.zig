@@ -146,7 +146,7 @@ test "overlay splits a usable range" {
     var map: Map = .{};
     try map.push(.{ .base = 0, .length = 0x100000, .kind = .usable });
     try map.overlay(0x1000, 0x1000, .modules);
-    try std.testing.expectEqual(@as(usize, 3), map.len);
+    try std.testing.expectEqual(3, map.len);
     try expectKind(&map, 0, 0, 0x1000, .usable);
     try expectKind(&map, 1, 0x1000, 0x1000, .modules);
     try expectKind(&map, 2, 0x2000, 0x100000 - 0x2000, .usable);
@@ -156,7 +156,7 @@ test "overlay inserts a range the firmware did not list" {
     var map: Map = .{};
     try map.push(.{ .base = 0, .length = 0x1000, .kind = .usable });
     try map.overlay(0x80000000, 0x400000, .framebuffer);
-    try std.testing.expectEqual(@as(usize, 2), map.len);
+    try std.testing.expectEqual(2, map.len);
     try expectKind(&map, 0, 0, 0x1000, .usable);
     try expectKind(&map, 1, 0x80000000, 0x400000, .framebuffer);
 }
@@ -166,7 +166,7 @@ test "overlay fills a hole between entries and merges" {
     try map.push(.{ .base = 0, .length = 100, .kind = .usable });
     try map.push(.{ .base = 200, .length = 100, .kind = .usable });
     try map.overlay(50, 200, .framebuffer);
-    try std.testing.expectEqual(@as(usize, 3), map.len);
+    try std.testing.expectEqual(3, map.len);
     try expectKind(&map, 0, 0, 50, .usable);
     try expectKind(&map, 1, 50, 200, .framebuffer);
     try expectKind(&map, 2, 250, 50, .usable);
@@ -177,6 +177,6 @@ test "adjacent entries of the same kind merge" {
     try map.push(.{ .base = 0, .length = 0x1000, .kind = .usable });
     try map.push(.{ .base = 0x1000, .length = 0x1000, .kind = .reclaim });
     try map.overlay(0x1000, 0x1000, .usable);
-    try std.testing.expectEqual(@as(usize, 1), map.len);
+    try std.testing.expectEqual(1, map.len);
     try expectKind(&map, 0, 0, 0x2000, .usable);
 }

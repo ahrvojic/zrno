@@ -51,11 +51,21 @@ fn loadPath(vm: *vmm.VMM, path: []const u8) SpawnError!elf.Loaded {
     return elf.load(&space, image) catch |err| spawnFail(err);
 }
 
-fn spawnFail(err: anyerror) SpawnError {
+const Fail = error{
+    OutOfMemory,
+    BadFd,
+    BadElf,
+    WritableExecutable,
+    OutOfRange,
+    AlreadyMapped,
+    PTENotFound,
+};
+
+fn spawnFail(err: Fail) SpawnError {
     return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.BadFd => error.BadFd,
-        else => error.BadElf,
+        error.BadElf, error.WritableExecutable, error.OutOfRange, error.AlreadyMapped, error.PTENotFound => error.BadElf,
     };
 }
 

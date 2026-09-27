@@ -33,12 +33,13 @@ const Framebuffer = struct {
 
 var image_map: mmap.Map = .{};
 
-pub fn main() void {
+pub fn main() noreturn {
     serial.init();
     run() catch |err| {
         serial.print("boot failed: {s}\r\n", .{@errorName(err)});
         halt();
     };
+    unreachable;
 }
 
 fn run() !void {
@@ -58,12 +59,13 @@ fn run() !void {
     const image = try elf.parse(kernel_file);
     serial.print("kernel {d} bytes entry=0x{x}\r\n", .{ image.bytes, image.entry });
 
-    const kernel_pages: usize = @intCast(image.bytes / bootinfo.page_size);
+    const kernel_len: usize = std.math.cast(usize, image.bytes) orelse return error.Overflow;
+    const kernel_pages = try pageCount(kernel_len);
     const kernel_mem = try bs.allocatePages(.any, .loader_data, kernel_pages);
-    const kernel_dest: [*]u8 = @ptrCast(kernel_mem.ptr);
-    @memset(kernel_dest[0..image.bytes], 0);
-    try elf.copy(kernel_file, kernel_dest[0..image.bytes]);
-    const kernel_phys: u64 = @intFromPtr(kernel_dest);
+    const kernel_dest = std.mem.sliceAsBytes(kernel_mem);
+    @memset(kernel_dest[0..kernel_len], 0);
+    try elf.copy(kernel_file, kernel_dest[0..kernel_len]);
+    const kernel_phys: u64 = @intFromPtr(kernel_dest.ptr);
 
     const initrd = try readFile(bs, root, initrd_path);
     const initrd_phys: u64 = @intFromPtr(initrd.ptr);
@@ -89,7 +91,7 @@ fn run() !void {
     const stack_top = bootinfo.hhdm_offset + stack_phys + stack_bytes - 8;
 
     const info_bytes = @sizeOf(bootinfo.BootInfo) + bootinfo.max_entries * @sizeOf(bootinfo.MemEntry);
-    const info_pages = (info_bytes + bootinfo.page_size - 1) / bootinfo.page_size;
+    const info_pages = try pageCount(info_bytes);
     const info_mem = try bs.allocatePages(.any, .loader_data, info_pages);
     const info_phys: u64 = @intFromPtr(info_mem.ptr);
 
@@ -170,12 +172,13 @@ fn publish(
     image_map.merge();
 
     const rsdp_base = pageDown(rsdp);
-    try image_map.overlay(rsdp_base, pageUp(rsdp + 64) - rsdp_base, .acpi_reclaimable);
+    const rsdp_end = try pageUp(std.math.add(u64, rsdp, 64) catch return error.Overflow);
+    try image_map.overlay(rsdp_base, rsdp_end - rsdp_base, .acpi_reclaimable);
     try image_map.overlay(kernel_phys, kernel_bytes, .modules);
     try image_map.overlay(initrd_phys, initrd_span, .modules);
     if (fb) |frame| {
         const base = pageDown(frame.phys);
-        const end = pageUp(frame.phys + frame.bytes);
+        const end = try pageUp(std.math.add(u64, frame.phys, frame.bytes) catch return error.Overflow);
         try image_map.overlay(base, end - base, .framebuffer);
     }
 
@@ -218,7 +221,10 @@ fn installTables(tables: *paging.Tables, slice: MemoryMapSlice, fb: ?Framebuffer
         const end = std.math.add(u64, desc.physical_start, length) catch return error.Overflow;
         try tables.mapRam(desc.physical_start, end);
     }
-    if (fb) |frame| try tables.mapRam(frame.phys, frame.phys + frame.bytes);
+    if (fb) |frame| {
+        const end = std.math.add(u64, frame.phys, frame.bytes) catch return error.Overflow;
+        try tables.mapRam(frame.phys, end);
+    }
 }
 
 fn readFile(bs: *BootServices, root: *File, path: [*:0]const u16) ![]u8 {
@@ -231,9 +237,9 @@ fn readFile(bs: *BootServices, root: *File, path: [*:0]const u16) ![]u8 {
     const size: usize = @intCast(info.file_size);
     if (size == 0) return error.EmptyFile;
 
-    const pages = (size + bootinfo.page_size - 1) / bootinfo.page_size;
+    const pages = try pageCount(size);
     const mem = try bs.allocatePages(.any, .loader_data, pages);
-    const bytes: [*]u8 = @ptrCast(mem.ptr);
+    const bytes = std.mem.sliceAsBytes(mem);
     var off: usize = 0;
     while (off < size) {
         const n = try fh.read(bytes[off..size]);
@@ -304,12 +310,18 @@ fn isRam(kind: MemoryType) bool {
     };
 }
 
-fn pageDown(value: u64) u64 {
-    return value & ~@as(u64, bootinfo.page_size - 1);
+fn pageCount(bytes: usize) error{Overflow}!usize {
+    const page: usize = @intCast(bootinfo.page_size);
+    return std.math.divCeil(usize, bytes, page) catch return error.Overflow;
 }
 
-fn pageUp(value: u64) u64 {
-    return (value + bootinfo.page_size - 1) & ~@as(u64, bootinfo.page_size - 1);
+fn pageDown(value: u64) u64 {
+    return std.mem.alignBackward(u64, value, bootinfo.page_size);
+}
+
+fn pageUp(value: u64) error{Overflow}!u64 {
+    const padded = std.math.add(u64, value, bootinfo.page_size - 1) catch return error.Overflow;
+    return std.mem.alignBackward(u64, padded, bootinfo.page_size);
 }
 
 fn halt() noreturn {

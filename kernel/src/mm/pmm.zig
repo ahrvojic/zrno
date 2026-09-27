@@ -163,7 +163,7 @@ pub fn reclaimBootloader() void {
             if (idx >= highest_page_index) continue;
             if (!bitmap.testBit(idx)) continue;
             bitmap.clearBit(idx);
-            if (first_idx == null) first_idx = idx;
+            first_idx = first_idx orelse idx;
             pages += 1;
         }
     }

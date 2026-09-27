@@ -92,7 +92,8 @@ fn readVerified() u32 {
 }
 
 fn readRaw() u32 {
-    return switch (kind.?) {
+    const timer = kind orelse @panic("pmtimer used when absent");
+    return switch (timer) {
         .io => port.inl(@intCast(address)),
         .memory => @as(*align(1) volatile u32, @ptrFromInt(mmio_base)).*,
     };

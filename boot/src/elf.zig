@@ -1,5 +1,5 @@
 //! Load the kernel ELF. Segments stay at
-//! `kernel_phys + (p_vaddr - kernel_virt)`, which is what `vmm` assumes.
+//! `kernel_phys + (vaddr - kernel_virt)`, which is what `vmm` assumes.
 //! The image is linked at a fixed address, so there is nothing to relocate.
 
 const std = @import("std");
@@ -7,6 +7,8 @@ const std = @import("std");
 const bootinfo = @import("bootinfo");
 
 const elf = std.elf;
+const Ehdr = elf.Elf64.Ehdr;
+const Phdr = elf.Elf64.Phdr;
 
 pub const Image = struct {
     entry: u64,
@@ -18,21 +20,22 @@ pub fn parse(file: []const u8) error{BadElf}!Image {
     const hdr = try header(file);
     var high = bootinfo.kernel_virt;
     var loads: usize = 0;
-    for (try phdrs(file, hdr)) |ph| {
-        if (ph.p_type != @intFromEnum(elf.PT.LOAD)) continue;
+    for (0..hdr.phnum) |i| {
+        const ph = try phdr(file, hdr, i);
+        if (ph.type != .LOAD) continue;
         loads += 1;
-        if (ph.p_vaddr < bootinfo.kernel_virt) return error.BadElf;
-        if (ph.p_memsz < ph.p_filesz) return error.BadElf;
-        const vend = std.math.add(u64, ph.p_vaddr, ph.p_memsz) catch return error.BadElf;
-        const fend = std.math.add(u64, ph.p_offset, ph.p_filesz) catch return error.BadElf;
+        if (ph.vaddr < bootinfo.kernel_virt) return error.BadElf;
+        if (ph.memsz < ph.filesz) return error.BadElf;
+        const vend = std.math.add(u64, ph.vaddr, ph.memsz) catch return error.BadElf;
+        const fend = std.math.add(u64, ph.offset, ph.filesz) catch return error.BadElf;
         if (fend > file.len) return error.BadElf;
         if (vend > high) high = vend;
     }
     if (loads == 0) return error.BadElf;
-    if (hdr.e_entry < bootinfo.kernel_virt or hdr.e_entry >= high) return error.BadElf;
+    if (hdr.entry < bootinfo.kernel_virt or hdr.entry >= high) return error.BadElf;
     const span = high - bootinfo.kernel_virt;
     return .{
-        .entry = hdr.e_entry,
+        .entry = hdr.entry,
         .bytes = std.mem.alignForward(u64, span, bootinfo.page_size),
     };
 }
@@ -40,33 +43,50 @@ pub fn parse(file: []const u8) error{BadElf}!Image {
 /// `dest` is the physical image, already zeroed, of length `parse().bytes`.
 pub fn copy(file: []const u8, dest: []u8) error{BadElf}!void {
     const hdr = try header(file);
-    for (try phdrs(file, hdr)) |ph| {
-        if (ph.p_type != @intFromEnum(elf.PT.LOAD)) continue;
-        if (ph.p_filesz == 0) continue;
-        const off = ph.p_vaddr - bootinfo.kernel_virt;
-        const end = std.math.add(usize, off, ph.p_filesz) catch return error.BadElf;
-        if (end > dest.len) return error.BadElf;
-        @memcpy(dest[off..][0..ph.p_filesz], file[ph.p_offset..][0..ph.p_filesz]);
+    for (0..hdr.phnum) |i| {
+        const ph = try phdr(file, hdr, i);
+        if (ph.type != .LOAD) continue;
+        if (ph.filesz == 0) continue;
+        const off = std.math.sub(u64, ph.vaddr, bootinfo.kernel_virt) catch return error.BadElf;
+        const end = std.math.add(u64, off, ph.filesz) catch return error.BadElf;
+        const off_n: usize = std.math.cast(usize, off) orelse return error.BadElf;
+        const end_n: usize = std.math.cast(usize, end) orelse return error.BadElf;
+        const file_off: usize = std.math.cast(usize, ph.offset) orelse return error.BadElf;
+        const filesz: usize = std.math.cast(usize, ph.filesz) orelse return error.BadElf;
+        if (end_n > dest.len) return error.BadElf;
+        const file_end = std.math.add(usize, file_off, filesz) catch return error.BadElf;
+        if (file_end > file.len) return error.BadElf;
+        @memcpy(dest[off_n..][0..filesz], file[file_off..][0..filesz]);
     }
 }
 
-fn header(file: []const u8) error{BadElf}!*const elf.Elf64_Ehdr {
-    if (file.len < @sizeOf(elf.Elf64_Ehdr)) return error.BadElf;
-    if (!std.mem.eql(u8, file[0..4], elf.MAGIC)) return error.BadElf;
-    if (file[elf.EI.CLASS] != elf.ELFCLASS64) return error.BadElf;
-    if (file[elf.EI.DATA] != elf.ELFDATA2LSB) return error.BadElf;
-    const hdr: *const elf.Elf64_Ehdr = @ptrCast(@alignCast(file.ptr));
-    if (hdr.e_type != .EXEC) return error.BadElf;
-    if (hdr.e_machine != .X86_64) return error.BadElf;
-    if (hdr.e_phentsize != @sizeOf(elf.Elf64_Phdr)) return error.BadElf;
-    if (hdr.e_phnum == 0 or hdr.e_phnum == 0xffff) return error.BadElf;
+fn header(file: []const u8) error{BadElf}!Ehdr {
+    if (file.len < @sizeOf(Ehdr)) return error.BadElf;
+    const hdr = try peek(Ehdr, file, 0);
+    if (!std.mem.eql(u8, hdr.ident[0..4], elf.MAGIC)) return error.BadElf;
+    if (hdr.ident[elf.EI.CLASS] != @intFromEnum(elf.CLASS.@"64")) return error.BadElf;
+    if (hdr.ident[elf.EI.DATA] != @intFromEnum(elf.DATA.@"2LSB")) return error.BadElf;
+    if (hdr.type != .EXEC) return error.BadElf;
+    if (hdr.machine != .X86_64) return error.BadElf;
+    if (hdr.phentsize != @sizeOf(Phdr)) return error.BadElf;
+    if (hdr.phnum == 0 or hdr.phnum == 0xffff) return error.BadElf;
+    const bytes = std.math.mul(u64, hdr.phnum, hdr.phentsize) catch return error.BadElf;
+    const end = std.math.add(u64, hdr.phoff, bytes) catch return error.BadElf;
+    if (end > file.len) return error.BadElf;
     return hdr;
 }
 
-fn phdrs(file: []const u8, hdr: *const elf.Elf64_Ehdr) error{BadElf}![]const elf.Elf64_Phdr {
-    const bytes = @as(u64, hdr.e_phnum) * hdr.e_phentsize;
-    const end = std.math.add(u64, hdr.e_phoff, bytes) catch return error.BadElf;
-    if (end > file.len) return error.BadElf;
-    const ptr: [*]const elf.Elf64_Phdr = @ptrCast(@alignCast(file.ptr + hdr.e_phoff));
-    return ptr[0..hdr.e_phnum];
+fn phdr(file: []const u8, hdr: Ehdr, index: usize) error{BadElf}!Phdr {
+    const step = std.math.mul(u64, index, hdr.phentsize) catch return error.BadElf;
+    const off = std.math.add(u64, hdr.phoff, step) catch return error.BadElf;
+    const at: usize = std.math.cast(usize, off) orelse return error.BadElf;
+    return peek(Phdr, file, at);
+}
+
+fn peek(comptime T: type, file: []const u8, offset: usize) error{BadElf}!T {
+    const size = @sizeOf(T);
+    if (offset > file.len or file.len - offset < size) return error.BadElf;
+    var value: T = undefined;
+    @memcpy(std.mem.asBytes(&value), file[offset..][0..size]);
+    return value;
 }

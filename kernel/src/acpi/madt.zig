@@ -135,7 +135,7 @@ fn findEnabled(entries: []const Lapic, apic_id: u32, x2apic: bool) ?Lapic {
         if (!entry.enabled()) continue;
         if (entry.apic_id != apic_id) continue;
         if (entry.x2apic == x2apic) return entry;
-        if (fallback == null) fallback = entry;
+        fallback = fallback orelse entry;
     }
     return fallback;
 }

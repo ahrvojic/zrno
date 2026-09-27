@@ -130,7 +130,7 @@ fn pickWaitTarget(pid: u64, parent_pid: u64) ?*proc.Process {
         node = n.next;
         if (process.parent != parent_pid) continue;
         if (process.zombie) return process;
-        if (live == null) live = process;
+        live = live orelse process;
     }
     return live;
 }

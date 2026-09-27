@@ -2,6 +2,9 @@ const std = @import("std");
 
 const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
 
+const Ehdr = std.elf.Elf64.Ehdr;
+const Phdr = std.elf.Elf64.Phdr;
+
 pub const page_size = @import("../lib/mem.zig").page_size;
 pub const user_space_end = @import("../lib/mem.zig").user_space_end;
 /// Exclusive top of user stacks; stacks grow down from here.
@@ -59,26 +62,26 @@ pub const Image = struct {
 };
 
 pub fn parse(image: []const u8) error{ BadElf, WritableExecutable, OutOfRange, AlreadyMapped }!Image {
-    const ehdr = try peek(std.elf.Elf64_Ehdr, image, 0);
-    try checkIdent(&ehdr.e_ident);
-    if (ehdr.e_type != .EXEC) return error.BadElf;
-    if (ehdr.e_machine != .X86_64) return error.BadElf;
-    if (ehdr.e_version != 1) return error.BadElf;
-    if (ehdr.e_ehsize != @sizeOf(std.elf.Elf64_Ehdr)) return error.BadElf;
-    if (ehdr.e_phentsize != @sizeOf(std.elf.Elf64_Phdr)) return error.BadElf;
-    if (ehdr.e_phnum == 0 or ehdr.e_phnum > 16) return error.BadElf;
+    const ehdr = try peek(Ehdr, image, 0);
+    try checkIdent(&ehdr.ident);
+    if (ehdr.type != .EXEC) return error.BadElf;
+    if (ehdr.machine != .X86_64) return error.BadElf;
+    if (ehdr.version != 1) return error.BadElf;
+    if (ehdr.ehsize != @sizeOf(Ehdr)) return error.BadElf;
+    if (ehdr.phentsize != @sizeOf(Phdr)) return error.BadElf;
+    if (ehdr.phnum == 0 or ehdr.phnum > 16) return error.BadElf;
 
-    const phoff: usize = std.math.cast(usize, ehdr.e_phoff) orelse return error.BadElf;
-    const phnum: usize = ehdr.e_phnum;
-    const ph_bytes = std.math.mul(usize, phnum, @sizeOf(std.elf.Elf64_Phdr)) catch return error.BadElf;
+    const phoff: usize = std.math.cast(usize, ehdr.phoff) orelse return error.BadElf;
+    const phnum: usize = ehdr.phnum;
+    const ph_bytes = std.math.mul(usize, phnum, @sizeOf(Phdr)) catch return error.BadElf;
     _ = std.math.add(usize, phoff, ph_bytes) catch return error.BadElf;
     if (phoff > image.len or image.len - phoff < ph_bytes) return error.BadElf;
 
-    var result: Image = .{ .entry = std.math.cast(usize, ehdr.e_entry) orelse return error.BadElf };
+    var result: Image = .{ .entry = std.math.cast(usize, ehdr.entry) orelse return error.BadElf };
     for (0..phnum) |i| {
-        const phdr = try peek(std.elf.Elf64_Phdr, image, phoff + i * @sizeOf(std.elf.Elf64_Phdr));
-        if (phdr.p_type == std.elf.PT_INTERP) return error.BadElf;
-        if (phdr.p_type != std.elf.PT_LOAD) continue;
+        const phdr = try peek(Phdr, image, phoff + i * @sizeOf(Phdr));
+        if (phdr.type == .INTERP) return error.BadElf;
+        if (phdr.type != .LOAD) continue;
         try result.append(try parseLoad(image, phdr));
     }
     if (result.loads.len == 0) return error.BadElf;
@@ -146,18 +149,18 @@ fn Mapped(comptime Alloc: type) type {
     };
 }
 
-fn parseLoad(image: []const u8, phdr: std.elf.Elf64_Phdr) error{ BadElf, WritableExecutable, OutOfRange }!Load {
-    if (phdr.p_filesz > phdr.p_memsz) return error.BadElf;
-    const vaddr: usize = std.math.cast(usize, phdr.p_vaddr) orelse return error.BadElf;
-    const memsz: usize = std.math.cast(usize, phdr.p_memsz) orelse return error.BadElf;
-    const filesz: usize = std.math.cast(usize, phdr.p_filesz) orelse return error.BadElf;
-    const offset: usize = std.math.cast(usize, phdr.p_offset) orelse return error.BadElf;
+fn parseLoad(image: []const u8, phdr: Phdr) error{ BadElf, WritableExecutable, OutOfRange }!Load {
+    if (phdr.filesz > phdr.memsz) return error.BadElf;
+    const vaddr: usize = std.math.cast(usize, phdr.vaddr) orelse return error.BadElf;
+    const memsz: usize = std.math.cast(usize, phdr.memsz) orelse return error.BadElf;
+    const filesz: usize = std.math.cast(usize, phdr.filesz) orelse return error.BadElf;
+    const offset: usize = std.math.cast(usize, phdr.offset) orelse return error.BadElf;
     if (memsz == 0) return error.BadElf;
 
-    const align_ = phdr.p_align;
+    const align_ = phdr.@"align";
     if (align_ > 1) {
         if (!std.math.isPowerOfTwo(align_)) return error.BadElf;
-        if (phdr.p_vaddr % align_ != phdr.p_offset % align_) return error.BadElf;
+        if (phdr.vaddr % align_ != phdr.offset % align_) return error.BadElf;
     }
 
     const file_end = std.math.add(usize, offset, filesz) catch return error.BadElf;
@@ -168,8 +171,8 @@ fn parseLoad(image: []const u8, phdr: std.elf.Elf64_Phdr) error{ BadElf, Writabl
     const map_end = alignForward(vaddr_end, page_size) catch return error.BadElf;
     const map_size = map_end - map_vaddr;
 
-    const writable = phdr.p_flags & std.elf.PF_W != 0;
-    const executable = phdr.p_flags & std.elf.PF_X != 0;
+    const writable = phdr.flags.W;
+    const executable = phdr.flags.X;
     if (writable and executable) return error.WritableExecutable;
     try checkUserImageRange(map_vaddr, map_size);
 
@@ -294,12 +297,12 @@ const MockSpace = struct {
 
 const Fixture = struct {
     buf: [page_size * 4]u8 = undefined,
-    phdrs: [max_loads]std.elf.Elf64_Phdr = undefined,
+    phdrs: [max_loads]Phdr = undefined,
     nphdr: usize = 0,
-    payload_off: usize = @sizeOf(std.elf.Elf64_Ehdr) + max_loads * @sizeOf(std.elf.Elf64_Phdr),
+    payload_off: usize = @sizeOf(Ehdr) + max_loads * @sizeOf(Phdr),
     payload_used: usize = 0,
 
-    fn addLoad(self: *Fixture, vaddr: u64, flags: u32, data: []const u8, bss: u64, palign: u64) void {
+    fn addLoad(self: *Fixture, vaddr: u64, flags: std.elf.PF, data: []const u8, bss: u64, palign: u64) void {
         var offset = self.payload_off + self.payload_used;
         if (palign > 1) {
             const want = vaddr % palign;
@@ -315,65 +318,65 @@ const Fixture = struct {
             self.payload_used += data.len;
         }
         self.phdrs[self.nphdr] = .{
-            .p_type = std.elf.PT_LOAD,
-            .p_flags = flags,
-            .p_offset = offset,
-            .p_vaddr = vaddr,
-            .p_paddr = vaddr,
-            .p_filesz = data.len,
-            .p_memsz = data.len + bss,
-            .p_align = palign,
+            .type = .LOAD,
+            .flags = flags,
+            .offset = offset,
+            .vaddr = vaddr,
+            .paddr = vaddr,
+            .filesz = data.len,
+            .memsz = data.len + bss,
+            .@"align" = palign,
         };
         self.nphdr += 1;
     }
 
     fn addInterp(self: *Fixture) void {
         self.phdrs[self.nphdr] = .{
-            .p_type = std.elf.PT_INTERP,
-            .p_flags = std.elf.PF_R,
-            .p_offset = 0,
-            .p_vaddr = 0,
-            .p_paddr = 0,
-            .p_filesz = 0,
-            .p_memsz = 0,
-            .p_align = 1,
+            .type = .INTERP,
+            .flags = .{ .R = true },
+            .offset = 0,
+            .vaddr = 0,
+            .paddr = 0,
+            .filesz = 0,
+            .memsz = 0,
+            .@"align" = 1,
         };
         self.nphdr += 1;
     }
 
     fn finish(self: *Fixture, typ: std.elf.ET, machine: std.elf.EM, entry: u64) []const u8 {
-        var ehdr = std.mem.zeroes(std.elf.Elf64_Ehdr);
-        @memcpy(ehdr.e_ident[0..4], std.elf.MAGIC);
-        ehdr.e_ident[std.elf.EI.CLASS] = @intFromEnum(std.elf.CLASS.@"64");
-        ehdr.e_ident[std.elf.EI.DATA] = @intFromEnum(std.elf.DATA.@"2LSB");
-        ehdr.e_ident[std.elf.EI.VERSION] = 1;
-        ehdr.e_type = typ;
-        ehdr.e_machine = machine;
-        ehdr.e_version = 1;
-        ehdr.e_entry = entry;
-        ehdr.e_phoff = @sizeOf(std.elf.Elf64_Ehdr);
-        ehdr.e_ehsize = @sizeOf(std.elf.Elf64_Ehdr);
-        ehdr.e_phentsize = @sizeOf(std.elf.Elf64_Phdr);
-        ehdr.e_phnum = @intCast(self.nphdr);
-        @memcpy(self.buf[0..@sizeOf(std.elf.Elf64_Ehdr)], std.mem.asBytes(&ehdr));
+        var ehdr = std.mem.zeroes(Ehdr);
+        @memcpy(ehdr.ident[0..4], std.elf.MAGIC);
+        ehdr.ident[std.elf.EI.CLASS] = @intFromEnum(std.elf.CLASS.@"64");
+        ehdr.ident[std.elf.EI.DATA] = @intFromEnum(std.elf.DATA.@"2LSB");
+        ehdr.ident[std.elf.EI.VERSION] = 1;
+        ehdr.type = typ;
+        ehdr.machine = machine;
+        ehdr.version = 1;
+        ehdr.entry = entry;
+        ehdr.phoff = @sizeOf(Ehdr);
+        ehdr.ehsize = @sizeOf(Ehdr);
+        ehdr.phentsize = @sizeOf(Phdr);
+        ehdr.phnum = @intCast(self.nphdr);
+        @memcpy(self.buf[0..@sizeOf(Ehdr)], std.mem.asBytes(&ehdr));
         for (0..self.nphdr) |i| {
-            const off = @sizeOf(std.elf.Elf64_Ehdr) + i * @sizeOf(std.elf.Elf64_Phdr);
-            @memcpy(self.buf[off..][0..@sizeOf(std.elf.Elf64_Phdr)], std.mem.asBytes(&self.phdrs[i]));
+            const off = @sizeOf(Ehdr) + i * @sizeOf(Phdr);
+            @memcpy(self.buf[off..][0..@sizeOf(Phdr)], std.mem.asBytes(&self.phdrs[i]));
         }
         return self.buf[0 .. self.payload_off + self.payload_used];
     }
 };
 
-fn rx() u32 {
-    return std.elf.PF_R | std.elf.PF_X;
+fn rx() std.elf.PF {
+    return .{ .R = true, .X = true };
 }
 
-fn rw() u32 {
-    return std.elf.PF_R | std.elf.PF_W;
+fn rw() std.elf.PF {
+    return .{ .R = true, .W = true };
 }
 
-fn wx() u32 {
-    return std.elf.PF_W | std.elf.PF_X;
+fn wx() std.elf.PF {
+    return .{ .W = true, .X = true };
 }
 
 test "parse ET_EXEC x86-64 little-endian" {

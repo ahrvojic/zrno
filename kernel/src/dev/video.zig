@@ -78,7 +78,7 @@ pub fn maxCol() usize {
 
 fn frame() Captured {
     expectReady();
-    return captured.?;
+    return captured orelse @panic("video used before init");
 }
 
 /// Copy framebuffer metadata out of boot info. Call before `boot.drop()`.
