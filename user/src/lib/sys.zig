@@ -1,31 +1,38 @@
 // User SYSCALL ABI. Numbers match kernel/src/sys/syscall.zig.
 // RCX and R11 are clobbered (hardware saves RIP/RFLAGS there).
 // Args are rdi, rsi, rdx, r10, r8, r9 (r10 not rcx: SYSCALL overwrites rcx).
-pub const nr_read: u64 = 0;
-pub const nr_write: u64 = 1;
-pub const nr_exit: u64 = 2;
-pub const nr_yield: u64 = 3;
-pub const nr_sleep: u64 = 4;
-pub const nr_open: u64 = 5;
-pub const nr_close: u64 = 6;
-pub const nr_spawn: u64 = 7;
-pub const nr_wait: u64 = 8;
-pub const nr_getpid: u64 = 9;
-pub const nr_getppid: u64 = 10;
-pub const nr_exec: u64 = 11;
-pub const nr_brk: u64 = 12;
-pub const nr_mmap: u64 = 13;
-pub const nr_reboot: u64 = 14;
-pub const nr_poweroff: u64 = 15;
-pub const nr_pipe: u64 = 16;
-pub const nr_getdents: u64 = 17;
-pub const nr_uptime: u64 = 18;
-pub const nr_lseek: u64 = 19;
-pub const nr_ps: u64 = 20;
-pub const nr_thread: u64 = 21;
-pub const nr_thread_exit: u64 = 22;
-pub const nr_gettid: u64 = 23;
-pub const nr_unlink: u64 = 24;
+// Blocks of 16. Append a new call at the end of its block.
+// 0x00 process
+pub const nr_exit: u64 = 0x00;
+pub const nr_spawn: u64 = 0x01;
+pub const nr_exec: u64 = 0x02;
+pub const nr_wait: u64 = 0x03;
+pub const nr_getpid: u64 = 0x04;
+pub const nr_getppid: u64 = 0x05;
+pub const nr_ps: u64 = 0x06;
+// 0x10 thread
+pub const nr_thread: u64 = 0x10;
+pub const nr_thread_exit: u64 = 0x11;
+pub const nr_gettid: u64 = 0x12;
+pub const nr_yield: u64 = 0x13;
+// 0x20 memory
+pub const nr_brk: u64 = 0x20;
+pub const nr_mmap: u64 = 0x21;
+// 0x30 file
+pub const nr_open: u64 = 0x30;
+pub const nr_close: u64 = 0x31;
+pub const nr_read: u64 = 0x32;
+pub const nr_write: u64 = 0x33;
+pub const nr_lseek: u64 = 0x34;
+pub const nr_pipe: u64 = 0x35;
+pub const nr_getdents: u64 = 0x36;
+pub const nr_unlink: u64 = 0x37;
+// 0x40 clock
+pub const nr_sleep: u64 = 0x40;
+pub const nr_uptime: u64 = 0x41;
+// 0x50 machine
+pub const nr_reboot: u64 = 0x50;
+pub const nr_poweroff: u64 = 0x51;
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;

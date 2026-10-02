@@ -16,31 +16,39 @@ const vmm = @import("../mm/vmm.zig");
 
 // SYSCALL: rax = number / return, rdi/rsi/rdx/r10/r8/r9 = args.
 // RCX/R11 are clobbered (RIP/RFLAGS). Negative rax is -errno.
-pub const nr_read: u64 = 0;
-pub const nr_write: u64 = 1;
-pub const nr_exit: u64 = 2;
-pub const nr_yield: u64 = 3;
-pub const nr_sleep: u64 = 4;
-pub const nr_open: u64 = 5; // rdi/rsi=path, rdx=flags (0 = read)
-pub const nr_close: u64 = 6;
-pub const nr_spawn: u64 = 7; // rdi/rsi=path, rdx/r10=argv ptr/n, r8=*[3]u64 stdio
-pub const nr_wait: u64 = 8; // rdi=pid (0 = any); rsi=status or 0; returns pid
-pub const nr_getpid: u64 = 9;
-pub const nr_getppid: u64 = 10;
-pub const nr_exec: u64 = 11; // rdi/rsi=path, rdx/r10=argv ptr/n
-pub const nr_brk: u64 = 12; // rdi=0 query; else set program break, return it
-pub const nr_mmap: u64 = 13; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX
-pub const nr_reboot: u64 = 14; // never returns
-pub const nr_poweroff: u64 = 15; // never returns
-pub const nr_pipe: u64 = 16; // rdi = *[2]i64 {read, write}
-pub const nr_getdents: u64 = 17; // rdi=fd, rsi=buf, rdx=len; returns bytes
-pub const nr_uptime: u64 = 18; // returns ns since boot
-pub const nr_lseek: u64 = 19; // rdi=fd, rsi=offset i64, rdx=whence; returns pos
-pub const nr_ps: u64 = 20; // rdi=buf, rsi=len; returns bytes of PsInfo
-pub const nr_thread: u64 = 21; // rdi=entry, rsi=arg; new thread in this process, returns tid
-pub const nr_thread_exit: u64 = 22; // rdi=code; last thread exits the process
-pub const nr_gettid: u64 = 23;
-pub const nr_unlink: u64 = 24; // rdi/rsi=path
+// Blocks of 16. Append a new call at the end of its block.
+// Same numbers in user/src/lib/sys.zig.
+// 0x00 process
+pub const nr_exit: u64 = 0x00;
+pub const nr_spawn: u64 = 0x01; // rdi/rsi=path, rdx/r10=argv ptr/n, r8=*[3]u64 stdio
+pub const nr_exec: u64 = 0x02; // rdi/rsi=path, rdx/r10=argv ptr/n
+pub const nr_wait: u64 = 0x03; // rdi=pid (0 = any); rsi=status or 0; returns pid
+pub const nr_getpid: u64 = 0x04;
+pub const nr_getppid: u64 = 0x05;
+pub const nr_ps: u64 = 0x06; // rdi=buf, rsi=len; returns bytes of PsInfo
+// 0x10 thread
+pub const nr_thread: u64 = 0x10; // rdi=entry, rsi=arg; new thread in this process, returns tid
+pub const nr_thread_exit: u64 = 0x11; // rdi=code; last thread exits the process
+pub const nr_gettid: u64 = 0x12;
+pub const nr_yield: u64 = 0x13;
+// 0x20 memory
+pub const nr_brk: u64 = 0x20; // rdi=0 query; else set program break, return it
+pub const nr_mmap: u64 = 0x21; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX
+// 0x30 file
+pub const nr_open: u64 = 0x30; // rdi/rsi=path, rdx=flags (0 = read)
+pub const nr_close: u64 = 0x31;
+pub const nr_read: u64 = 0x32;
+pub const nr_write: u64 = 0x33;
+pub const nr_lseek: u64 = 0x34; // rdi=fd, rsi=offset i64, rdx=whence; returns pos
+pub const nr_pipe: u64 = 0x35; // rdi = *[2]i64 {read, write}
+pub const nr_getdents: u64 = 0x36; // rdi=fd, rsi=buf, rdx=len; returns bytes
+pub const nr_unlink: u64 = 0x37; // rdi/rsi=path
+// 0x40 clock
+pub const nr_sleep: u64 = 0x40;
+pub const nr_uptime: u64 = 0x41; // returns ns since boot
+// 0x50 machine
+pub const nr_reboot: u64 = 0x50; // never returns
+pub const nr_poweroff: u64 = 0x51; // never returns
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -109,31 +117,31 @@ pub fn handle(ctx: *cpu.Context) void {
 
 fn dispatch(ctx: *cpu.Context) u64 {
     return switch (ctx.rax) {
-        nr_read => sys_read(ctx),
-        nr_write => sys_write(ctx),
         nr_exit => sys_exit(ctx),
-        nr_yield => sys_yield(),
-        nr_sleep => sys_sleep(ctx),
-        nr_open => sys_open(ctx),
-        nr_close => sys_close(ctx),
         nr_spawn => sys_spawn(ctx),
+        nr_exec => sys_exec(ctx),
         nr_wait => sys_wait(ctx),
         nr_getpid => sys_getpid(),
         nr_getppid => sys_getppid(),
-        nr_exec => sys_exec(ctx),
-        nr_brk => sys_brk(ctx),
-        nr_mmap => sys_mmap(ctx),
-        nr_reboot => reboot.perform(),
-        nr_poweroff => reboot.poweroff(),
-        nr_pipe => sys_pipe(ctx),
-        nr_getdents => sys_getdents(ctx),
-        nr_uptime => sys_uptime(),
-        nr_lseek => sys_lseek(ctx),
         nr_ps => sys_ps(ctx),
         nr_thread => sys_thread(ctx),
         nr_thread_exit => sys_thread_exit(ctx),
         nr_gettid => sys_gettid(),
+        nr_yield => sys_yield(),
+        nr_brk => sys_brk(ctx),
+        nr_mmap => sys_mmap(ctx),
+        nr_open => sys_open(ctx),
+        nr_close => sys_close(ctx),
+        nr_read => sys_read(ctx),
+        nr_write => sys_write(ctx),
+        nr_lseek => sys_lseek(ctx),
+        nr_pipe => sys_pipe(ctx),
+        nr_getdents => sys_getdents(ctx),
         nr_unlink => sys_unlink(ctx),
+        nr_sleep => sys_sleep(ctx),
+        nr_uptime => sys_uptime(),
+        nr_reboot => reboot.perform(),
+        nr_poweroff => reboot.poweroff(),
         else => errval(ENOSYS),
     };
 }
