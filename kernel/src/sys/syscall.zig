@@ -7,7 +7,7 @@ const exec = @import("../sched/exec.zig");
 const file = @import("../fs/file.zig");
 const pmm = @import("../mm/pmm.zig");
 const pipe = @import("../fs/pipe.zig");
-const ramfs = @import("../fs/ramfs.zig");
+const vfs = @import("../fs/vfs.zig");
 const reboot = @import("reboot.zig");
 const sched = @import("../sched/sched.zig");
 const state = @import("../sched/state.zig");
@@ -21,7 +21,7 @@ pub const nr_write: u64 = 1;
 pub const nr_exit: u64 = 2;
 pub const nr_yield: u64 = 3;
 pub const nr_sleep: u64 = 4;
-pub const nr_open: u64 = 5; // rdi=ptr, rsi=len
+pub const nr_open: u64 = 5; // rdi/rsi=path, rdx=flags (0 = read)
 pub const nr_close: u64 = 6;
 pub const nr_spawn: u64 = 7; // rdi/rsi=path, rdx/r10=argv ptr/n, r8=*[3]u64 stdio
 pub const nr_wait: u64 = 8; // rdi=pid (0 = any); rsi=status or 0; returns pid
@@ -40,6 +40,7 @@ pub const nr_ps: u64 = 20; // rdi=buf, rsi=len; returns bytes of PsInfo
 pub const nr_thread: u64 = 21; // rdi=entry, rsi=arg; new thread in this process, returns tid
 pub const nr_thread_exit: u64 = 22; // rdi=code; last thread exits the process
 pub const nr_gettid: u64 = 23;
+pub const nr_unlink: u64 = 24; // rdi/rsi=path
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -48,6 +49,11 @@ pub const prot_exec: u64 = 4;
 pub const seek_set: u64 = 0;
 pub const seek_cur: u64 = 1;
 pub const seek_end: u64 = 2;
+
+// open flags. Zero reads an existing file. Write truncates a ramfs file.
+// Create makes a missing file and requires write.
+pub const open_write: u64 = 1;
+pub const open_create: u64 = 2;
 
 // Packed dirent. 128 bytes; name is `name_len` bytes, not NUL-terminated.
 pub const dirent_name_max: usize = 112;
@@ -58,7 +64,7 @@ pub const Dirent = extern struct {
 };
 comptime {
     std.debug.assert(@sizeOf(Dirent) == 128);
-    std.debug.assert(ramfs.max_name <= dirent_name_max);
+    std.debug.assert(vfs.max_name <= dirent_name_max);
 }
 
 pub const ps_zombie: u64 = 1;
@@ -86,11 +92,13 @@ const ECHILD: i64 = 10;
 const ENOMEM: i64 = 12;
 const EACCES: i64 = 13;
 const EFAULT: i64 = 14;
+const EEXIST: i64 = 17;
 const ENOTDIR: i64 = 20;
 const EISDIR: i64 = 21;
 const EINVAL: i64 = 22;
 const EMFILE: i64 = 24;
 const ESPIPE: i64 = 29;
+const EROFS: i64 = 30;
 const EPIPE: i64 = 32;
 const ENAMETOOLONG: i64 = 36;
 const ENOSYS: i64 = 38;
@@ -125,6 +133,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_thread => sys_thread(ctx),
         nr_thread_exit => sys_thread_exit(ctx),
         nr_gettid => sys_gettid(),
+        nr_unlink => sys_unlink(ctx),
         else => errval(ENOSYS),
     };
 }
@@ -137,9 +146,10 @@ fn sys_read(ctx: *cpu.Context) u64 {
     switch (f.kind) {
         .tty => return readPeek(tty, addr, len),
         .file => |*open| {
-            if (open.pos >= open.bytes.len) return 0;
-            const n = @min(len, open.bytes.len - open.pos);
-            userSpace().copyToUser(addr, open.bytes[open.pos..][0..n]) catch return errval(EFAULT);
+            const data = open.node.bytes() orelse unreachable;
+            if (open.pos >= data.len) return 0;
+            const n = @min(len, data.len - open.pos);
+            userSpace().copyToUser(addr, data[open.pos..][0..n]) catch return errval(EFAULT);
             open.pos += n;
             return n;
         },
@@ -163,7 +173,10 @@ fn sys_write(ctx: *cpu.Context) u64 {
     if (checkIo(len)) |r| return r;
     const f = fdFile(ctx.rdi) orelse return errval(EBADF);
     switch (f.kind) {
-        .file => return errval(EACCES),
+        .file => |*open| {
+            if (!open.can_write) return errval(EACCES);
+            return writeFile(open, addr, len);
+        },
         .dir => return errval(EISDIR),
         .pipe_read => return errval(EBADF),
         .pipe_write => |p| return writeUser(addr, len, p),
@@ -254,13 +267,28 @@ fn sys_open(ctx: *cpu.Context) u64 {
         error.Fault => errval(EFAULT),
         error.NameTooLong => errval(ENAMETOOLONG),
     };
-    const kind: file.File.Kind = if (ramfs.isRoot(path))
-        .{ .dir = .{ .pos = 0 } }
+    const flags = ctx.rdx;
+    if (flags & ~(open_write | open_create) != 0) return errval(EINVAL);
+    const want_write = flags & open_write != 0;
+    const want_create = flags & open_create != 0;
+    const opened = vfs.openPath(path, want_write, want_create) catch |err| return fsErr(err);
+    const kind: file.File.Kind = if (opened.node.isDir())
+        .{ .dir = .{ .node = opened.node, .pos = 0 } }
     else
-        .{ .file = .{ .bytes = ramfs.lookup(path) orelse return errval(ENOENT), .pos = 0 } };
+        .{ .file = .{ .node = opened.node, .pos = 0, .can_write = opened.can_write } };
     const fd = firstFreeFd(0) orelse return errval(EMFILE);
     cpu.currentProcess().fds[fd] = file.File.create(kind) catch return errval(ENOMEM);
     return fd;
+}
+
+fn sys_unlink(ctx: *cpu.Context) u64 {
+    var buf: [max_path]u8 = undefined;
+    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return switch (err) {
+        error.Fault => errval(EFAULT),
+        error.NameTooLong => errval(ENAMETOOLONG),
+    };
+    vfs.unlinkPath(path) catch |err| return fsErr(err);
+    return 0;
 }
 
 fn sys_close(ctx: *cpu.Context) u64 {
@@ -281,7 +309,7 @@ fn sys_lseek(ctx: *cpu.Context) u64 {
     const base: u64 = switch (ctx.rdx) {
         seek_set => 0,
         seek_cur => open.pos,
-        seek_end => open.bytes.len,
+        seek_end => open.node.size(),
         else => return errval(EINVAL),
     };
     const base_i = std.math.cast(i64, base) orelse return errval(EINVAL);
@@ -382,14 +410,12 @@ fn sys_getdents(ctx: *cpu.Context) u64 {
     if (len < @sizeOf(Dirent)) return errval(EINVAL);
     if (checkIo(len)) |r| return r;
 
-    const ents = ramfs.entries();
     var copied: usize = 0;
     const space = userSpace();
-    while (dir.pos < ents.len) {
+    while (dir.node.childAt(dir.pos)) |e| {
         if (copied + @sizeOf(Dirent) > len) break;
-        const e = ents[dir.pos];
         const n = @min(e.name().len, dirent_name_max);
-        var de: Dirent = .{ .size = e.data.len, .name_len = n, .name = @splat(0) };
+        var de: Dirent = .{ .size = e.size(), .name_len = n, .name = @splat(0) };
         @memcpy(de.name[0..n], e.name()[0..n]);
         space.copyToUser(addr + copied, std.mem.asBytes(&de)) catch {
             if (copied == 0) return errval(EFAULT);
@@ -528,6 +554,39 @@ fn checkIo(len: usize) ?u64 {
     if (len == 0) return 0;
     if (len > max_io) return errval(EINVAL);
     return null;
+}
+
+fn writeFile(open: *file.OpenFile, addr: usize, len: usize) u64 {
+    var tmp: [io_chunk]u8 = undefined;
+    var copied: usize = 0;
+    const space = userSpace();
+    while (copied < len) {
+        const n = @min(tmp.len, len - copied);
+        space.copyFromUser(tmp[0..n], addr + copied) catch {
+            if (copied == 0) return errval(EFAULT);
+            return copied;
+        };
+        const w = open.node.writeAt(open.pos, tmp[0..n]) catch |err| {
+            if (copied == 0) return fsErr(err);
+            return copied;
+        };
+        open.pos += w;
+        copied += w;
+    }
+    return copied;
+}
+
+fn fsErr(err: vfs.Error) u64 {
+    return errval(switch (err) {
+        error.NoEnt => ENOENT,
+        error.NotDir => ENOTDIR,
+        error.IsDir => EISDIR,
+        error.ReadOnly => EROFS,
+        error.Exists => EEXIST,
+        error.BadName => EINVAL,
+        error.TooBig => EINVAL,
+        error.OutOfMemory => ENOMEM,
+    });
 }
 
 fn errval(errno: i64) u64 {

@@ -58,7 +58,7 @@ while [ "$n" -lt 90 ]; do
 done
 [ "$n" -lt 90 ] || fail "timeout waiting for READY."
 
-printf 'echo hi | cat\nls\nthread\npoweroff\n' >&3
+printf 'echo hi | cat\necho vfs-ok > /tmp/out\ncat /tmp/out\nrm /tmp/out\nls\nthread\npoweroff\n' >&3
 exec 3>&-
 
 n=0
@@ -77,7 +77,12 @@ done
 # Skip `cat` (glued to the prompt under type-ahead) and `ls` (echoed command).
 tr -d '\r' < "$out" > "$out.plain"
 missing=
-for line in hi init ps shell; do
+# `hi` is the pipe output. Type-ahead can glue it to the next echoed line.
+if ! grep -Eq 'hi$' "$out.plain"; then
+    echo "missing line: hi" >&2
+    missing=1
+fi
+for line in init ps shell; do
     if ! grep -Fxq "$line" "$out.plain"; then
         echo "missing line: $line" >&2
         missing=1
@@ -86,6 +91,10 @@ done
 # Prompt and program output share a line under type-ahead (`> thread ok`).
 if ! grep -Fq "thread ok" "$out.plain"; then
     echo "missing line: thread ok" >&2
+    missing=1
+fi
+if ! grep -Fq "> vfs-ok" "$out.plain"; then
+    echo "missing line: > vfs-ok" >&2
     missing=1
 fi
 [ -z "$missing" ] || fail "qemu serial output:"

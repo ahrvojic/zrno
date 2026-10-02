@@ -20,6 +20,7 @@ const sched = @import("sched/sched.zig");
 const serial = @import("dev/serial.zig");
 const timer = @import("dev/timer.zig");
 const video = @import("dev/video.zig");
+const vfs = @import("fs/vfs.zig");
 const vmm = @import("mm/vmm.zig");
 
 pub const panic = std.debug.FullPanic(lib_panic.panicImpl);
@@ -75,10 +76,12 @@ pub fn main(info: *const bootinfo.BootInfo) !void {
     try pmm.init();
     try vmm.init();
     heap.init();
+    // /tmp is a heap ramfs. The initramfs was mounted before the heap existed.
+    try vfs.mountTmp();
     try acpi.init();
 
     // Framebuffer fields were copied in boot.init. Pixels stay reserved
-    // via the memory map. Ramfs aliases the initramfs for the rest of boot.
+    // via the memory map. The initramfs aliases its archive for the rest of boot.
     video.capture();
     boot.drop();
 

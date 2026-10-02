@@ -10,7 +10,7 @@ test {
     _ = @import("sys/fpu.zig");
     _ = @import("sys/elf.zig");
     _ = @import("fs/ustar.zig");
-    _ = @import("fs/ramfs.zig");
+    _ = @import("fs/vfs.zig");
     _ = @import("acpi/acpi.zig");
     _ = @import("acpi/fadt.zig");
     _ = @import("acpi/dsdt.zig");

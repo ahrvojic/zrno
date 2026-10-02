@@ -3,7 +3,7 @@ const elf = @import("../sys/elf.zig");
 const file = @import("../fs/file.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
-const ramfs = @import("../fs/ramfs.zig");
+const vfs = @import("../fs/vfs.zig");
 const sched = @import("sched.zig");
 const virt = @import("../lib/virt.zig");
 const vmm = @import("../mm/vmm.zig");
@@ -46,7 +46,8 @@ pub fn execPath(process: *proc.Process, ctx: *cpu.Context, path: []const u8, arg
 }
 
 fn loadPath(vm: *vmm.VMM, path: []const u8) SpawnError!elf.Loaded {
-    const image = ramfs.lookup(path) orelse return error.NoEnt;
+    const node = vfs.walk(path) catch return error.NoEnt;
+    const image = node.bytes() orelse return error.NoEnt;
     var space: VmmSpace = .{ .vmm = vm };
     return elf.load(&space, image) catch |err| spawnFail(err);
 }

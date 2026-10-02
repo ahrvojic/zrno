@@ -25,7 +25,7 @@ pub const MemKind = enum(u32) {
     acpi_reclaimable,
     framebuffer,
     /// Kernel image and initramfs. Reserved for the life of the boot.
-    /// Initramfs bytes are aliased by ramfs, not copied.
+    /// Initramfs bytes are aliased by the filesystem, not copied.
     modules,
     reserved,
     bad,

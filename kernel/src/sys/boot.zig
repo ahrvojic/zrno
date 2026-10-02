@@ -4,7 +4,7 @@ const std = @import("std");
 
 const bootinfo = @import("bootinfo");
 
-const ramfs = @import("../fs/ramfs.zig");
+const vfs = @import("../fs/vfs.zig");
 const panic = @import("../lib/panic.zig").panic;
 const virt = @import("../lib/virt.zig");
 
@@ -74,17 +74,18 @@ pub fn init(raw: *const bootinfo.BootInfo) !void {
     if (raw.initramfs_len == 0) return error.NoInitramfs;
     const archive = virt.toHH([*]const u8, @intCast(raw.initramfs_phys))[0..@intCast(raw.initramfs_len)];
     logger.info("initramfs {d} bytes at 0x{x}", .{ archive.len, @intFromPtr(archive.ptr) });
-    ramfs.mount(archive) catch |err| {
+    vfs.mount(archive) catch |err| {
         logger.err("initramfs: {s}", .{@errorName(err)});
         return err;
     };
-    for (ramfs.entries()) |entry| {
-        logger.info("initramfs {s} {d} bytes", .{ entry.name(), entry.data.len });
+    var i: usize = 0;
+    while (vfs.root().childAt(i)) |entry| : (i += 1) {
+        logger.info("initramfs {s} {d} bytes", .{ entry.name(), entry.size() });
     }
 }
 
 /// Boot info lives in reclaimable memory and in this BSS copy. After this,
-/// `info()` panics. Ramfs aliases the initramfs bytes, which stay mapped.
+/// `info()` panics. The filesystem aliases the initramfs bytes, which stay mapped.
 pub fn drop() void {
     if (state != .live) panic("boot drop without init");
     info_value = undefined;

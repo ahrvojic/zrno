@@ -48,6 +48,7 @@ fn help() void {
     lib.print("[name] [args] spawn /name\n");
     lib.print("a | b         pipe a stdout to b stdin\n");
     lib.print("cmd < file    stdin from file\n");
+    lib.print("cmd > file    stdout to file\n");
 }
 
 fn optU64(arg: ?[]const u8, default: u64, usage: []const u8) ?u64 {
@@ -81,6 +82,7 @@ const Cmd = struct {
     argv: [sys.max_argv][]const u8,
     n: usize,
     in_file: ?[]const u8 = null,
+    out_file: ?[]const u8 = null,
 };
 
 fn parseCmd(path: []const u8, ps: *[]u8) ?Cmd {
@@ -88,10 +90,19 @@ fn parseCmd(path: []const u8, ps: *[]u8) ?Cmd {
     argv[0] = path;
     var n: usize = 1;
     var in_file: ?[]const u8 = null;
+    var out_file: ?[]const u8 = null;
     while (nextTok(ps)) |tok| {
         if (tok.len > 0 and tok[0] == '>') {
-            lib.eprint("no > yet\n");
-            return null;
+            const name = if (tok.len > 1) tok[1..] else nextTok(ps) orelse {
+                lib.eprint("usage: cmd > file\n");
+                return null;
+            };
+            if (out_file) |_| {
+                lib.eprint("too many >\n");
+                return null;
+            }
+            out_file = name;
+            continue;
         }
         if (tok.len > 0 and tok[0] == '<') {
             const name = if (tok.len > 1) tok[1..] else nextTok(ps) orelse {
@@ -112,14 +123,16 @@ fn parseCmd(path: []const u8, ps: *[]u8) ?Cmd {
         argv[n] = tok;
         n += 1;
     }
-    return .{ .argv = argv, .n = n, .in_file = in_file };
+    return .{ .argv = argv, .n = n, .in_file = in_file, .out_file = out_file };
 }
 
-fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout: u64) i64 {
-    var opened: ?u64 = null;
-    defer if (opened) |fd| {
-        _ = sys.close(fd);
-    };
+fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout0: u64) i64 {
+    var opened_in: ?u64 = null;
+    var opened_out: ?u64 = null;
+    defer {
+        if (opened_in) |fd| _ = sys.close(fd);
+        if (opened_out) |fd| _ = sys.close(fd);
+    }
 
     var stdin = stdin0;
     if (cmd.in_file) |f| {
@@ -130,8 +143,20 @@ fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout: u64) i64 {
             return fd;
         }
         const nfd: u64 = @intCast(fd);
-        opened = nfd;
+        opened_in = nfd;
         stdin = nfd;
+    }
+    var stdout = stdout0;
+    if (cmd.out_file) |f| {
+        const fd = sys.openAt(f, sys.open_write | sys.open_create);
+        if (fd < 0) {
+            lib.eprint(f);
+            lib.printErr(": err ", fd);
+            return fd;
+        }
+        const nfd: u64 = @intCast(fd);
+        opened_out = nfd;
+        stdout = nfd;
     }
     const pid = sys.spawn(cmd.argv[0], cmd.argv[0..cmd.n], stdin, stdout, 2);
     if (pid < 0) {

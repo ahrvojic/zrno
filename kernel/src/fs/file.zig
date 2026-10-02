@@ -1,14 +1,17 @@
 const heap = @import("../mm/heap.zig");
 const pipe = @import("pipe.zig");
+const vfs = @import("vfs.zig");
 
 pub const max_fds: usize = 16;
 
 pub const OpenFile = struct {
-    bytes: []const u8,
+    node: *vfs.Node,
     pos: usize,
+    can_write: bool,
 };
 
 pub const OpenDir = struct {
+    node: *vfs.Node,
     pos: usize,
 };
 
@@ -28,10 +31,12 @@ pub const File = struct {
     pub fn create(kind: Kind) error{OutOfMemory}!*File {
         const f = try heap.kernel_heap.allocator().create(File);
         f.* = .{ .refs = 1, .kind = kind };
-        switch (kind) {
+        switch (f.kind) {
             .pipe_read => |p| p.readers += 1,
             .pipe_write => |p| p.writers += 1,
-            .tty, .file, .dir => {},
+            .file => |open| open.node.retain(),
+            .dir => |open| open.node.retain(),
+            .tty => {},
         }
         return f;
     }
@@ -47,7 +52,9 @@ pub const File = struct {
             switch (self.kind) {
                 .pipe_read => |p| p.detachRead(),
                 .pipe_write => |p| p.detachWrite(),
-                .tty, .file, .dir => {},
+                .file => |open| open.node.release(),
+                .dir => |open| open.node.release(),
+                .tty => {},
             }
             heap.kernel_heap.allocator().destroy(self);
         }
