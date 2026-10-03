@@ -2,6 +2,7 @@ const std = @import("std");
 
 const cpu = @import("../sys/cpu.zig");
 const file = @import("../fs/file.zig");
+const maplist = @import("maplist.zig");
 const vmm = @import("../mm/vmm.zig");
 
 pub const Process = struct {
@@ -18,8 +19,9 @@ pub const Process = struct {
     // below). Grows down from `elf.user_stack_top`.
     user_stack_next: usize,
     // Exclusive top of the next anonymous mmap. Grows down from
-    // `elf.user_mmap_top`.
+    // `elf.user_mmap_top`. `maps` are the live ranges; a hole is not reused.
     mmap_next: usize,
+    maps: maplist.List = .{},
     // Program break: exclusive end of the data/heap segment. `brk_start` is
     // the page-aligned end of the loaded image; `brk` may grow up to mmap.
     brk_start: usize,

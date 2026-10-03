@@ -34,6 +34,7 @@ pub const nr_yield: u64 = 0x13;
 // 0x20 memory
 pub const nr_brk: u64 = 0x20; // rdi=0 query; else set program break, return it
 pub const nr_mmap: u64 = 0x21; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX
+pub const nr_munmap: u64 = 0x22; // rdi=addr, rsi=len; one whole mapping from mmap
 // 0x30 file
 pub const nr_open: u64 = 0x30; // rdi/rsi=path, rdx=flags (0 = read)
 pub const nr_close: u64 = 0x31;
@@ -130,6 +131,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_yield => sys_yield(),
         nr_brk => sys_brk(ctx),
         nr_mmap => sys_mmap(ctx),
+        nr_munmap => sys_munmap(ctx),
         nr_open => sys_open(ctx),
         nr_close => sys_close(ctx),
         nr_read => sys_read(ctx),
@@ -404,6 +406,13 @@ fn sys_mmap(ctx: *cpu.Context) u64 {
     if (prot & prot_exec != 0) return errval(EINVAL);
     if (prot & (prot_read | prot_write) == 0) return errval(EINVAL);
     return sched.mapAnon(len, prot & prot_write != 0) catch |err| mmErr(err);
+}
+
+fn sys_munmap(ctx: *cpu.Context) u64 {
+    const addr: usize = @intCast(ctx.rdi);
+    const len: usize = @intCast(ctx.rsi);
+    sched.unmapAnon(addr, len) catch |err| return mmErr(err);
+    return 0;
 }
 
 fn sys_getdents(ctx: *cpu.Context) u64 {

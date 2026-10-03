@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const cpu = @import("../sys/cpu.zig");
+const maplist = @import("maplist.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
 const state = @import("state.zig");
@@ -134,18 +135,17 @@ pub fn mapAnon(len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
     const size = std.mem.alignForward(usize, len, pmm.page_size);
 
     state.lock.lock();
-    const prepared: ?struct { old: usize, base: usize } = blk: {
+    const prepared: ?usize = blk: {
         defer state.lock.unlock();
         const old = process.mmap_next;
         if (old < size) break :blk null;
         const base = old - size;
         if (base < process.brk or state.user_mmap_top - base > max_mmap) break :blk null;
+        process.maps.append(.{ .base = base, .size = size }) catch break :blk null;
         process.mmap_next = base;
-        break :blk .{ .old = old, .base = base };
+        break :blk base;
     };
-    const c = prepared orelse return error.OutOfMemory;
-    const old = c.old;
-    const base = c.base;
+    const base = prepared orelse return error.OutOfMemory;
 
     const flags = vmm.Flags{
         .present = true,
@@ -153,13 +153,35 @@ pub fn mapAnon(len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
         .user = true,
         .noexec = true,
     };
+    // The record is reserved. Drop it if the pages never land. `mapPages`
+    // unmaps any prefix it mapped.
     mapPages(&process.vmm, base, size, flags) catch {
         state.lock.lock();
-        if (process.mmap_next == base) process.mmap_next = old;
-        state.lock.unlock();
+        defer state.lock.unlock();
+        _ = maplist.remove(&process.maps, &process.mmap_next, base, size);
         return error.OutOfMemory;
     };
     return base;
+}
+
+/// Inverse of `mapAnon`. `len` is rounded the same way. The address must be
+/// a mapping that was handed out, whole. The cursor rewinds only when this
+/// mapping is the lowest one.
+pub fn unmapAnon(addr: usize, len: usize) error{Invalid}!void {
+    state.expectInit();
+    const process = cpu.currentProcess();
+    if (process.pid == state.kernel_pid) @panic("munmap kernel process");
+
+    if (len == 0 or len > std.math.maxInt(usize) - (pmm.page_size - 1)) return error.Invalid;
+    if (!std.mem.isAligned(addr, pmm.page_size)) return error.Invalid;
+    const size = std.mem.alignForward(usize, len, pmm.page_size);
+
+    state.lock.lock();
+    defer state.lock.unlock();
+    // Sched stays held across the unmap so another thread cannot mmap this
+    // range before the frames are freed. vmm is a lower rank.
+    if (!maplist.remove(&process.maps, &process.mmap_next, addr, size)) return error.Invalid;
+    unmapPages(&process.vmm, addr, size);
 }
 
 pub fn dropAddressSpace(space: *vmm.VMM) void {

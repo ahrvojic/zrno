@@ -21,6 +21,7 @@ pub const createUserThread = thread.createUserThread;
 pub const execReplace = thread.execReplace;
 pub const setBrk = aspace.setBrk;
 pub const mapAnon = aspace.mapAnon;
+pub const unmapAnon = aspace.unmapAnon;
 pub const isKernelStackGuard = kstack.isGuard;
 pub const isUserStackGuard = aspace.isUserStackGuard;
 

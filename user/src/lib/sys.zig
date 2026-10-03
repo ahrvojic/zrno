@@ -18,6 +18,7 @@ pub const nr_yield: u64 = 0x13;
 // 0x20 memory
 pub const nr_brk: u64 = 0x20;
 pub const nr_mmap: u64 = 0x21;
+pub const nr_munmap: u64 = 0x22;
 // 0x30 file
 pub const nr_open: u64 = 0x30;
 pub const nr_close: u64 = 0x31;
@@ -215,6 +216,10 @@ pub fn brk(addr: usize) i64 {
 
 pub fn mmap(addr: usize, len: usize, prot: u64) i64 {
     return syscall3(nr_mmap, addr, len, prot);
+}
+
+pub fn munmap(addr: usize, len: usize) i64 {
+    return syscall3(nr_munmap, addr, len, 0);
 }
 
 pub fn reboot() noreturn {

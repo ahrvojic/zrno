@@ -100,6 +100,7 @@ pub fn execReplace(
     process.vmm = space;
     process.user_stack_next = state.user_stack_top - state.user_stack_slot;
     process.mmap_next = state.user_mmap_top;
+    process.maps.len = 0;
     process.brk_start = image_brk;
     process.brk = image_brk;
     thread.user_stack = user_stack_base;
