@@ -187,11 +187,11 @@ fn parseLoad(image: []const u8, phdr: Phdr) error{ BadElf, WritableExecutable, O
     };
 }
 
-fn checkIdent(ident: *const [std.elf.EI.NIDENT]u8) error{BadElf}!void {
-    if (!std.mem.eql(u8, ident[0..4], std.elf.MAGIC)) return error.BadElf;
-    if (ident[std.elf.EI.CLASS] != @intFromEnum(std.elf.CLASS.@"64")) return error.BadElf;
-    if (ident[std.elf.EI.DATA] != @intFromEnum(std.elf.DATA.@"2LSB")) return error.BadElf;
-    if (ident[std.elf.EI.VERSION] != 1) return error.BadElf;
+fn checkIdent(ident: *const std.elf.Ident) error{BadElf}!void {
+    if (!std.mem.eql(u8, &ident.magic, std.elf.MAGIC)) return error.BadElf;
+    if (ident.class != .@"64") return error.BadElf;
+    if (ident.data != .@"2LSB") return error.BadElf;
+    if (ident.version != 1) return error.BadElf;
 }
 
 fn checkUserImageRange(addr: usize, len: usize) error{OutOfRange}!void {
@@ -346,10 +346,10 @@ const Fixture = struct {
 
     fn finish(self: *Fixture, typ: std.elf.ET, machine: std.elf.EM, entry: u64) []const u8 {
         var ehdr = std.mem.zeroes(Ehdr);
-        @memcpy(ehdr.ident[0..4], std.elf.MAGIC);
-        ehdr.ident[std.elf.EI.CLASS] = @intFromEnum(std.elf.CLASS.@"64");
-        ehdr.ident[std.elf.EI.DATA] = @intFromEnum(std.elf.DATA.@"2LSB");
-        ehdr.ident[std.elf.EI.VERSION] = 1;
+        ehdr.ident.magic = std.elf.MAGIC.*;
+        ehdr.ident.class = .@"64";
+        ehdr.ident.data = .@"2LSB";
+        ehdr.ident.version = 1;
         ehdr.type = typ;
         ehdr.machine = machine;
         ehdr.version = 1;
@@ -468,7 +468,7 @@ test "reject wrong class endian machine" {
     var g: Fixture = .{};
     g.addLoad(0x400000, rx(), "code", 0, page_size);
     const slice = g.finish(.EXEC, .X86_64, 0x400000);
-    g.buf[std.elf.EI.DATA] = @intFromEnum(std.elf.DATA.@"2MSB");
+    g.buf[std.elf.EI.DATA] = @backingInt(std.elf.DATA.@"2MSB");
     try std.testing.expectError(error.BadElf, parse(g.buf[0..slice.len]));
 }
 
@@ -497,7 +497,7 @@ test "load copies filesz, zeros BSS, maps R/W/X" {
     try std.testing.expect(d.flags.writable);
     try std.testing.expect(!d.flags.executable);
     try std.testing.expectEqualSlices(u8, &data, d.bytes[0..data.len]);
-    try std.testing.expectEqualSlices(u8, &[_]u8{0} ** 12, d.bytes[data.len..][0..12]);
+    try std.testing.expectEqualSlices(u8, &@as([12]u8, @splat(0)), d.bytes[data.len..][0..12]);
 }
 
 test "load page-aligns unaligned p_vaddr and zeros the lead" {
@@ -513,7 +513,7 @@ test "load page-aligns unaligned p_vaddr and zeros the lead" {
     try std.testing.expectEqual(0x401000, loaded.brk);
     const t = space.at(0x400000).?;
     try std.testing.expectEqual(page_size, t.bytes.len);
-    try std.testing.expectEqualSlices(u8, &[_]u8{0} ** 0x10, t.bytes[0..0x10]);
+    try std.testing.expectEqualSlices(u8, &@as([0x10]u8, @splat(0)), t.bytes[0..0x10]);
     try std.testing.expectEqualSlices(u8, &text, t.bytes[0x10..][0..2]);
-    try std.testing.expectEqualSlices(u8, &[_]u8{0} ** 6, t.bytes[0x12..][0..6]);
+    try std.testing.expectEqualSlices(u8, &@as([6]u8, @splat(0)), t.bytes[0x12..][0..6]);
 }

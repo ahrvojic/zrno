@@ -29,5 +29,5 @@ test "default XSAVE image is zero" {
     var state: State = undefined;
     @memset(&state.bytes, 0xff);
     initState(&state);
-    try std.testing.expectEqualSlices(u8, &[_]u8{0} ** state_size, &state.bytes);
+    try std.testing.expectEqualSlices(u8, &@as([state_size]u8, @splat(0)), &state.bytes);
 }

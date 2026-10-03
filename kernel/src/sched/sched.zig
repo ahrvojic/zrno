@@ -61,7 +61,7 @@ pub fn startProcess(enqueue: bool) !*proc.Process {
         .mmap_next = state.user_mmap_top,
         .brk_start = 0,
         .brk = 0,
-        .fds = [_]file.Fd{null} ** file.max_fds,
+        .fds = @splat(null),
     };
     errdefer process.vmm.destroy();
     if (cpu.current().thread) |t| {

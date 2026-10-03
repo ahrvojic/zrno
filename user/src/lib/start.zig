@@ -8,7 +8,7 @@ export fn _start(argv: [*]const []const u8, argc: usize) callconv(.c) noreturn {
 }
 
 inline fn callMain(args: []const []const u8) u64 {
-    const nparams = @typeInfo(@TypeOf(app.main)).@"fn".params.len;
+    const nparams = @typeInfo(@TypeOf(app.main)).@"fn".param_types.len;
     if (nparams == 0) return app.main();
     if (nparams == 1) return app.main(args);
     @compileError("main must be fn () u64 or fn ([]const []const u8) u64");

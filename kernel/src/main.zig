@@ -15,6 +15,7 @@ const fadt = @import("acpi/fadt.zig");
 const heap = @import("mm/heap.zig");
 const lib_panic = @import("lib/panic.zig");
 const pmm = @import("mm/pmm.zig");
+const rt = @import("lib/rt.zig");
 const ps2 = @import("dev/ps2.zig");
 const sched = @import("sched/sched.zig");
 const serial = @import("dev/serial.zig");
@@ -24,6 +25,10 @@ const vfs = @import("fs/vfs.zig");
 const vmm = @import("mm/vmm.zig");
 
 pub const panic = std.debug.FullPanic(lib_panic.panicImpl);
+
+comptime {
+    _ = rt;
+}
 
 pub const std_options: std.Options = .{
     .logFn = log,

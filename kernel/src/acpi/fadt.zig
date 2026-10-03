@@ -305,7 +305,7 @@ fn expectUninit() void {
 }
 
 fn resetFixture(flags: u32, gas: acpi.GenericAddress, value: u8) [93]u8 {
-    var data = [_]u8{0} ** 93;
+    var data: [93]u8 = @splat(0);
     std.mem.writeInt(u32, data[@offsetOf(FADT, "flags")..][0..4], flags, .little);
     @memcpy(data[@offsetOf(FADT, "reset_reg")..][0..@sizeOf(acpi.GenericAddress)], std.mem.asBytes(&gas));
     data[@offsetOf(FADT, "reset_value")] = value;
@@ -332,7 +332,7 @@ test "parseResetReg reads IO reset from FADT" {
 
 test "parseResetReg rejects missing flag, short table, and bad GAS" {
     try std.testing.expect(parseResetReg(&resetFixture(0, ioResetGas(0xcf9, 8), 0x06)) == null);
-    try std.testing.expect(parseResetReg(&[_]u8{0} ** 80) == null);
+    try std.testing.expect(parseResetReg(&@as([80]u8, @splat(0))) == null);
     try std.testing.expect(parseResetReg(&resetFixture(reset_reg_sup, ioResetGas(0, 8), 0x06)) == null);
     try std.testing.expect(parseResetReg(&resetFixture(reset_reg_sup, ioResetGas(0x1_0000, 8), 0x06)) == null);
     try std.testing.expect(parseResetReg(&resetFixture(reset_reg_sup, ioResetGas(0xcf9, 16), 0x06)) == null);
@@ -353,7 +353,7 @@ test "parseResetReg rejects missing flag, short table, and bad GAS" {
 
 test "parseIoCtrl prefers the extended PM1 control port" {
     const gas_len = @sizeOf(acpi.GenericAddress);
-    var data = [_]u8{0} ** (@offsetOf(FADT, "x_pm1a_ctrl_block") + gas_len);
+    var data: [@offsetOf(FADT, "x_pm1a_ctrl_block") + gas_len]u8 = @splat(0);
     const gas = ioResetGas(0x604, 16);
     @memcpy(data[@offsetOf(FADT, "x_pm1a_ctrl_block")..][0..gas_len], std.mem.asBytes(&gas));
 
@@ -365,12 +365,12 @@ test "parseIoCtrl prefers the extended PM1 control port" {
 }
 
 test "parseIoCtrl uses the legacy PM1 control port when the extended block is unused" {
-    var legacy_only = [_]u8{0} ** (@offsetOf(FADT, "pm1a_ctrl_block") + 4);
+    var legacy_only: [@offsetOf(FADT, "pm1a_ctrl_block") + 4]u8 = @splat(0);
     std.mem.writeInt(u32, legacy_only[@offsetOf(FADT, "pm1a_ctrl_block")..][0..4], 0x604, .little);
     try std.testing.expectEqual(@as(u16, 0x604), parseIoCtrl(&legacy_only, @offsetOf(FADT, "x_pm1a_ctrl_block"), @offsetOf(FADT, "pm1a_ctrl_block")));
 
     const gas_len = @sizeOf(acpi.GenericAddress);
-    var zero_x = [_]u8{0} ** (@offsetOf(FADT, "x_pm1a_ctrl_block") + gas_len);
+    var zero_x: [@offsetOf(FADT, "x_pm1a_ctrl_block") + gas_len]u8 = @splat(0);
     std.mem.writeInt(u32, zero_x[@offsetOf(FADT, "pm1a_ctrl_block")..][0..4], 0x604, .little);
     try std.testing.expectEqual(@as(u16, 0x604), parseIoCtrl(&zero_x, @offsetOf(FADT, "x_pm1a_ctrl_block"), @offsetOf(FADT, "pm1a_ctrl_block")));
 }

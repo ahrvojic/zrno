@@ -7,9 +7,9 @@ endif
 
 override IMAGE_NAME := zrno
 
-KZIGFLAGS ?= -Doptimize=ReleaseSafe
-UZIGFLAGS ?= -Doptimize=ReleaseSmall
-BZIGFLAGS ?= -Doptimize=ReleaseSafe
+KZIGFLAGS ?= -Doptimize=safe
+UZIGFLAGS ?= -Doptimize=small
+BZIGFLAGS ?= -Doptimize=safe
 
 QEMU := qemu-system-x86_64
 # qemu64 does not implement XSAVE/AVX (even with +avx). Broadwell has
@@ -80,4 +80,4 @@ clean:
 
 .PHONY: distclean
 distclean: clean
-	rm -rf limine limine-binary ovmf
+	rm -rf ovmf

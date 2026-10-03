@@ -63,9 +63,9 @@ pub fn copy(file: []const u8, dest: []u8) error{BadElf}!void {
 fn header(file: []const u8) error{BadElf}!Ehdr {
     if (file.len < @sizeOf(Ehdr)) return error.BadElf;
     const hdr = try peek(Ehdr, file, 0);
-    if (!std.mem.eql(u8, hdr.ident[0..4], elf.MAGIC)) return error.BadElf;
-    if (hdr.ident[elf.EI.CLASS] != @intFromEnum(elf.CLASS.@"64")) return error.BadElf;
-    if (hdr.ident[elf.EI.DATA] != @intFromEnum(elf.DATA.@"2LSB")) return error.BadElf;
+    if (!std.mem.eql(u8, &hdr.ident.magic, elf.MAGIC)) return error.BadElf;
+    if (hdr.ident.class != .@"64") return error.BadElf;
+    if (hdr.ident.data != .@"2LSB") return error.BadElf;
     if (hdr.type != .EXEC) return error.BadElf;
     if (hdr.machine != .X86_64) return error.BadElf;
     if (hdr.phentsize != @sizeOf(Phdr)) return error.BadElf;

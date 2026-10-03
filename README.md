@@ -26,7 +26,7 @@ Host tools that need to be installed locally. OVMF is fetched by the makefile.
 To build and run (`make run`):
 
 - [GNU make](https://www.gnu.org/software/make/) 4.x
-- [Zig](https://ziglang.org) 0.16.0
+- [Zig](https://ziglang.org) 0.17.0
 - [QEMU](https://www.qemu.org) (`qemu-system-x86_64`)
 - `curl` and `tar` (`curl` fetches OVMF; `tar` packs the initramfs)
 

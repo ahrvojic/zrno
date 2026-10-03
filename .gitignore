@@ -1,7 +1,5 @@
 iso_root/
 esp/
-limine/
-limine-binary/
 ovmf/
 *.iso
 *.hdd

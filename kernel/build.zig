@@ -57,6 +57,9 @@ pub fn build(b: *std.Build) void {
     // CR3, AT&T memory operands, jumps to exported stubs).
     kernel.use_llvm = true;
     kernel.lto = .none;
+    // Zig 0.17.0 compiler-rt does not build for x86 soft-float (#37006).
+    // src/lib/rt.zig provides the integer and memory helpers LLVM still emits.
+    kernel.bundle_compiler_rt = false;
 
     b.installArtifact(kernel);
 
