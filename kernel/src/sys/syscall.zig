@@ -43,6 +43,8 @@ pub const nr_lseek: u64 = 0x34; // rdi=fd, rsi=offset i64, rdx=whence; returns p
 pub const nr_pipe: u64 = 0x35; // rdi = *[2]i64 {read, write}
 pub const nr_getdents: u64 = 0x36; // rdi=fd, rsi=buf, rdx=len; returns bytes
 pub const nr_unlink: u64 = 0x37; // rdi/rsi=path
+pub const nr_mkdir: u64 = 0x38; // rdi/rsi=path
+pub const nr_rmdir: u64 = 0x39; // rdi/rsi=path; empty directory only
 // 0x40 clock
 pub const nr_sleep: u64 = 0x40;
 pub const nr_uptime: u64 = 0x41; // returns ns since boot
@@ -117,6 +119,7 @@ const EROFS: i64 = 30;
 const EPIPE: i64 = 32;
 const ENAMETOOLONG: i64 = 36;
 const ENOSYS: i64 = 38;
+const ENOTEMPTY: i64 = 39;
 
 pub fn handle(ctx: *cpu.Context) void {
     ctx.rax = dispatch(ctx);
@@ -144,7 +147,9 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_lseek => sys_lseek(ctx),
         nr_pipe => sys_pipe(ctx),
         nr_getdents => sys_getdents(ctx),
-        nr_unlink => sys_unlink(ctx),
+        nr_unlink => sysPath(ctx, vfs.unlinkPath),
+        nr_mkdir => sysPath(ctx, vfs.mkdirPath),
+        nr_rmdir => sysPath(ctx, vfs.rmdirPath),
         nr_sleep => sys_sleep(ctx),
         nr_uptime => sys_uptime(),
         nr_reboot => reboot.perform(),
@@ -296,13 +301,13 @@ fn sys_open(ctx: *cpu.Context) u64 {
     return fd;
 }
 
-fn sys_unlink(ctx: *cpu.Context) u64 {
+fn sysPath(ctx: *cpu.Context, op: *const fn ([]const u8) vfs.Error!void) u64 {
     var buf: [max_path]u8 = undefined;
     const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return switch (err) {
         error.Fault => errval(EFAULT),
         error.NameTooLong => errval(ENAMETOOLONG),
     };
-    vfs.unlinkPath(path) catch |err| return fsErr(err);
+    op(path) catch |err| return fsErr(err);
     return 0;
 }
 
@@ -606,6 +611,7 @@ fn fsErr(err: vfs.Error) u64 {
         error.NoEnt => ENOENT,
         error.NotDir => ENOTDIR,
         error.IsDir => EISDIR,
+        error.NotEmpty => ENOTEMPTY,
         error.ReadOnly => EROFS,
         error.Exists => EEXIST,
         error.BadName => EINVAL,

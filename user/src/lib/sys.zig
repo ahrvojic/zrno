@@ -27,6 +27,8 @@ pub const nr_lseek: u64 = 0x34;
 pub const nr_pipe: u64 = 0x35;
 pub const nr_getdents: u64 = 0x36;
 pub const nr_unlink: u64 = 0x37;
+pub const nr_mkdir: u64 = 0x38;
+pub const nr_rmdir: u64 = 0x39;
 // 0x40 clock
 pub const nr_sleep: u64 = 0x40;
 pub const nr_uptime: u64 = 0x41;
@@ -142,6 +144,14 @@ pub fn openAt(path: []const u8, flags: u64) i64 {
 
 pub fn unlink(path: []const u8) i64 {
     return syscall3(nr_unlink, @intFromPtr(path.ptr), path.len, 0);
+}
+
+pub fn mkdir(path: []const u8) i64 {
+    return syscall3(nr_mkdir, @intFromPtr(path.ptr), path.len, 0);
+}
+
+pub fn rmdir(path: []const u8) i64 {
+    return syscall3(nr_rmdir, @intFromPtr(path.ptr), path.len, 0);
 }
 
 pub fn close(fd: u64) i64 {

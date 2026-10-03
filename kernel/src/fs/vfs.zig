@@ -1,6 +1,6 @@
 //! One name tree. `/` is the initramfs: static nodes, bytes borrowed from the
-//! ustar image, mounted before the heap exists. `/tmp` is an empty ramfs
-//! whose nodes and file bytes come from the heap.
+//! ustar image, mounted before the heap exists. `/tmp` is a ramfs whose
+//! directories, files, and file bytes come from the heap.
 
 const std = @import("std");
 
@@ -18,6 +18,7 @@ pub const Error = error{
     NoEnt,
     NotDir,
     IsDir,
+    NotEmpty,
     ReadOnly,
     Exists,
     BadName,
@@ -249,20 +250,39 @@ pub const Tree = struct {
     }
 
     pub fn unlinkPath(self: *Tree, path: []const u8) Error!void {
-        const parts = try splitFinal(path);
-        const parent = try self.walk(parts.parent);
-        if (!parent.isDir()) return error.NotDir;
-        const child = lookupChild(parent, parts.name) orelse return error.NoEnt;
+        const at = try self.parentName(path);
+        const child = lookupChild(at.parent, at.name) orelse return error.NoEnt;
         if (child.isDir()) return error.IsDir;
-        if (!child.isWritableFile() or !parent.isWritableDir()) return error.ReadOnly;
-        detach(parent, child);
+        if (!child.isWritableFile() or !at.parent.isWritableDir()) return error.ReadOnly;
+        detach(at.parent, child);
         child.release();
     }
 
-    fn createAt(self: *Tree, path: []const u8) Error!*Node {
+    pub fn mkdirPath(self: *Tree, path: []const u8) Error!void {
+        const at = try self.parentName(path);
+        _ = try createChild(at.parent, at.name, .dir);
+    }
+
+    pub fn rmdirPath(self: *Tree, path: []const u8) Error!void {
+        const at = try self.parentName(path);
+        const child = lookupChild(at.parent, at.name) orelse return error.NoEnt;
+        if (!child.isDir()) return error.NotDir;
+        if (child.child != null) return error.NotEmpty;
+        if (!child.isWritableDir() or !at.parent.isWritableDir()) return error.ReadOnly;
+        detach(at.parent, child);
+        child.release();
+    }
+
+    fn parentName(self: *Tree, path: []const u8) Error!struct { parent: *Node, name: []const u8 } {
         const parts = try splitFinal(path);
         const parent = try self.walk(parts.parent);
-        return createFile(parent, parts.name);
+        if (!parent.isDir()) return error.NotDir;
+        return .{ .parent = parent, .name = parts.name };
+    }
+
+    fn createAt(self: *Tree, path: []const u8) Error!*Node {
+        const at = try self.parentName(path);
+        return createChild(at.parent, at.name, .file);
     }
 
     fn addStatic(self: *Tree, nam: []const u8, kind: Node.Kind) error{TooManyFiles}!*Node {
@@ -301,15 +321,27 @@ pub fn unlinkPath(path: []const u8) Error!void {
     try tree.unlinkPath(path);
 }
 
-fn createFile(parent: *Node, nam: []const u8) Error!*Node {
+pub fn mkdirPath(path: []const u8) Error!void {
+    try tree.mkdirPath(path);
+}
+
+pub fn rmdirPath(path: []const u8) Error!void {
+    try tree.rmdirPath(path);
+}
+
+fn createChild(parent: *Node, nam: []const u8, kind: enum { file, dir }) Error!*Node {
+    // Exists before ReadOnly, so mkdir /tmp is EEXIST.
+    if (lookupChild(parent, nam) != null) return error.Exists;
     const alloc = switch (parent.kind) {
         .dir => |owner| owner orelse return error.ReadOnly,
         else => return error.NotDir,
     };
-    if (lookupChild(parent, nam) != null) return error.Exists;
     const node = try alloc.create(Node);
     node.* = .{
-        .kind = .{ .owned = .{ .data = &.{}, .heap = alloc } },
+        .kind = switch (kind) {
+            .file => .{ .owned = .{ .data = &.{}, .heap = alloc } },
+            .dir => .{ .dir = alloc },
+        },
     };
     node.setName(nam);
     addChild(parent, node);
@@ -469,4 +501,42 @@ test "tmp ramfs creates, writes, and unlinks" {
 
     try std.testing.expectError(error.NotDir, t.walk("/init/x"));
     try std.testing.expectEqualStrings("elf", (try t.walk("/tmp/../init")).bytes().?);
+}
+
+test "tmp directories nest, and rmdir refuses a non-empty dir" {
+    var tar: ustar.Fixture = .{};
+    tar.addFile("init", "elf");
+    var t: Tree = .{};
+    defer t.deinit();
+    try t.mount(tar.finish());
+    try t.mountTmp(std.testing.allocator);
+
+    try t.mkdirPath("/tmp/a");
+    try t.mkdirPath("/tmp/a/b");
+    const created = try t.openPath("/tmp/a/b/c", true, true);
+    _ = try created.node.writeAt(0, "x");
+    try std.testing.expectEqualStrings("x", (try t.walk("/tmp/a/b/c")).bytes().?);
+    try std.testing.expectEqualStrings("tmp", (try t.walk("/tmp/a/b/../..")).name());
+
+    try std.testing.expectError(error.NotEmpty, t.rmdirPath("/tmp/a/b"));
+    try std.testing.expectError(error.NotDir, t.rmdirPath("/tmp/a/b/c"));
+    try t.unlinkPath("/tmp/a/b/c");
+    try t.rmdirPath("/tmp/a/b");
+    try t.rmdirPath("/tmp/a");
+    try std.testing.expectError(error.NoEnt, t.walk("/tmp/a"));
+
+    try t.mkdirPath("/tmp/empty");
+    const opened = try t.openPath("/tmp/empty", false, false);
+    opened.node.retain();
+    try t.rmdirPath("/tmp/empty");
+    try std.testing.expectError(error.NoEnt, t.walk("/tmp/empty"));
+    opened.node.release();
+
+    try std.testing.expectError(error.ReadOnly, t.mkdirPath("/nope"));
+    try std.testing.expectError(error.NotDir, t.mkdirPath("/init/x"));
+    try std.testing.expectError(error.Exists, t.mkdirPath("/tmp"));
+    try std.testing.expectError(error.ReadOnly, t.rmdirPath("/tmp"));
+
+    try t.mkdirPath("/tmp/keep");
+    try t.mkdirPath("/tmp/keep/child");
 }
