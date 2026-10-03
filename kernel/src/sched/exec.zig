@@ -2,7 +2,6 @@ const cpu = @import("../sys/cpu.zig");
 const elf = @import("../sys/elf.zig");
 const file = @import("../fs/file.zig");
 const pmm = @import("../mm/pmm.zig");
-const proc = @import("proc.zig");
 const vfs = @import("../fs/vfs.zig");
 const sched = @import("sched.zig");
 const virt = @import("../lib/virt.zig");
@@ -35,14 +34,6 @@ fn spawn(path: []const u8, argv: []const []const u8, stdio: ?[3]u64) SpawnError!
     process.brk = loaded.brk;
     _ = sched.startUserThread(process, loaded.entry, argv, true) catch |err| return spawnFail(err);
     return process.pid;
-}
-
-pub fn execPath(process: *proc.Process, ctx: *cpu.Context, path: []const u8, argv: []const []const u8) SpawnError!void {
-    var new_vmm = vmm.VMM.cloneKernel() catch |err| return spawnFail(err);
-    errdefer new_vmm.destroy();
-
-    const loaded = try loadPath(&new_vmm, path);
-    sched.execReplace(process, ctx, new_vmm, loaded.entry, loaded.brk, argv) catch |err| return spawnFail(err);
 }
 
 fn loadPath(vm: *vmm.VMM, path: []const u8) SpawnError!elf.Loaded {

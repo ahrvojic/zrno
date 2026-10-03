@@ -5,11 +5,10 @@
 // 0x00 process
 pub const nr_exit: u64 = 0x00;
 pub const nr_spawn: u64 = 0x01;
-pub const nr_exec: u64 = 0x02;
-pub const nr_wait: u64 = 0x03;
-pub const nr_getpid: u64 = 0x04;
-pub const nr_getppid: u64 = 0x05;
-pub const nr_ps: u64 = 0x06;
+pub const nr_wait: u64 = 0x02;
+pub const nr_getpid: u64 = 0x03;
+pub const nr_getppid: u64 = 0x04;
+pub const nr_ps: u64 = 0x05;
 // 0x10 thread
 pub const nr_thread: u64 = 0x10;
 pub const nr_thread_exit: u64 = 0x11;
@@ -209,12 +208,6 @@ pub fn threadExit(code: u64) noreturn {
 
 pub fn getppid() i64 {
     return syscall3(nr_getppid, 0, 0, 0);
-}
-
-pub fn exec(path: []const u8, argv: []const []const u8) i64 {
-    var strs: [max_argv]UserStr = undefined;
-    if (!packArgv(argv, &strs)) return e2big;
-    return syscall6(nr_exec, @intFromPtr(path.ptr), path.len, @intFromPtr(&strs), argv.len, 0, 0);
 }
 
 pub fn brk(addr: usize) i64 {

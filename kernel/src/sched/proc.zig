@@ -51,8 +51,8 @@ pub const Thread = struct {
     stack_phys: usize,
     // Mapped VA of the kernel stack (guard page is the page below).
     stack_base: usize,
-    // User stack VA. 0 for a kernel thread. Process exit and exec drop it
-    // with the address space; `thread_exit` unmaps it while siblings remain.
+    // User stack VA. 0 for a kernel thread. Process exit drops it with the
+    // address space; `thread_exit` unmaps it while siblings remain.
     user_stack: usize = 0,
     proc_node: std.DoublyLinkedList.Node,
     sched_node: std.DoublyLinkedList.Node,

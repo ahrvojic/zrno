@@ -21,11 +21,10 @@ const vmm = @import("../mm/vmm.zig");
 // 0x00 process
 pub const nr_exit: u64 = 0x00;
 pub const nr_spawn: u64 = 0x01; // rdi/rsi=path, rdx/r10=argv ptr/n, r8=*[3]u64 stdio
-pub const nr_exec: u64 = 0x02; // rdi/rsi=path, rdx/r10=argv ptr/n
-pub const nr_wait: u64 = 0x03; // rdi=pid (0 = any); rsi=status or 0; returns pid
-pub const nr_getpid: u64 = 0x04;
-pub const nr_getppid: u64 = 0x05;
-pub const nr_ps: u64 = 0x06; // rdi=buf, rsi=len; returns bytes of PsInfo (one per thread)
+pub const nr_wait: u64 = 0x02; // rdi=pid (0 = any); rsi=status or 0; returns pid
+pub const nr_getpid: u64 = 0x03;
+pub const nr_getppid: u64 = 0x04;
+pub const nr_ps: u64 = 0x05; // rdi=buf, rsi=len; returns bytes of PsInfo (one per thread)
 // 0x10 thread
 pub const nr_thread: u64 = 0x10; // rdi=entry, rsi=arg; new thread in this process, returns tid
 pub const nr_thread_exit: u64 = 0x11; // rdi=code; last thread exits the process
@@ -127,7 +126,6 @@ fn dispatch(ctx: *cpu.Context) u64 {
     return switch (ctx.rax) {
         nr_exit => sys_exit(ctx),
         nr_spawn => sys_spawn(ctx),
-        nr_exec => sys_exec(ctx),
         nr_wait => sys_wait(ctx),
         nr_getpid => sys_getpid(),
         nr_getppid => sys_getppid(),
@@ -402,14 +400,6 @@ fn sys_ps(ctx: *cpu.Context) u64 {
     }
     userSpace().copyToUser(addr, std.mem.sliceAsBytes(tmp[0..n])) catch return errval(EFAULT);
     return n * @sizeOf(PsInfo);
-}
-
-fn sys_exec(ctx: *cpu.Context) u64 {
-    var buf: [max_path]u8 = undefined;
-    var storage: ArgvStorage = .{};
-    const pa = copyPathArgv(ctx, &buf, &storage) catch |err| return argvErr(err);
-    exec.execPath(cpu.currentProcess(), ctx, pa.path, pa.argv) catch |err| return spawnErr(err);
-    return 0;
 }
 
 fn sys_brk(ctx: *cpu.Context) u64 {

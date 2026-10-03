@@ -69,48 +69,6 @@ pub fn createUserThread(parent: *proc.Process, pc: usize, arg: u64) !*proc.Threa
     return thread;
 }
 
-// Replace the calling process image. Keeps pid, parent, and fds. `new_vmm`
-// is taken on success; the caller must not destroy it.
-pub fn execReplace(
-    process: *proc.Process,
-    ctx: *cpu.Context,
-    new_vmm: vmm.VMM,
-    entry: usize,
-    image_brk: usize,
-    argv: []const []const u8,
-) !void {
-    state.expectInit();
-    const thread = cpu.currentThread();
-    if (thread.parent != process) @panic("exec of other process");
-    if (process.pid == state.kernel_pid) @panic("exec kernel process");
-
-    var space = new_vmm;
-    const user_stack_base = state.user_stack_top - state.stack_size;
-    try setupUserStack(&space, user_stack_base, entry, argv, ctx);
-
-    var node = process.threads.first;
-    while (node) |n| {
-        const t: *proc.Thread = threadFromProc(n);
-        node = n.next;
-        if (t != thread) stop(t);
-    }
-
-    var old = process.vmm;
-    process.vmm = space;
-    process.user_stack_next = state.user_stack_top - state.user_stack_slot;
-    process.mmap_next = state.user_mmap_top;
-    process.maps.len = 0;
-    process.brk_start = image_brk;
-    process.brk = image_brk;
-    thread.user_stack = user_stack_base;
-    thread.ctx = ctx.*;
-    cpu.initFpuState(thread.fpu);
-
-    process.vmm.switchTo();
-    cpu.restoreFpu(thread.fpu);
-    aspace.dropAddressSpace(&old);
-}
-
 fn allocKthread(parent: *proc.Process) !*proc.Thread {
     const allocator = heap.kernel_heap.allocator();
     const thread = try allocator.create(proc.Thread);

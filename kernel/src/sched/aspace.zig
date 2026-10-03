@@ -25,7 +25,7 @@ pub fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
 }
 
 // Rewinds the cursor when `base` is the newest slot. An older slot stays a
-// hole until exec or process exit; the caller frees the frames.
+// hole until process exit; the caller frees the frames.
 pub fn releaseUserStack(parent: *proc.Process, base: usize) void {
     if (parent.user_stack_next == base - pmm.page_size) {
         parent.user_stack_next = base + state.stack_size;

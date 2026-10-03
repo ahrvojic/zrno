@@ -17,7 +17,6 @@ const vmm = @import("../mm/vmm.zig");
 pub const tick_hz = state.tick_hz;
 pub const startUserThread = thread.startUserThread;
 pub const createUserThread = thread.createUserThread;
-pub const execReplace = thread.execReplace;
 pub const setBrk = aspace.setBrk;
 pub const mapAnon = aspace.mapAnon;
 pub const unmapAnon = aspace.unmapAnon;
