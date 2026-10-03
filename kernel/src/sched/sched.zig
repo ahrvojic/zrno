@@ -378,17 +378,42 @@ fn nextReadyThread(start: ?*std.DoublyLinkedList.Node) ?*proc.Thread {
     }
 }
 
-pub const ProcessSnap = struct { pid: u64, ppid: u64, zombie: bool };
+pub const PsSnap = struct {
+    tid: u64,
+    pid: u64,
+    ppid: u64,
+    // Null on a zombie: `thread.stop` already removed its threads.
+    status: ?proc.ThreadStatus,
+};
 
-pub fn snapshotProcesses(out: []ProcessSnap) usize {
+// One row per thread, in process-table order. A zombie is one row with
+// no status. The idle thread is not on the run queue, but it is on the
+// kernel process, so it is included.
+pub fn snapshotPs(out: []PsSnap) usize {
     state.expectInit();
     var n: usize = 0;
     var node = state.processes.first;
     while (node) |nd| {
-        if (n == out.len) break;
         const p = processFromNode(nd);
-        out[n] = .{ .pid = p.pid, .ppid = p.parent, .zombie = p.zombie };
-        n += 1;
+        if (p.zombie) {
+            if (n == out.len) break;
+            out[n] = .{ .tid = 0, .pid = p.pid, .ppid = p.parent, .status = null };
+            n += 1;
+        } else {
+            var tnode = p.threads.first;
+            while (tnode) |tn| {
+                if (n == out.len) return n;
+                const t = threadFromProc(tn);
+                out[n] = .{
+                    .tid = t.tid,
+                    .pid = p.pid,
+                    .ppid = p.parent,
+                    .status = t.status,
+                };
+                n += 1;
+                tnode = tn.next;
+            }
+        }
         node = nd.next;
     }
     return n;

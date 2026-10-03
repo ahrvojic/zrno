@@ -59,14 +59,21 @@ comptime {
     if (@sizeOf(Dirent) != 128) @compileError("Dirent must be 128 bytes");
 }
 
-pub const ps_zombie: u64 = 1;
+// Thread state in PsInfo.state. Matches kernel/src/sys/syscall.zig.
+// A zombie row has ps_zombie and tid 0; its threads are already gone.
+pub const ps_ready: u64 = 0;
+pub const ps_running: u64 = 1;
+pub const ps_sleeping: u64 = 2;
+pub const ps_waiting: u64 = 3;
+pub const ps_zombie: u64 = 4;
 pub const PsInfo = extern struct {
+    tid: u64,
     pid: u64,
     ppid: u64,
-    flags: u64,
+    state: u64,
 };
 comptime {
-    if (@sizeOf(PsInfo) != 24) @compileError("PsInfo must be 24 bytes");
+    if (@sizeOf(PsInfo) != 32) @compileError("PsInfo must be 32 bytes");
 }
 
 pub const max_argv: usize = 32;

@@ -25,7 +25,7 @@ pub const nr_exec: u64 = 0x02; // rdi/rsi=path, rdx/r10=argv ptr/n
 pub const nr_wait: u64 = 0x03; // rdi=pid (0 = any); rsi=status or 0; returns pid
 pub const nr_getpid: u64 = 0x04;
 pub const nr_getppid: u64 = 0x05;
-pub const nr_ps: u64 = 0x06; // rdi=buf, rsi=len; returns bytes of PsInfo
+pub const nr_ps: u64 = 0x06; // rdi=buf, rsi=len; returns bytes of PsInfo (one per thread)
 // 0x10 thread
 pub const nr_thread: u64 = 0x10; // rdi=entry, rsi=arg; new thread in this process, returns tid
 pub const nr_thread_exit: u64 = 0x11; // rdi=code; last thread exits the process
@@ -76,14 +76,21 @@ comptime {
     std.debug.assert(vfs.max_name <= dirent_name_max);
 }
 
-pub const ps_zombie: u64 = 1;
+// Thread state in PsInfo.state. A zombie process has no threads left, so
+// it is one row with ps_zombie and tid 0. Same values in user/src/lib/sys.zig.
+pub const ps_ready: u64 = 0;
+pub const ps_running: u64 = 1;
+pub const ps_sleeping: u64 = 2;
+pub const ps_waiting: u64 = 3;
+pub const ps_zombie: u64 = 4;
 pub const PsInfo = extern struct {
+    tid: u64,
     pid: u64,
     ppid: u64,
-    flags: u64,
+    state: u64,
 };
 comptime {
-    std.debug.assert(@sizeOf(PsInfo) == 24);
+    std.debug.assert(@sizeOf(PsInfo) == 32);
 }
 
 const max_io: usize = pmm.page_size;
@@ -365,6 +372,16 @@ fn sys_getppid() u64 {
     return cpu.currentProcess().parent;
 }
 
+fn psState(snap: sched.PsSnap) u64 {
+    const status = snap.status orelse return ps_zombie;
+    return switch (status) {
+        .ready => ps_ready,
+        .running => ps_running,
+        .sleeping => ps_sleeping,
+        .waiting => ps_waiting,
+    };
+}
+
 fn sys_ps(ctx: *cpu.Context) u64 {
     const addr: usize = @intCast(ctx.rdi);
     const len: usize = @intCast(ctx.rsi);
@@ -372,14 +389,15 @@ fn sys_ps(ctx: *cpu.Context) u64 {
     if (len < @sizeOf(PsInfo)) return errval(EINVAL);
     if (checkIo(len)) |r| return r;
 
-    var snap: [max_ps]sched.ProcessSnap = undefined;
-    const n = sched.snapshotProcesses(snap[0..@min(snap.len, len / @sizeOf(PsInfo))]);
+    var snap: [max_ps]sched.PsSnap = undefined;
+    const n = sched.snapshotPs(snap[0..@min(snap.len, len / @sizeOf(PsInfo))]);
     var tmp: [max_ps]PsInfo = undefined;
     for (snap[0..n], 0..) |s, i| {
         tmp[i] = .{
+            .tid = s.tid,
             .pid = s.pid,
             .ppid = s.ppid,
-            .flags = if (s.zombie) ps_zombie else 0,
+            .state = psState(s),
         };
     }
     userSpace().copyToUser(addr, std.mem.sliceAsBytes(tmp[0..n])) catch return errval(EFAULT);
