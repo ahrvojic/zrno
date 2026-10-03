@@ -46,23 +46,36 @@ pub fn printUnsafe(comptime fmt: []const u8, args: anytype) void {
     writeUnlocked(writer.buffered());
 }
 
-// IRQ-safe: cook into the line buffer and echo.
+// Cook, then stop. The tty lock must be released first: pipe close is the
+// same rank, and sched is higher.
 pub fn enqueue(ch: u8) void {
-    lock.lock();
-    defer lock.unlock();
-    feedUnlocked(ch);
+    if (feed(ch)) interruptChild();
 }
 
 // Drain the UART into the cooked line. Call from the timer IRQ before
 // taking the sched lock (wakeup takes sched).
 pub fn pollSerial() void {
+    var stop = false;
+    {
+        lock.lock();
+        defer lock.unlock();
+        for (0..16) |_| {
+            const raw = serial.readByte() orelse break;
+            const ch = mapSerialByte(raw) orelse continue;
+            if (feedUnlocked(ch)) stop = true;
+        }
+    }
+    if (stop) interruptChild();
+}
+
+fn feed(ch: u8) bool {
     lock.lock();
     defer lock.unlock();
-    for (0..16) |_| {
-        const raw = serial.readByte() orelse break;
-        const ch = mapSerialByte(raw) orelse continue;
-        feedUnlocked(ch);
-    }
+    return feedUnlocked(ch);
+}
+
+fn interruptChild() void {
+    if (sched.stopForeground()) writeBytes("^C\n");
 }
 
 fn waitData() void {
@@ -84,9 +97,12 @@ fn mapSerialByte(b: u8) ?u8 {
     };
 }
 
-fn feedUnlocked(ch: u8) void {
+// Ctrl-C is not cooked. `interruptChild` prints `^C` after the stop.
+fn feedUnlocked(ch: u8) bool {
+    if (ch == 0x03) return true;
     if (input.feed(ch)) |e| writeUnlocked(&.{e});
     if (ch == '\n' and !input.empty()) sched.wakeup(&input.in.buf);
+    return false;
 }
 
 fn writeUnlocked(string: []const u8) void {

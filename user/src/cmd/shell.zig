@@ -49,6 +49,7 @@ fn help() void {
     lib.print("a | b         pipe a stdout to b stdin\n");
     lib.print("cmd < file    stdin from file\n");
     lib.print("cmd > file    stdout to file\n");
+    lib.print("Ctrl-C        stop the running command\n");
 }
 
 fn optU64(arg: ?[]const u8, default: u64, usage: []const u8) ?u64 {

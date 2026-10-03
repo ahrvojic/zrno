@@ -30,7 +30,7 @@ To build and run (`make run`):
 - [QEMU](https://www.qemu.org) (`qemu-system-x86_64`)
 - `curl` and `tar` (`curl` fetches OVMF; `tar` packs the initramfs)
 
-`make run` serves `esp/` to OVMF as a FAT disk and attaches COM1 to the terminal (`-serial stdio`). Kernel logs and panics go there (115200 8N1). After boot, `/shell` accepts `help`, `reboot`, and `poweroff` (S5; QEMU exits).
+`make run` serves `esp/` to OVMF as a FAT disk and attaches COM1 to the terminal (`-serial stdio`). Kernel logs and panics go there (115200 8N1). After boot, `/shell` accepts `help`, `reboot`, and `poweroff` (S5; QEMU exits). Ctrl-C stops the command the shell is waiting on.
 
 ## References
 

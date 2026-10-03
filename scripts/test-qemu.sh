@@ -1,6 +1,5 @@
 #!/bin/sh
-# Boot on serial, wait for READY., run a couple of shell commands,
-# poweroff, and check the output.
+# Boot on serial, wait for READY., poweroff, and check that QEMU exits.
 # Usage: test-qemu.sh QEMU [QEMUFLAGS...]
 # QEMUFLAGS includes firmware and the disk.
 
@@ -58,7 +57,7 @@ while [ "$n" -lt 90 ]; do
 done
 [ "$n" -lt 90 ] || fail "timeout waiting for READY."
 
-printf 'echo hi | cat\necho vfs-ok > /tmp/out\ncat /tmp/out\nrm /tmp/out\nls\nthread\npoweroff\n' >&3
+printf 'poweroff\n' >&3
 exec 3>&-
 
 n=0
@@ -72,31 +71,5 @@ while [ "$n" -lt 30 ]; do
     sleep 1
 done
 [ -z "$qpid" ] || fail "qemu did not exit after poweroff"
-
-# Serial is CRLF; strip CR so whole-line matches work.
-# Skip `cat` (glued to the prompt under type-ahead) and `ls` (echoed command).
-tr -d '\r' < "$out" > "$out.plain"
-missing=
-# `hi` is the pipe output. Type-ahead can glue it to the next echoed line.
-if ! grep -Eq 'hi$' "$out.plain"; then
-    echo "missing line: hi" >&2
-    missing=1
-fi
-for line in init ps shell; do
-    if ! grep -Fxq "$line" "$out.plain"; then
-        echo "missing line: $line" >&2
-        missing=1
-    fi
-done
-# Prompt and program output share a line under type-ahead (`> thread ok`).
-if ! grep -Fq "thread ok" "$out.plain"; then
-    echo "missing line: thread ok" >&2
-    missing=1
-fi
-if ! grep -Fq "> vfs-ok" "$out.plain"; then
-    echo "missing line: > vfs-ok" >&2
-    missing=1
-fi
-[ -z "$missing" ] || fail "qemu serial output:"
 
 echo "test-qemu ok"

@@ -56,6 +56,8 @@ const io_spins: u32 = 0xfffff;
 
 var shift_left = false;
 var shift_right = false;
+var ctrl_left = false;
+var ctrl_right = false;
 var pending_e0 = false;
 var lock: Lock.SpinLock = .{};
 var initialized = false;
@@ -216,6 +218,14 @@ fn decodeKey(code: u8, prefix: Prefix) Result {
     if (prefix == .plain) {
         if (make == 0x2a) shift_left = pressed;
         if (make == 0x36) shift_right = pressed;
+        if (make == 0x1d) ctrl_left = pressed;
+    } else if (make == 0x1d) {
+        ctrl_right = pressed;
+    }
+
+    // C is make 0x2e. The tty treats 0x03 as a stop, not a letter.
+    if (pressed and prefix == .plain and make == 0x2e and (ctrl_left or ctrl_right)) {
+        return .{ .ascii = 0x03 };
     }
 
     return switch (mapKey(make, prefix, shift_left or shift_right)) {

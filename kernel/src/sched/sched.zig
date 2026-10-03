@@ -30,6 +30,12 @@ var boot_stack = true;
 // Local APIC timer ticks. 1 kHz so 1 tick = 1 ms (`tick_hz`).
 var ticks: u64 = 0;
 
+// Shell prints this as `exit: 130`.
+const ctrl_c_status: u8 = 130;
+
+// Child the outer specific-pid wait is parked on. `wait(0)` does not arm it.
+var foreground: ?*proc.Process = null;
+
 pub fn ticksSinceBoot() u64 {
     return ticks;
 }
@@ -110,11 +116,39 @@ pub fn waitProcess(pid: u64) error{ NoChild, Invalid }!WaitResult {
     state.lock.lock();
     defer state.lock.unlock();
 
+    // Nested specific-pid waits leave the outer child armed.
+    var armed = false;
     while (true) {
-        const target = pickWaitTarget(pid, waiter.pid) orelse return error.NoChild;
-        if (target.zombie) return reapZombie(target);
+        const target = pickWaitTarget(pid, waiter.pid) orelse {
+            if (armed) foreground = null;
+            return error.NoChild;
+        };
+        if (target.zombie) {
+            if (armed) foreground = null;
+            return reapZombie(target);
+        }
+        if (pid != 0 and foreground == null) {
+            foreground = target;
+            armed = true;
+        }
         waitLocked(if (pid == 0) waiter else target);
     }
+}
+
+/// Exit the foreground child. Caller holds neither lock: pipe close is the
+/// same rank as the tty lock, and it runs before sched is taken. A second
+/// Ctrl-C sees a zombie and returns false.
+pub fn stopForeground() bool {
+    state.expectInit();
+    const victim: *proc.Process = blk: {
+        state.lock.lock();
+        defer state.lock.unlock();
+        const p = foreground orelse return false;
+        if (p.zombie) return false;
+        break :blk p;
+    };
+    exitProcess(victim, ctrl_c_status);
+    return true;
 }
 
 fn pickWaitTarget(pid: u64, parent_pid: u64) ?*proc.Process {
