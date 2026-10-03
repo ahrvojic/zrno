@@ -38,7 +38,7 @@ pub fn build(b: *std.Build) void {
         // Fixed link address. The bootloader does not apply relocations.
         .pic = false,
         .red_zone = false,
-        // RBP walks in panicImpl. ReleaseSafe would otherwise omit them.
+        // RBP walks in panicImpl. .safe would otherwise omit them.
         .omit_frame_pointer = false,
         .imports = &.{
             .{ .name = "bootinfo", .module = bootinfo },

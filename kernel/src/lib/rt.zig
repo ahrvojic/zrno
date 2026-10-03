@@ -7,7 +7,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 
 comptime {
-    if (builtin.os.tag == .freestanding) {
+    if (builtin.target.os.tag == .freestanding) {
         @export(&memcpy, .{ .name = "memcpy" });
         @export(&memset, .{ .name = "memset" });
         @export(&memmove, .{ .name = "memmove" });

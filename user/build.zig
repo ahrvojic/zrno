@@ -13,9 +13,9 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    // Default ReleaseSmall: Debug/ReleaseSafe pull Zig's panic formatter
+    // Default .small: .debug and .safe pull Zig's panic formatter
     // (ubsan_rt + compiler-rt) and userspace does not bundle compiler-rt.
-    const optimize = b.option(std.builtin.Optimize, "optimize", "Prioritize performance, safety, or binary size") orelse .small;
+    const optimize = b.option(std.lang.Optimize, "optimize", "Prioritize performance, safety, or binary size") orelse .small;
 
     const lib = userMod(b, b.path("src/lib/lib.zig"), target, optimize, &.{});
 
@@ -64,7 +64,7 @@ fn userMod(
     b: *std.Build,
     root: std.Build.LazyPath,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.Optimize,
+    optimize: std.lang.Optimize,
     imports: []const std.Build.Module.Import,
 ) *std.Build.Module {
     return b.createModule(.{

@@ -191,7 +191,7 @@ pub const Tree = struct {
         var it = ustar.walk(archive);
         while (try it.next()) |file| {
             if (file.name.len == 0) continue;
-            if (std.mem.indexOfScalar(u8, file.name, '/') != null) continue;
+            if (std.mem.findScalar(u8, file.name, '/') != null) continue;
             const node = try self.addStatic(file.name, .{ .borrowed = file.data });
             addChild(base, node);
         }

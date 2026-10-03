@@ -494,7 +494,7 @@ const hhdm_fb_flags = Flags{
 };
 const mmio_flags = Flags{ .present = true, .writable = true, .cache_disable = true, .noexec = true };
 
-// alignForward adds page_size-1 and panics on overflow in ReleaseSafe.
+// alignForward adds page_size-1 and panics on overflow in .safe.
 fn pageAlignForward(addr: usize) error{Overflow}!usize {
     const add = pmm.page_size - 1;
     const padded = std.math.add(usize, addr, add) catch return error.Overflow;

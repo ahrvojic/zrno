@@ -62,7 +62,8 @@ pub fn scroll() void {
     const fb = frame();
     const new_top = fb.pitch * font.builtin.height;
     const pixels = fb.address[0 .. fb.pitch * fb.height];
-    std.mem.copyForwards(u8, pixels, pixels[new_top..]);
+    const tail = pixels[new_top..];
+    @memmove(pixels[0..tail.len], tail);
     for (0..fb.max_col) |col| {
         plotChar(' ', fb.max_row - 1, col);
     }
