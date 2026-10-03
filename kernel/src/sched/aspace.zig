@@ -13,12 +13,10 @@ const max_mmap: usize = 32 * 1024 * 1024;
 const heap_flags = vmm.Flags{ .present = true, .writable = true, .user = true, .noexec = true };
 
 // Unique PML4 of a process that died while CR3 still pointed at it.
-// Freed on the next `switchLocked` that is no longer using that root.
+// Freed on the next `schedule` that is no longer using that root.
 var doomed_pt_phys: ?usize = null;
 
 pub fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
-    state.lock.lock();
-    defer state.lock.unlock();
     if (parent.user_stack_next < state.user_stack_slot) return error.OutOfMemory;
     const slot_lo = parent.user_stack_next - state.user_stack_slot;
     if (slot_lo < parent.brk or slot_lo < state.user_mmap_top) return error.OutOfMemory;
@@ -26,16 +24,9 @@ pub fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
     return slot_lo + pmm.page_size;
 }
 
-pub fn giveUserStack(parent: *proc.Process, base: usize) void {
-    state.lock.lock();
-    defer state.lock.unlock();
-    releaseUserStackLocked(parent, base);
-}
-
-// Caller holds `state.lock`. Rewinds the cursor when `base` is the newest
-// slot. An older slot stays a hole until exec or process exit; the caller
-// frees the frames.
-pub fn releaseUserStackLocked(parent: *proc.Process, base: usize) void {
+// Rewinds the cursor when `base` is the newest slot. An older slot stays a
+// hole until exec or process exit; the caller frees the frames.
+pub fn releaseUserStack(parent: *proc.Process, base: usize) void {
     if (parent.user_stack_next == base - pmm.page_size) {
         parent.user_stack_next = base + state.stack_size;
     }
@@ -45,61 +36,34 @@ pub fn unmapUserStack(space: *vmm.VMM, base: usize) void {
     unmapPages(space, base, state.stack_size);
 }
 
-const BrkChange = struct {
-    old: usize,
-    addr: usize,
-    page_addr: usize,
-    page_size: usize,
-    grow: bool,
-};
-
 // Linux-style `brk`: rdi=0 returns the current break; otherwise set it.
 // The stored break is byte-granular; mapping is page-aligned.
 pub fn setBrk(addr: usize) error{ Invalid, OutOfMemory }!usize {
     state.expectInit();
     const process = cpu.currentProcess();
+    if (addr == 0) return process.brk;
 
-    state.lock.lock();
-    if (addr == 0) {
-        const cur = process.brk;
-        state.lock.unlock();
-        return cur;
+    const old = process.brk;
+    if (process.brk_start == 0 or addr < process.brk_start) return error.Invalid;
+    if (addr > process.mmap_next or addr > process.user_stack_next or
+        addr - process.brk_start > max_heap)
+    {
+        return error.OutOfMemory;
     }
-    const change: ?BrkChange = blk: {
-        defer state.lock.unlock();
-        const old = process.brk;
-        if (process.brk_start == 0 or addr < process.brk_start) return error.Invalid;
-        if (addr > process.mmap_next or addr > process.user_stack_next or
-            addr - process.brk_start > max_heap)
-        {
-            return error.OutOfMemory;
-        }
-        const old_pg = std.mem.alignForward(usize, old, pmm.page_size);
-        const new_pg = std.mem.alignForward(usize, addr, pmm.page_size);
-        process.brk = addr;
-        if (old_pg == new_pg) break :blk null;
-        break :blk .{
-            .old = old,
-            .addr = addr,
-            .page_addr = if (addr > old) old_pg else new_pg,
-            .page_size = if (addr > old) new_pg - old_pg else old_pg - new_pg,
-            .grow = addr > old,
-        };
-    };
+    const old_pg = std.mem.alignForward(usize, old, pmm.page_size);
+    const new_pg = std.mem.alignForward(usize, addr, pmm.page_size);
+    process.brk = addr;
+    if (old_pg == new_pg) return addr;
 
-    const c = change orelse return addr;
-
-    if (c.grow) {
-        mapPages(&process.vmm, c.page_addr, c.page_size, heap_flags) catch {
-            state.lock.lock();
-            if (process.brk == c.addr) process.brk = c.old;
-            state.lock.unlock();
+    if (addr > old) {
+        mapPages(&process.vmm, old_pg, new_pg - old_pg, heap_flags) catch {
+            process.brk = old;
             return error.OutOfMemory;
         };
     } else {
-        unmapPages(&process.vmm, c.page_addr, c.page_size);
+        unmapPages(&process.vmm, new_pg, old_pg - new_pg);
     }
-    return c.addr;
+    return addr;
 }
 
 fn mapPages(space: *vmm.VMM, addr: usize, size: usize, flags: vmm.Flags) error{OutOfMemory}!void {
@@ -134,18 +98,12 @@ pub fn mapAnon(len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
     if (len == 0 or len > std.math.maxInt(usize) - (pmm.page_size - 1)) return error.Invalid;
     const size = std.mem.alignForward(usize, len, pmm.page_size);
 
-    state.lock.lock();
-    const prepared: ?usize = blk: {
-        defer state.lock.unlock();
-        const old = process.mmap_next;
-        if (old < size) break :blk null;
-        const base = old - size;
-        if (base < process.brk or state.user_mmap_top - base > max_mmap) break :blk null;
-        process.maps.append(.{ .base = base, .size = size }) catch break :blk null;
-        process.mmap_next = base;
-        break :blk base;
-    };
-    const base = prepared orelse return error.OutOfMemory;
+    const old = process.mmap_next;
+    if (old < size) return error.OutOfMemory;
+    const base = old - size;
+    if (base < process.brk or state.user_mmap_top - base > max_mmap) return error.OutOfMemory;
+    process.maps.append(.{ .base = base, .size = size }) catch return error.OutOfMemory;
+    process.mmap_next = base;
 
     const flags = vmm.Flags{
         .present = true,
@@ -156,8 +114,6 @@ pub fn mapAnon(len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
     // The record is reserved. Drop it if the pages never land. `mapPages`
     // unmaps any prefix it mapped.
     mapPages(&process.vmm, base, size, flags) catch {
-        state.lock.lock();
-        defer state.lock.unlock();
         _ = maplist.remove(&process.maps, &process.mmap_next, base, size);
         return error.OutOfMemory;
     };
@@ -176,10 +132,6 @@ pub fn unmapAnon(addr: usize, len: usize) error{Invalid}!void {
     if (!std.mem.isAligned(addr, pmm.page_size)) return error.Invalid;
     const size = std.mem.alignForward(usize, len, pmm.page_size);
 
-    state.lock.lock();
-    defer state.lock.unlock();
-    // Sched stays held across the unmap so another thread cannot mmap this
-    // range before the frames are freed. vmm is a lower rank.
     if (!maplist.remove(&process.maps, &process.mmap_next, addr, size)) return error.Invalid;
     unmapPages(&process.vmm, addr, size);
 }

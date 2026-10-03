@@ -1,6 +1,3 @@
-const std = @import("std");
-
-const Lock = @import("../lib/lock.zig");
 const sched = @import("../sched/sched.zig");
 const serial = @import("serial.zig");
 const tty_input = @import("tty_input.zig");
@@ -13,74 +10,43 @@ var pending: bool = false;
 // Continuation rows opened by a wrap. Backspace at column 0 climbs back.
 var wraps: usize = 0;
 var cursor_on: bool = false;
-var lock: Lock.SpinLock = .{};
 var input: tty_input.Input = .{};
 var serial_saw_cr = false;
 
 pub fn writeBytes(string: []const u8) void {
-    lock.lock();
-    defer lock.unlock();
-    writeUnlocked(string);
+    for (string) |ch| {
+        putSerial(ch);
+        putVideo(ch);
+    }
 }
 
 /// Block until a cooked line is queued, then copy up to the first newline.
 pub fn peek(out: []u8) usize {
     if (out.len == 0) return 0;
-    lock.lock();
-    defer lock.unlock();
-    waitData();
+    while (input.empty()) sched.wait(&input.in.buf);
     return input.copyOut(out);
 }
 
 pub fn consume(n: usize) void {
-    lock.lock();
-    defer lock.unlock();
     input.drop(n);
 }
 
-pub fn printUnsafe(comptime fmt: []const u8, args: anytype) void {
-    var print_buffer: [1024]u8 = undefined;
-    var writer: std.Io.Writer = .fixed(&print_buffer);
-
-    writer.print(fmt, args) catch {};
-    writeUnlocked(writer.buffered());
-}
-
-// Cook, then stop. The tty lock must be released first: pipe close is the
-// same rank, and sched is higher.
+// Ctrl-C stops the foreground child and is not cooked.
 pub fn enqueue(ch: u8) void {
-    if (feed(ch)) interruptChild();
-}
-
-// Drain the UART into the cooked line. Call from the timer IRQ before
-// taking the sched lock (wakeup takes sched).
-pub fn pollSerial() void {
-    var stop = false;
-    {
-        lock.lock();
-        defer lock.unlock();
-        for (0..16) |_| {
-            const raw = serial.readByte() orelse break;
-            const ch = mapSerialByte(raw) orelse continue;
-            if (feedUnlocked(ch)) stop = true;
-        }
+    if (ch == 0x03) {
+        if (sched.stopForeground()) writeBytes("^C\n");
+        return;
     }
-    if (stop) interruptChild();
+    if (input.feed(ch)) |e| writeBytes(&.{e});
+    if (ch == '\n' and !input.empty()) sched.wakeup(&input.in.buf);
 }
 
-fn feed(ch: u8) bool {
-    lock.lock();
-    defer lock.unlock();
-    return feedUnlocked(ch);
-}
-
-fn interruptChild() void {
-    if (sched.stopForeground()) writeBytes("^C\n");
-}
-
-fn waitData() void {
-    while (input.empty()) {
-        sched.wait(&input.in.buf, &lock);
+/// Drain the UART into the cooked line. Called from the timer IRQ.
+pub fn pollSerial() void {
+    for (0..16) |_| {
+        const raw = serial.readByte() orelse break;
+        const ch = mapSerialByte(raw) orelse continue;
+        enqueue(ch);
     }
 }
 
@@ -95,21 +61,6 @@ fn mapSerialByte(b: u8) ?u8 {
         0x7f => '\x08',
         else => b,
     };
-}
-
-// Ctrl-C is not cooked. `interruptChild` prints `^C` after the stop.
-fn feedUnlocked(ch: u8) bool {
-    if (ch == 0x03) return true;
-    if (input.feed(ch)) |e| writeUnlocked(&.{e});
-    if (ch == '\n' and !input.empty()) sched.wakeup(&input.in.buf);
-    return false;
-}
-
-fn writeUnlocked(string: []const u8) void {
-    for (string) |ch| {
-        putSerial(ch);
-        putVideo(ch);
-    }
 }
 
 fn putSerial(ch: u8) void {

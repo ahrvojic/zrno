@@ -44,7 +44,7 @@ pub fn startUserThread(parent: *proc.Process, pc: usize, argv: []const []const u
     errdefer abandonKthread(thread);
 
     const user_stack_base = try aspace.takeUserStack(parent);
-    errdefer aspace.giveUserStack(parent, user_stack_base);
+    errdefer aspace.releaseUserStack(parent, user_stack_base);
     try setupUserStack(&parent.vmm, user_stack_base, pc, argv, &thread.ctx);
     thread.user_stack = user_stack_base;
 
@@ -61,7 +61,7 @@ pub fn createUserThread(parent: *proc.Process, pc: usize, arg: u64) !*proc.Threa
     errdefer abandonKthread(thread);
 
     const user_stack_base = try aspace.takeUserStack(parent);
-    errdefer aspace.giveUserStack(parent, user_stack_base);
+    errdefer aspace.releaseUserStack(parent, user_stack_base);
     try setupThreadStack(&parent.vmm, user_stack_base, pc, arg, &thread.ctx);
     thread.user_stack = user_stack_base;
 
@@ -88,7 +88,6 @@ pub fn execReplace(
     const user_stack_base = state.user_stack_top - state.stack_size;
     try setupUserStack(&space, user_stack_base, entry, argv, ctx);
 
-    state.lock.lock();
     var node = process.threads.first;
     while (node) |n| {
         const t: *proc.Thread = threadFromProc(n);
@@ -106,7 +105,6 @@ pub fn execReplace(
     thread.user_stack = user_stack_base;
     thread.ctx = ctx.*;
     cpu.initFpuState(thread.fpu);
-    state.lock.unlock();
 
     process.vmm.switchTo();
     cpu.restoreFpu(thread.fpu);
@@ -143,8 +141,6 @@ fn abandonKthread(thread: *proc.Thread) void {
 }
 
 fn publishThread(parent: *proc.Process, thread: *proc.Thread, enqueue: bool) void {
-    state.lock.lock();
-    defer state.lock.unlock();
     thread.tid = state.tid_next;
     state.tid_next += 1;
     parent.threads.append(&thread.proc_node);
@@ -188,7 +184,6 @@ fn setupThreadStack(
     });
 }
 
-// Caller holds `state.lock`.
 pub fn stop(thread: *proc.Thread) void {
     thread.wait_chan = null;
     state.dequeueThread(thread);
@@ -208,7 +203,7 @@ pub fn stop(thread: *proc.Thread) void {
     if (is_current) {
         kstack.deferFree(stack_phys, stack_base);
     } else {
-        kstack.freeLocked(stack_phys, stack_base);
+        kstack.free(stack_phys, stack_base);
     }
 }
 

@@ -1,7 +1,6 @@
 const std = @import("std");
 
 const core = @import("heap_core.zig");
-const Lock = @import("../lib/lock.zig");
 const pmm = @import("pmm.zig");
 const virt = @import("../lib/virt.zig");
 
@@ -20,7 +19,6 @@ pub var kernel_heap: HeapAllocator = .{};
 
 pub const HeapAllocator = struct {
     inner: core.Heap(KernelPages) = undefined,
-    lock: Lock.SpinLock = .{},
     initialized: bool = false,
 
     pub fn init(self: *HeapAllocator) void {
@@ -47,8 +45,6 @@ pub const HeapAllocator = struct {
 
         const self: *HeapAllocator = @ptrCast(@alignCast(ctx));
         self.expectInit();
-        self.lock.lock();
-        defer self.lock.unlock();
         return self.inner.alloc(len, alignment);
     }
 
@@ -57,8 +53,6 @@ pub const HeapAllocator = struct {
 
         const self: *HeapAllocator = @ptrCast(@alignCast(ctx));
         self.expectInit();
-        self.lock.lock();
-        defer self.lock.unlock();
         self.inner.free(buf, alignment);
     }
 

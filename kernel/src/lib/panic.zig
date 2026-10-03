@@ -12,12 +12,13 @@ pub fn panicImpl(message: []const u8, first_trace_addr: ?usize) noreturn {
     cpu.interruptsOff();
     if (panicking.swap(true, .acq_rel)) cpu.halt();
 
-    // Skip spinlocks: we may already hold one, and IRQs are off.
     var buf: [1024]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&buf);
     debug.printTo(&writer, "[panic] (err) KERNEL PANIC: {s}\r\n", .{message});
-    debug.printUnsafe(writer.buffered());
-    tty.printUnsafe("KERNEL PANIC: {s}\n", .{message});
+    debug.print(writer.buffered());
+    writer = .fixed(&buf);
+    debug.printTo(&writer, "KERNEL PANIC: {s}\n", .{message});
+    tty.writeBytes(writer.buffered());
 
     dumpErrorReturnTrace();
     dumpStackTrace(first_trace_addr);
@@ -102,10 +103,10 @@ fn printTraceLine(comptime fmt: []const u8, args: anytype) void {
     var debug_buf: [192]u8 = undefined;
     var debug_writer: std.Io.Writer = .fixed(&debug_buf);
     debug.printTo(&debug_writer, "[panic] (err) " ++ fmt ++ "\r\n", args);
-    debug.printUnsafe(debug_writer.buffered());
+    debug.print(debug_writer.buffered());
 
     var tty_buf: [192]u8 = undefined;
     var tty_writer: std.Io.Writer = .fixed(&tty_buf);
     debug.printTo(&tty_writer, fmt ++ "\n", args);
-    tty.printUnsafe("{s}", .{tty_writer.buffered()});
+    tty.writeBytes(tty_writer.buffered());
 }

@@ -1,7 +1,6 @@
 const std = @import("std");
 
 const elf = @import("../sys/elf.zig");
-const Lock = @import("../lib/lock.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
 const vmm = @import("../mm/vmm.zig");
@@ -33,6 +32,11 @@ comptime {
 
 // Processes including zombies until `waitProcess`; not a runqueue.
 // `schedule` walks `threads`.
+//
+// No lock. Syscalls run with the interrupt flag off (`FMASK`), and every
+// interrupt gate clears it, so this data is touched by one context at a
+// time until `yield`, `sleep`, `wait`, or a return to user. The idle thread
+// is the kernel context that runs with interrupts on, and it only halts.
 pub var processes: std.DoublyLinkedList = .{};
 pub var threads: std.DoublyLinkedList = .{};
 
@@ -41,7 +45,6 @@ pub var idle_thread: *proc.Thread = undefined;
 pub var pid_next: u64 = 0;
 pub var tid_next: u64 = 0;
 
-pub var lock: Lock.SpinLock = .{};
 pub var initialized = false;
 
 pub fn expectInit() void {

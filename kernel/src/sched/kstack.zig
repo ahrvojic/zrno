@@ -20,7 +20,7 @@ comptime {
 }
 
 // Kernel stack of a thread that died while running on it. Unmapped and
-// freed on the next `switchLocked` that is no longer executing on that stack.
+// freed on the next `schedule` that is no longer executing on that stack.
 const DoomedStack = struct { phys: usize, base: usize };
 var doomed_stack: ?DoomedStack = null;
 var kstack_next: usize = kstack_region_base;
@@ -34,10 +34,8 @@ pub fn alloc() !KernelStack {
     const phys = pmm.alloc(state.stack_pages) orelse return error.OutOfMemory;
     errdefer pmm.free(phys, state.stack_pages);
 
-    state.lock.lock();
-    defer state.lock.unlock();
-    const base = try takeSlotLocked();
-    errdefer releaseSlotLocked(base);
+    const base = try takeSlot();
+    errdefer releaseSlot(base);
     try vmm.kernel_vmm.map(base, phys, state.stack_size, .{
         .present = true,
         .writable = true,
@@ -48,19 +46,12 @@ pub fn alloc() !KernelStack {
 
 pub fn free(phys: usize, base: usize) void {
     unmap(phys, base);
-    state.lock.lock();
-    defer state.lock.unlock();
-    releaseSlotLocked(base);
-}
-
-pub fn freeLocked(phys: usize, base: usize) void {
-    unmap(phys, base);
-    releaseSlotLocked(base);
+    releaseSlot(base);
 }
 
 pub fn deferFree(stack_phys: usize, stack_base: usize) void {
     if (doomed_stack) |old| {
-        freeLocked(old.phys, old.base);
+        free(old.phys, old.base);
     }
     doomed_stack = .{ .phys = stack_phys, .base = stack_base };
 }
@@ -69,7 +60,7 @@ pub fn reapDoomed() void {
     const doomed = doomed_stack orelse return;
     if (rspInStack(doomed.base)) return;
     doomed_stack = null;
-    freeLocked(doomed.phys, doomed.base);
+    free(doomed.phys, doomed.base);
 }
 
 /// True when `addr` is the unmapped page under a kernel stack.
@@ -84,7 +75,7 @@ fn unmap(phys: usize, base: usize) void {
     pmm.free(phys, state.stack_pages);
 }
 
-fn takeSlotLocked() error{OutOfMemory}!usize {
+fn takeSlot() error{OutOfMemory}!usize {
     if (kstack_free.pop()) |base| return base;
     if (kstack_next >= kstack_region_end or kstack_region_end - kstack_next < kstack_slot) {
         return error.OutOfMemory;
@@ -94,7 +85,7 @@ fn takeSlotLocked() error{OutOfMemory}!usize {
     return slot + pmm.page_size;
 }
 
-fn releaseSlotLocked(base: usize) void {
+fn releaseSlot(base: usize) void {
     const slot = base - pmm.page_size;
     if (slot + kstack_slot == kstack_next) {
         kstack_next = slot;

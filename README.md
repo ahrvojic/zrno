@@ -6,7 +6,7 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 
 ## Kernel features
 
-- Single-CPU for now
+- Single CPU. User threads are preempted; a syscall runs to completion
 - GDT, IDT, exceptions, and local APIC
 - Bitmap physical allocator, virtual memory, and a power-of-two slab heap
 - ACPI FADT, MADT, HPET, and DSDT

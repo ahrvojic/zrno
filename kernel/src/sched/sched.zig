@@ -8,7 +8,6 @@ const file = @import("../fs/file.zig");
 const heap = @import("../mm/heap.zig");
 const ivt = @import("../sys/ivt.zig");
 const kstack = @import("kstack.zig");
-const Lock = @import("../lib/lock.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
 const state = @import("state.zig");
@@ -25,7 +24,7 @@ pub const unmapAnon = aspace.unmapAnon;
 pub const isKernelStackGuard = kstack.isGuard;
 pub const isUserStackGuard = aspace.isUserStackGuard;
 
-// First `switchLocked` still runs on the boot stack (`thread == null`).
+// First `schedule` still runs on the boot stack (`thread == null`).
 var boot_stack = true;
 
 // Local APIC timer ticks. 1 kHz so 1 tick = 1 ms (`tick_hz`).
@@ -75,8 +74,6 @@ pub fn startProcess(enqueue: bool) !*proc.Process {
         process.parent = t.parent.pid;
     }
 
-    state.lock.lock();
-    defer state.lock.unlock();
     process.pid = state.pid_next;
     state.pid_next += 1;
     if (enqueue) state.enqueueProcess(process);
@@ -95,7 +92,7 @@ fn threadFromProc(n: *std.DoublyLinkedList.Node) *proc.Thread {
     return @fieldParentPtr("proc_node", n);
 }
 
-fn findProcessLocked(pid: u64) ?*proc.Process {
+fn findProcess(pid: u64) ?*proc.Process {
     var node = state.processes.first;
     while (node) |n| {
         const process = processFromNode(n);
@@ -114,9 +111,6 @@ pub fn waitProcess(pid: u64) error{ NoChild, Invalid }!WaitResult {
     const waiter = cpu.currentProcess();
     if (pid == waiter.pid) return error.Invalid;
 
-    state.lock.lock();
-    defer state.lock.unlock();
-
     // Nested specific-pid waits leave the outer child armed.
     var armed = false;
     while (true) {
@@ -132,29 +126,22 @@ pub fn waitProcess(pid: u64) error{ NoChild, Invalid }!WaitResult {
             foreground = target;
             armed = true;
         }
-        waitLocked(if (pid == 0) waiter else target);
+        wait(if (pid == 0) waiter else target);
     }
 }
 
-/// Exit the foreground child. Caller holds neither lock: pipe close is the
-/// same rank as the tty lock, and it runs before sched is taken. A second
-/// Ctrl-C sees a zombie and returns false.
+/// Exit the foreground child. A second Ctrl-C sees a zombie and returns false.
 pub fn stopForeground() bool {
     state.expectInit();
-    const victim: *proc.Process = blk: {
-        state.lock.lock();
-        defer state.lock.unlock();
-        const p = foreground orelse return false;
-        if (p.zombie) return false;
-        break :blk p;
-    };
+    const victim = foreground orelse return false;
+    if (victim.zombie) return false;
     exitProcess(victim, ctrl_c_status);
     return true;
 }
 
 fn pickWaitTarget(pid: u64, parent_pid: u64) ?*proc.Process {
     if (pid != 0) {
-        const process = findProcessLocked(pid) orelse return null;
+        const process = findProcess(pid) orelse return null;
         if (process.parent != parent_pid) return null;
         return process;
     }
@@ -170,20 +157,11 @@ fn pickWaitTarget(pid: u64, parent_pid: u64) ?*proc.Process {
     return live;
 }
 
-pub fn schedule(ctx: *cpu.Context) void {
-    state.expectInit();
-    state.lock.lock();
-    defer state.lock.unlock();
-    switchLocked(ctx);
-}
-
 pub fn tick(ctx: *cpu.Context) void {
     state.expectInit();
-    state.lock.lock();
-    defer state.lock.unlock();
     ticks +%= 1;
     wakeSleepers();
-    switchLocked(ctx);
+    schedule(ctx);
 }
 
 // End this thread. The last thread exits the process: same zombie, same
@@ -194,19 +172,16 @@ pub fn exitThread(exit_code: u8) noreturn {
     const process = cpu.currentProcess();
     if (process.pid == state.kernel_pid) @panic("kernel thread exit");
 
-    state.lock.lock();
     const self = cpu.currentThread();
     if (hasSibling(process, self)) {
         const base = self.user_stack;
         if (base == 0) @panic("thread exit without user stack");
-        aspace.releaseUserStackLocked(process, base);
+        aspace.releaseUserStack(process, base);
         aspace.unmapUserStack(&process.vmm, base);
         thread.stop(self);
-        state.lock.unlock();
         yield();
         unreachable;
     }
-    state.lock.unlock();
 
     logger.info("pid {d} exit {d}", .{ process.pid, exit_code });
     exitProcess(process, exit_code);
@@ -225,18 +200,15 @@ fn hasSibling(process: *proc.Process, self: *proc.Thread) bool {
 
 pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
     state.expectInit();
-    // Before the sched lock: last-close may later wakeup pipe waiters, and
-    // wakeup takes sched. Heap (File.release) is a lower rank.
+    // Last close wakes pipe waiters before this process is a zombie.
     file.closeAll(&process.fds);
-    state.lock.lock();
-    defer state.lock.unlock();
 
     if (process.pid == state.init_pid) {
         logger.err("init exited {d}", .{exit_code});
         @panic("init exited");
     }
 
-    dismantleLocked(process, exit_code);
+    dismantle(process, exit_code);
 
     var reparented = false;
     var pnode = state.processes.first;
@@ -249,14 +221,14 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
         logger.info("pid {d} reparent to init", .{child.pid});
     }
 
-    wakeupLocked(process);
-    if (findProcessLocked(process.parent)) |parent| {
-        wakeupLocked(parent);
+    wakeup(process);
+    if (findProcess(process.parent)) |parent| {
+        wakeup(parent);
     }
     // Zombie and live kids now belong to init; wake its wait(0).
     if (reparented) {
-        const reaper = findProcessLocked(state.init_pid) orelse @panic("no init");
-        wakeupLocked(reaper);
+        const reaper = findProcess(state.init_pid) orelse @panic("no init");
+        wakeup(reaper);
     }
 }
 
@@ -275,11 +247,8 @@ pub fn killCurrent(ctx: *cpu.Context, exit_code: u8) void {
 pub fn abortProcess(process: *proc.Process, exit_code: u8) void {
     state.expectInit();
     file.closeAll(&process.fds);
-    state.lock.lock();
-    defer state.lock.unlock();
-
-    dismantleLocked(process, exit_code);
-    reapLocked(process);
+    dismantle(process, exit_code);
+    reap(process);
 }
 
 pub fn yield() void {
@@ -292,50 +261,25 @@ pub fn sleep(ms: u64) void {
     state.expectInit();
     if (ms == 0) return;
     const t = cpu.currentThread();
-
-    state.lock.lock();
     t.status = .sleeping;
     t.wake_tick = ticks +| ms;
-    state.lock.unlock();
     yield();
 }
 
-// Drop `held`, park as `.waiting` on `chan`, reacquire `held` on resume.
-// Recheck the wait condition after return; wakeup is a broadcast.
-pub fn wait(chan: *const anyopaque, held: *Lock.SpinLock) void {
+// Park as `.waiting` on `chan`. Recheck the condition after return; wakeup
+// is a broadcast. The caller's check and this status store both run with
+// interrupts off, so a timer or keypress cannot land between them and lose
+// the wakeup.
+pub fn wait(chan: *const anyopaque) void {
     state.expectInit();
-    if (held == &state.lock) @panic("wait with sched lock");
     const t = cpu.currentThread();
-
-    // Take sched while `held` is already held (see lock.zig). IRQs stay
-    // off across the handoff so wakeup cannot miss this waiter.
-    state.lock.lock();
-    held.unlock();
     t.wait_chan = chan;
     t.status = .waiting;
-    state.lock.unlock();
     yield();
-    held.lock();
 }
 
 pub fn wakeup(chan: *const anyopaque) void {
     state.expectInit();
-    state.lock.lock();
-    defer state.lock.unlock();
-    wakeupLocked(chan);
-}
-
-// Caller holds `state.lock`. Parks, then reacquires `state.lock` on resume.
-fn waitLocked(chan: *const anyopaque) void {
-    const t = cpu.currentThread();
-    t.wait_chan = chan;
-    t.status = .waiting;
-    state.lock.unlock();
-    yield();
-    state.lock.lock();
-}
-
-fn wakeupLocked(chan: *const anyopaque) void {
     var node = state.threads.first;
     while (node) |n| {
         const t = threadFromSched(n);
@@ -347,7 +291,8 @@ fn wakeupLocked(chan: *const anyopaque) void {
     }
 }
 
-fn switchLocked(ctx: *cpu.Context) void {
+pub fn schedule(ctx: *cpu.Context) void {
+    state.expectInit();
     kstack.reapDoomed();
     aspace.reapDoomedPt();
     const this_cpu = cpu.current();
@@ -399,7 +344,7 @@ fn idleThread() callconv(.naked) noreturn {
     );
 }
 
-fn dismantleLocked(process: *proc.Process, exit_code: u8) void {
+fn dismantle(process: *proc.Process, exit_code: u8) void {
     process.exit_code = exit_code;
     process.zombie = true;
     var node = process.threads.first;
@@ -413,11 +358,11 @@ fn dismantleLocked(process: *proc.Process, exit_code: u8) void {
 
 fn reapZombie(process: *proc.Process) WaitResult {
     const result: WaitResult = .{ .pid = process.pid, .code = process.exit_code };
-    reapLocked(process);
+    reap(process);
     return result;
 }
 
-fn reapLocked(process: *proc.Process) void {
+fn reap(process: *proc.Process) void {
     state.dequeueProcess(process);
     heap.kernel_heap.allocator().destroy(process);
 }
@@ -437,8 +382,6 @@ pub const ProcessSnap = struct { pid: u64, ppid: u64, zombie: bool };
 
 pub fn snapshotProcesses(out: []ProcessSnap) usize {
     state.expectInit();
-    state.lock.lock();
-    defer state.lock.unlock();
     var n: usize = 0;
     var node = state.processes.first;
     while (node) |nd| {

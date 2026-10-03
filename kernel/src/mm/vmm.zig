@@ -4,7 +4,6 @@ const std = @import("std");
 
 const boot = @import("../sys/boot.zig");
 const bootinfo = @import("bootinfo");
-const Lock = @import("../lib/lock.zig");
 const mem = @import("../lib/mem.zig");
 const pmm = @import("pmm.zig");
 const virt = @import("../lib/virt.zig");
@@ -272,7 +271,6 @@ const PageTable = extern struct {
 pub const VMM = struct {
     pt_addr_phys: usize = undefined,
     pt: *PageTable = undefined,
-    lock: Lock.SpinLock = .{},
     initialized: bool = false,
 
     pub fn map(self: *VMM, virt_addr: usize, phys_addr: usize, size: usize, flags: Flags) !void {
@@ -281,9 +279,6 @@ pub const VMM = struct {
         std.debug.assert(std.mem.isAligned(phys_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(size, pmm.page_size));
         if (flags.user and rangeIntersectsKernelHalf(virt_addr, size)) @panic("user map in kernel half");
-
-        self.lock.lock();
-        defer self.lock.unlock();
 
         // Callers errdefer-free the physical run; a leftover prefix would dangle.
         var mapped: usize = 0;
@@ -299,9 +294,6 @@ pub const VMM = struct {
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         std.debug.assert(std.mem.isAligned(size, pmm.page_size));
 
-        self.lock.lock();
-        defer self.lock.unlock();
-
         try self.pt.expectMappedRange(virt_addr, size);
         self.pt.unmapRange(virt_addr, size);
     }
@@ -310,16 +302,12 @@ pub const VMM = struct {
         self.expectInit();
         std.debug.assert(size > 0);
         const top = std.math.add(usize, phys_addr, size) catch return error.Overflow;
-        self.lock.lock();
-        defer self.lock.unlock();
         // reserved_mapped (and overlaps) are already in the HHDM as writeback.
         try mapHhdmRange(self.pt, phys_addr, top, mmio_flags, .remap);
     }
 
     pub fn virtToPhys(self: *VMM, virt_addr: usize) !usize {
         self.expectInit();
-        self.lock.lock();
-        defer self.lock.unlock();
         const entry = try self.pt.virtToPTE(virt_addr, false, false);
         const entry_flags = entry.getFlags();
 
@@ -330,7 +318,8 @@ pub const VMM = struct {
         }
     }
 
-    // Copy through the HHDM so a kernel #PF cannot deadlock on the VMM lock.
+    // Copy through the HHDM. A fault on the user virtual address would
+    // re-enter this walk on the same stack.
     pub fn copyFromUser(self: *VMM, dest: []u8, user_addr: usize) error{Fault}!void {
         return self.copyUser(user_addr, dest, false);
     }
@@ -344,15 +333,13 @@ pub const VMM = struct {
         if (!userRange(user_addr, kernel.len)) return error.Fault;
 
         self.expectInit();
-        self.lock.lock();
-        defer self.lock.unlock();
 
         var off: usize = 0;
         while (off < kernel.len) {
             const va = user_addr + off;
             const page_off = va & (pmm.page_size - 1);
             const chunk = @min(kernel.len - off, pmm.page_size - page_off);
-            const phys = try self.userPagePhysLocked(va, to_user);
+            const phys = try self.userPagePhys(va, to_user);
             const k = kernel[off..][0..chunk];
             const u = virt.toHH([*]u8, phys)[page_off..][0..chunk];
             if (to_user) @memcpy(u, k) else @memcpy(k, u);
@@ -360,7 +347,7 @@ pub const VMM = struct {
         }
     }
 
-    fn userPagePhysLocked(self: *VMM, virt_addr: usize, write: bool) error{Fault}!usize {
+    fn userPagePhys(self: *VMM, virt_addr: usize, write: bool) error{Fault}!usize {
         const base = std.mem.alignBackward(usize, virt_addr, pmm.page_size);
         const entry = self.pt.virtToPTE(base, false, false) catch return error.Fault;
         const flags = entry.getFlags();
@@ -386,8 +373,6 @@ pub const VMM = struct {
         const pt_addr_phys = pmm.alloc(1) orelse return error.OutOfMemory;
         const pt = virt.toHH(*PageTable, pt_addr_phys);
 
-        kernel_vmm.lock.lock();
-        defer kernel_vmm.lock.unlock();
         for (kernel_pml4_start..page_table_entries) |i| {
             pt.entries[i] = kernel_vmm.pt.entries[i];
         }
@@ -404,11 +389,9 @@ pub const VMM = struct {
         self.expectInit();
         if (self == &kernel_vmm) @panic("destroy kernel vmm");
         if (self.isCurrent()) @panic("destroy current address space");
-        self.lock.lock();
         const phys = self.pt_addr_phys;
         self.initialized = false;
         destroyPhys(phys);
-        self.lock.unlock();
     }
 
     fn expectInit(self: *const VMM) void {

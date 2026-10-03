@@ -352,7 +352,7 @@ fn printRegisters(ctx: *cpu.Context) void {
         : [result] "=r" (-> u64),
     );
 
-    // Lock-free: we may already hold the debug lock, or be on the DF IST.
+    // On the double-fault IST. Print and then panic; do not allocate.
     var buf: [512]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&buf);
     debug.printTo(&writer, "rax={x:0>16} rbx={x:0>16} rcx={x:0>16} rdx={x:0>16}\r\n", .{ ctx.rax, ctx.rbx, ctx.rcx, ctx.rdx });
@@ -360,5 +360,5 @@ fn printRegisters(ctx: *cpu.Context) void {
     debug.printTo(&writer, " r8={x:0>16}  r9={x:0>16} r10={x:0>16} r11={x:0>16}\r\n", .{ ctx.r8, ctx.r9, ctx.r10, ctx.r11 });
     debug.printTo(&writer, "r12={x:0>16} r13={x:0>16} r14={x:0>16} r15={x:0>16}\r\n", .{ ctx.r12, ctx.r13, ctx.r14, ctx.r15 });
     debug.printTo(&writer, "rip={x:0>16} cr2={x:0>16} cr3={x:0>16} vec={d} err={x:0>16}\r\n", .{ ctx.rip, cr2, cr3, ctx.vector, ctx.error_code });
-    debug.printUnsafe(writer.buffered());
+    debug.print(writer.buffered());
 }

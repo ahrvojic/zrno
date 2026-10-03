@@ -6,7 +6,6 @@ const bootinfo = @import("bootinfo");
 
 const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
 const boot = @import("../sys/boot.zig");
-const Lock = @import("../lib/lock.zig");
 const mem = @import("../lib/mem.zig");
 const virt = @import("../lib/virt.zig");
 
@@ -28,7 +27,6 @@ var highest_page_index: usize = 0;
 var last_used_index: usize = 0;
 
 var bitmap: Bitmap = undefined;
-var lock: Lock.SpinLock = .{};
 var initialized = false;
 var bootloader_reclaimed = false;
 var reclaim_ranges: BoundedArray(ReclaimRange, max_reclaim_ranges) = .{};
@@ -145,13 +143,10 @@ fn pagesToMiB(pages: usize) usize {
 
 /// Mark previously reserved `reclaim` pages free. Call after boot info has
 /// been copied out, `boot.drop()` has run, and the CPU has left the boot
-/// stack (see `sched.switchLocked`).
+/// stack (see `sched.schedule`).
 pub fn reclaimBootloader() void {
     expectInit();
     if (bootloader_reclaimed) @panic("bootloader already reclaimed");
-
-    lock.lock();
-    defer lock.unlock();
 
     var pages: usize = 0;
     var first_idx: ?usize = null;
@@ -203,8 +198,6 @@ fn allocAlignedNoZero(pages: usize, align_pages: usize) ?usize {
     expectInit();
     if (pages == 0) return null;
     if (align_pages == 0 or !std.math.isPowerOfTwo(align_pages)) return null;
-    lock.lock();
-    defer lock.unlock();
     return allocInner(last_used_index, pages, align_pages) orelse allocInner(0, pages, align_pages);
 }
 
@@ -239,9 +232,6 @@ pub fn free(address: usize, pages: usize) void {
     const start = address / page_size;
     const end = std.math.add(usize, start, pages) catch @panic("pmm free out of bounds");
     if (end > highest_page_index) @panic("pmm free out of bounds");
-
-    lock.lock();
-    defer lock.unlock();
 
     for (start..end) |i| {
         if (!bitmap.testBit(i)) @panic("pmm double free");

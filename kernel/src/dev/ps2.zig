@@ -5,7 +5,6 @@ const std = @import("std");
 const apic = @import("apic.zig");
 const cpu = @import("../sys/cpu.zig");
 const ivt = @import("../sys/ivt.zig");
-const Lock = @import("../lib/lock.zig");
 const port = @import("../sys/port.zig");
 const tty = @import("tty.zig");
 
@@ -59,7 +58,6 @@ var shift_right = false;
 var ctrl_left = false;
 var ctrl_right = false;
 var pending_e0 = false;
-var lock: Lock.SpinLock = .{};
 var initialized = false;
 
 pub fn init() !void {
@@ -177,15 +175,7 @@ fn waitOutputFull() !void {
 
 pub fn handleInterrupt() bool {
     const code = port.inb(ps2_data_port);
-
-    const result = blk: {
-        lock.lock();
-        defer lock.unlock();
-        break :blk decode(code);
-    };
-
-    // Drop the PS/2 lock before taking tty (sched → tty → … → ps2).
-    switch (result) {
+    switch (decode(code)) {
         .incomplete => return false,
         .unknown => |c| {
             logger.err("Unknown scan code: {d}", .{c});

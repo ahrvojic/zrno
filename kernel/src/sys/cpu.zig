@@ -145,8 +145,6 @@ pub const CPU = struct {
     lapic_base: usize = 0,
     x2apic: bool = false,
     thread: ?*proc.Thread = null,
-    ncli: u32 = 0,
-    intena: bool = false,
     initialized: bool = false,
     lapic_initialized: bool = false,
 
@@ -554,10 +552,6 @@ pub fn currentProcess() *proc.Process {
     return currentThread().parent;
 }
 
-pub inline fn interruptsOn() void {
-    asm volatile ("sti");
-}
-
 pub inline fn interruptsOff() void {
     asm volatile ("cli");
 }
@@ -569,30 +563,6 @@ pub inline fn pause() void {
 pub inline fn halt() noreturn {
     while (true) {
         asm volatile ("hlt");
-    }
-}
-
-pub fn pushCli() void {
-    const flags = readFlags();
-    interruptsOff();
-    const this_cpu = current();
-    if (this_cpu.ncli == 0) {
-        this_cpu.intena = flags & rflags_if != 0;
-    }
-    this_cpu.ncli += 1;
-}
-
-pub fn popCli() void {
-    const this_cpu = current();
-    if (readFlags() & rflags_if != 0) {
-        @panic("popCli with interrupts enabled");
-    }
-    if (this_cpu.ncli == 0) {
-        @panic("popCli underflow");
-    }
-    this_cpu.ncli -= 1;
-    if (this_cpu.ncli == 0 and this_cpu.intena) {
-        interruptsOn();
     }
 }
 
@@ -630,15 +600,6 @@ inline fn writeCr4(value: u64) void {
         \\movq %[value], %%cr4
         :
         : [value] "r" (value),
-        : .{ .memory = true });
-}
-
-inline fn readFlags() u64 {
-    return asm volatile (
-        \\pushfq
-        \\popq %[flags]
-        : [flags] "=r" (-> u64),
-        :
         : .{ .memory = true });
 }
 
