@@ -1,6 +1,9 @@
 const lib = @import("lib");
 const sys = lib.sys;
 
+// Matches the kernel path cap. A command with no '/' is looked up from `/`.
+const max_path = 128;
+
 pub fn main() u64 {
     lib.print("type 'help'\n");
     var buf: [256]u8 = undefined;
@@ -45,6 +48,7 @@ fn help() void {
     lib.print("exit [code]   exit the shell\n");
     lib.print("reboot        reboot the machine\n");
     lib.print("poweroff      ACPI S5 power off\n");
+    lib.print("cd [dir]      change directory (default /)\n");
     lib.print("[name] [args] spawn /name\n");
     lib.print("a | b         pipe a stdout to b stdin\n");
     lib.print("cmd < file    stdin from file\n");
@@ -77,6 +81,15 @@ fn doUptime() void {
 
 fn doExit(arg: ?[]const u8) void {
     sys.exit(optU64(arg, 0, "usage: exit [code]\n") orelse return);
+}
+
+fn doCd(arg: ?[]const u8) void {
+    const path = arg orelse "/";
+    const rc = sys.chdir(path);
+    if (rc < 0) {
+        lib.eprint(path);
+        lib.printErr(": err ", rc);
+    }
 }
 
 const Cmd = struct {
@@ -127,6 +140,17 @@ fn parseCmd(path: []const u8, ps: *[]u8) ?Cmd {
     return .{ .argv = argv, .n = n, .in_file = in_file, .out_file = out_file };
 }
 
+// A token with no '/' is a command at the root (`ls` runs `/ls` after `cd /tmp`).
+fn rooted(tok: []const u8, buf: *[max_path]u8) ?[]const u8 {
+    for (tok) |c| {
+        if (c == '/') return tok;
+    }
+    if (tok.len + 1 > buf.len) return null;
+    buf[0] = '/';
+    for (tok, 0..) |c, i| buf[i + 1] = c;
+    return buf[0 .. tok.len + 1];
+}
+
 fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout0: u64) i64 {
     var opened_in: ?u64 = null;
     var opened_out: ?u64 = null;
@@ -159,7 +183,12 @@ fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout0: u64) i64 {
         opened_out = nfd;
         stdout = nfd;
     }
-    const pid = sys.spawn(cmd.argv[0], cmd.argv[0..cmd.n], stdin, stdout, 2);
+    var path_buf: [max_path]u8 = undefined;
+    const exe = rooted(cmd.argv[0], &path_buf) orelse {
+        lib.eprint("name too long\n");
+        return -1;
+    };
+    const pid = sys.spawn(exe, cmd.argv[0..cmd.n], stdin, stdout, 2);
     if (pid < 0) {
         lib.eprint(cmd.argv[0]);
         lib.printErr(": err ", pid);
@@ -251,6 +280,8 @@ fn dispatch(line: []u8) void {
         sys.reboot();
     } else if (lib.eql(cmd, "poweroff")) {
         sys.poweroff();
+    } else if (lib.eql(cmd, "cd")) {
+        doCd(nextTok(&rest));
     } else {
         spawnWait(cmd, &rest);
     }

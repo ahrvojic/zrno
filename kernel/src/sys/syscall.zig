@@ -46,6 +46,7 @@ pub const nr_unlink: u64 = 0x37; // rdi/rsi=path
 pub const nr_mkdir: u64 = 0x38; // rdi/rsi=path
 pub const nr_rmdir: u64 = 0x39; // rdi/rsi=path; empty directory only
 pub const nr_rename: u64 = 0x3a; // rdi/rsi=old path, rdx/r10=new path
+pub const nr_chdir: u64 = 0x3b; // rdi/rsi=path
 // 0x40 clock
 pub const nr_sleep: u64 = 0x40;
 pub const nr_uptime: u64 = 0x41; // returns ns since boot
@@ -148,10 +149,11 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_lseek => sys_lseek(ctx),
         nr_pipe => sys_pipe(ctx),
         nr_getdents => sys_getdents(ctx),
-        nr_unlink => sysPath(ctx, vfs.unlinkPath),
-        nr_mkdir => sysPath(ctx, vfs.mkdirPath),
-        nr_rmdir => sysPath(ctx, vfs.rmdirPath),
+        nr_unlink => sysPath(ctx, vfs.unlinkPathFrom),
+        nr_mkdir => sysPath(ctx, vfs.mkdirPathFrom),
+        nr_rmdir => sysPath(ctx, vfs.rmdirPathFrom),
         nr_rename => sys_rename(ctx),
+        nr_chdir => sys_chdir(ctx),
         nr_sleep => sys_sleep(ctx),
         nr_uptime => sys_uptime(),
         nr_reboot => reboot.perform(),
@@ -293,7 +295,7 @@ fn sys_open(ctx: *cpu.Context) u64 {
     if (flags & ~(open_write | open_create) != 0) return errval(EINVAL);
     const want_write = flags & open_write != 0;
     const want_create = flags & open_create != 0;
-    const opened = vfs.openPath(path, want_write, want_create) catch |err| return fsErr(err);
+    const opened = vfs.openPathFrom(cpu.currentProcess().cwd, path, want_write, want_create) catch |err| return fsErr(err);
     const kind: file.File.Kind = if (opened.node.isDir())
         .{ .dir = .{ .node = opened.node, .pos = 0 } }
     else
@@ -314,17 +316,32 @@ fn sys_rename(ctx: *cpu.Context) u64 {
         error.Fault => errval(EFAULT),
         error.NameTooLong => errval(ENAMETOOLONG),
     };
-    vfs.renamePath(old_path, new_path) catch |err| return fsErr(err);
+    vfs.renamePathFrom(cpu.currentProcess().cwd, old_path, new_path) catch |err| return fsErr(err);
     return 0;
 }
 
-fn sysPath(ctx: *cpu.Context, op: *const fn ([]const u8) vfs.Error!void) u64 {
+fn sys_chdir(ctx: *cpu.Context) u64 {
     var buf: [max_path]u8 = undefined;
     const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return switch (err) {
         error.Fault => errval(EFAULT),
         error.NameTooLong => errval(ENAMETOOLONG),
     };
-    op(path) catch |err| return fsErr(err);
+    const process = cpu.currentProcess();
+    const node = vfs.walkFrom(process.cwd, path) catch |err| return fsErr(err);
+    if (!node.isDir()) return errval(ENOTDIR);
+    node.retain();
+    process.cwd.release();
+    process.cwd = node;
+    return 0;
+}
+
+fn sysPath(ctx: *cpu.Context, op: *const fn (*vfs.Node, []const u8) vfs.Error!void) u64 {
+    var buf: [max_path]u8 = undefined;
+    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return switch (err) {
+        error.Fault => errval(EFAULT),
+        error.NameTooLong => errval(ENAMETOOLONG),
+    };
+    op(cpu.currentProcess().cwd, path) catch |err| return fsErr(err);
     return 0;
 }
 

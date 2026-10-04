@@ -3,6 +3,7 @@ const std = @import("std");
 const cpu = @import("../sys/cpu.zig");
 const file = @import("../fs/file.zig");
 const maplist = @import("maplist.zig");
+const vfs = @import("../fs/vfs.zig");
 const vmm = @import("../mm/vmm.zig");
 
 pub const Process = struct {
@@ -29,6 +30,9 @@ pub const Process = struct {
     // Spawn installs 0/1/2 from the caller's fds. Kernel pid 0 has none;
     // `/init` (spawned from the kernel) gets a shared TTY.
     fds: [file.max_fds]file.Fd,
+    // Retained directory. A path that does not begin with `/` starts here.
+    // Spawn copies the parent's node. Exit releases it.
+    cwd: *vfs.Node,
 };
 
 pub const ThreadStatus = enum {

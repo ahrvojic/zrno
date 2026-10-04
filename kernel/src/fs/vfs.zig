@@ -92,7 +92,18 @@ pub const Node = struct {
         if (self.refs == 0) @panic("vnode refcount underflow");
         self.refs -= 1;
         if (self.refs != 0) return;
+        // A cwd can outlive rmdir and still create children. Nothing else
+        // can name them, so the last reference frees that subtree. An open
+        // file keeps its own node.
+        if (self.isWritableDir()) self.dropChildren();
         self.discard();
+    }
+
+    fn dropChildren(self: *Node) void {
+        while (self.child) |ch| {
+            detach(self, ch);
+            ch.release();
+        }
     }
 
     pub fn writeAt(self: *Node, off: usize, src: []const u8) error{ ReadOnly, IsDir, TooBig, OutOfMemory }!usize {
@@ -211,7 +222,16 @@ pub const Tree = struct {
     }
 
     pub fn walk(self: *Tree, path: []const u8) error{ NoEnt, NotDir }!*Node {
-        var node = self.root orelse return error.NoEnt;
+        const start = self.root orelse return error.NoEnt;
+        return self.walkFrom(start, path);
+    }
+
+    /// A path that begins with `/` starts at the root. Any other path starts at `start`.
+    pub fn walkFrom(self: *Tree, start: *Node, path: []const u8) error{ NoEnt, NotDir }!*Node {
+        var node = if (path.len > 0 and path[0] == '/')
+            (self.root orelse return error.NoEnt)
+        else
+            start;
         var rest = path;
         while (nextComponent(&rest)) |part| {
             if (std.mem.eql(u8, part, ".")) continue;
@@ -228,8 +248,13 @@ pub const Tree = struct {
     /// `write_access` truncates an existing ramfs file. `create` makes a
     /// missing file. Create without write is rejected.
     pub fn openPath(self: *Tree, path: []const u8, write_access: bool, create: bool) Error!Open {
+        const start = self.root orelse return error.NoEnt;
+        return self.openPathFrom(start, path, write_access, create);
+    }
+
+    pub fn openPathFrom(self: *Tree, start: *Node, path: []const u8, write_access: bool, create: bool) Error!Open {
         if (create and !write_access) return error.BadName;
-        if (self.walk(path)) |node| {
+        if (self.walkFrom(start, path)) |node| {
             if (node.isDir()) {
                 if (write_access) return error.IsDir;
                 return .{ .node = node, .can_write = false };
@@ -244,14 +269,19 @@ pub const Tree = struct {
             error.NotDir => return error.NotDir,
             error.NoEnt => {
                 if (!create) return error.NoEnt;
-                const node = try self.createAt(path);
+                const node = try self.createAt(start, path);
                 return .{ .node = node, .can_write = true };
             },
         }
     }
 
     pub fn unlinkPath(self: *Tree, path: []const u8) Error!void {
-        const at = try self.parentName(path);
+        const start = self.root orelse return error.NoEnt;
+        return self.unlinkPathFrom(start, path);
+    }
+
+    pub fn unlinkPathFrom(self: *Tree, start: *Node, path: []const u8) Error!void {
+        const at = try self.parentName(start, path);
         const child = lookupChild(at.parent, at.name) orelse return error.NoEnt;
         if (child.isDir()) return error.IsDir;
         if (!child.isWritableFile() or !at.parent.isWritableDir()) return error.ReadOnly;
@@ -260,12 +290,22 @@ pub const Tree = struct {
     }
 
     pub fn mkdirPath(self: *Tree, path: []const u8) Error!void {
-        const at = try self.parentName(path);
+        const start = self.root orelse return error.NoEnt;
+        return self.mkdirPathFrom(start, path);
+    }
+
+    pub fn mkdirPathFrom(self: *Tree, start: *Node, path: []const u8) Error!void {
+        const at = try self.parentName(start, path);
         _ = try createChild(at.parent, at.name, .dir);
     }
 
     pub fn rmdirPath(self: *Tree, path: []const u8) Error!void {
-        const at = try self.parentName(path);
+        const start = self.root orelse return error.NoEnt;
+        return self.rmdirPathFrom(start, path);
+    }
+
+    pub fn rmdirPathFrom(self: *Tree, start: *Node, path: []const u8) Error!void {
+        const at = try self.parentName(start, path);
         const child = lookupChild(at.parent, at.name) orelse return error.NoEnt;
         if (!child.isDir()) return error.NotDir;
         if (child.child != null) return error.NotEmpty;
@@ -278,8 +318,13 @@ pub const Tree = struct {
     /// empty directory of the same kind, is replaced. A directory cannot be
     /// moved under itself.
     pub fn renamePath(self: *Tree, old_path: []const u8, new_path: []const u8) Error!void {
-        const from = try self.parentName(old_path);
-        const to = try self.parentName(new_path);
+        const start = self.root orelse return error.NoEnt;
+        return self.renamePathFrom(start, old_path, new_path);
+    }
+
+    pub fn renamePathFrom(self: *Tree, start: *Node, old_path: []const u8, new_path: []const u8) Error!void {
+        const from = try self.parentName(start, old_path);
+        const to = try self.parentName(start, new_path);
         const node = lookupChild(from.parent, from.name) orelse return error.NoEnt;
         if (from.parent == to.parent and std.mem.eql(u8, from.name, to.name)) return;
         if (node.isDir() and isInside(node, to.parent)) return error.Invalid;
@@ -302,15 +347,15 @@ pub const Tree = struct {
         addChild(to.parent, node);
     }
 
-    fn parentName(self: *Tree, path: []const u8) Error!struct { parent: *Node, name: []const u8 } {
+    fn parentName(self: *Tree, start: *Node, path: []const u8) Error!struct { parent: *Node, name: []const u8 } {
         const parts = try splitFinal(path);
-        const parent = try self.walk(parts.parent);
+        const parent = try self.walkFrom(start, parts.parent);
         if (!parent.isDir()) return error.NotDir;
         return .{ .parent = parent, .name = parts.name };
     }
 
-    fn createAt(self: *Tree, path: []const u8) Error!*Node {
-        const at = try self.parentName(path);
+    fn createAt(self: *Tree, start: *Node, path: []const u8) Error!*Node {
+        const at = try self.parentName(start, path);
         return createChild(at.parent, at.name, .file);
     }
 
@@ -338,28 +383,28 @@ pub fn root() *Node {
     return tree.root orelse @panic("vfs used before mount");
 }
 
-pub fn walk(path: []const u8) error{ NoEnt, NotDir }!*Node {
-    return tree.walk(path);
+pub fn walkFrom(start: *Node, path: []const u8) error{ NoEnt, NotDir }!*Node {
+    return tree.walkFrom(start, path);
 }
 
-pub fn openPath(path: []const u8, write_access: bool, create: bool) Error!Open {
-    return tree.openPath(path, write_access, create);
+pub fn openPathFrom(start: *Node, path: []const u8, write_access: bool, create: bool) Error!Open {
+    return tree.openPathFrom(start, path, write_access, create);
 }
 
-pub fn unlinkPath(path: []const u8) Error!void {
-    try tree.unlinkPath(path);
+pub fn unlinkPathFrom(start: *Node, path: []const u8) Error!void {
+    try tree.unlinkPathFrom(start, path);
 }
 
-pub fn mkdirPath(path: []const u8) Error!void {
-    try tree.mkdirPath(path);
+pub fn mkdirPathFrom(start: *Node, path: []const u8) Error!void {
+    try tree.mkdirPathFrom(start, path);
 }
 
-pub fn rmdirPath(path: []const u8) Error!void {
-    try tree.rmdirPath(path);
+pub fn rmdirPathFrom(start: *Node, path: []const u8) Error!void {
+    try tree.rmdirPathFrom(start, path);
 }
 
-pub fn renamePath(old_path: []const u8, new_path: []const u8) Error!void {
-    try tree.renamePath(old_path, new_path);
+pub fn renamePathFrom(start: *Node, old_path: []const u8, new_path: []const u8) Error!void {
+    try tree.renamePathFrom(start, old_path, new_path);
 }
 
 fn createChild(parent: *Node, nam: []const u8, kind: enum { file, dir }) Error!*Node {
@@ -558,7 +603,6 @@ test "tmp directories nest, and rmdir refuses a non-empty dir" {
     const created = try t.openPath("/tmp/a/b/c", true, true);
     _ = try created.node.writeAt(0, "x");
     try std.testing.expectEqualStrings("x", (try t.walk("/tmp/a/b/c")).bytes().?);
-    try std.testing.expectEqualStrings("tmp", (try t.walk("/tmp/a/b/../..")).name());
 
     try std.testing.expectError(error.NotEmpty, t.rmdirPath("/tmp/a/b"));
     try std.testing.expectError(error.NotDir, t.rmdirPath("/tmp/a/b/c"));
@@ -566,13 +610,6 @@ test "tmp directories nest, and rmdir refuses a non-empty dir" {
     try t.rmdirPath("/tmp/a/b");
     try t.rmdirPath("/tmp/a");
     try std.testing.expectError(error.NoEnt, t.walk("/tmp/a"));
-
-    try t.mkdirPath("/tmp/empty");
-    const opened = try t.openPath("/tmp/empty", false, false);
-    opened.node.retain();
-    try t.rmdirPath("/tmp/empty");
-    try std.testing.expectError(error.NoEnt, t.walk("/tmp/empty"));
-    opened.node.release();
 
     try std.testing.expectError(error.ReadOnly, t.mkdirPath("/nope"));
     try std.testing.expectError(error.NotDir, t.mkdirPath("/init/x"));
@@ -631,4 +668,41 @@ test "rename moves a heap node and replaces a file or empty directory" {
     try std.testing.expectError(error.ReadOnly, t.renamePath("/tmp", "/other"));
     try std.testing.expectError(error.NoEnt, t.renamePath("/tmp/missing", "/tmp/x"));
     try std.testing.expectError(error.NotDir, t.renamePath("/init/x", "/tmp/x"));
+}
+
+test "relative paths start at the given directory" {
+    var tar: ustar.Fixture = .{};
+    tar.addFile("init", "elf");
+    var t: Tree = .{};
+    defer t.deinit();
+    try t.mount(tar.finish());
+    try t.mountTmp(std.testing.allocator);
+
+    try t.mkdirPath("/tmp/a");
+    const dir = try t.walk("/tmp/a");
+    const file = try t.openPathFrom(dir, "f", true, true);
+    _ = try file.node.writeAt(0, "hi");
+    try std.testing.expectError(error.NoEnt, t.walk("f"));
+    try std.testing.expect(file.node == try t.walkFrom(dir, "f"));
+    try std.testing.expectEqualStrings("elf", (try t.walkFrom(dir, "/init")).bytes().?);
+    try std.testing.expect(try t.walkFrom(dir, "..") == try t.walk("/tmp"));
+
+    try t.mkdirPath("/tmp/a/sub");
+    try t.renamePathFrom(dir, "f", "sub/g");
+    try std.testing.expectEqualStrings("hi", (try t.walk("/tmp/a/sub/g")).bytes().?);
+    try t.unlinkPath("/tmp/a/sub/g");
+    try t.rmdirPath("/tmp/a/sub");
+
+    dir.retain();
+    try t.rmdirPath("/tmp/a");
+    try std.testing.expect(try t.walkFrom(dir, "..") == dir);
+
+    try t.mkdirPathFrom(dir, "b");
+    const child = try t.openPathFrom(dir, "b/f", true, true);
+    _ = try child.node.writeAt(0, "x");
+    child.node.retain();
+    dir.release();
+    try std.testing.expect(child.node.parent == null);
+    try std.testing.expectEqualStrings("x", child.node.bytes().?);
+    child.node.release();
 }

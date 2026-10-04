@@ -4,7 +4,7 @@ const sys = lib.sys;
 const enotdir: i64 = 20;
 
 pub fn main(argv: []const []const u8) u64 {
-    if (argv.len < 2) return list("/");
+    if (argv.len < 2) return list(".");
     var status: u64 = 0;
     for (argv[1..]) |path| {
         if (list(path) != 0) status = 1;

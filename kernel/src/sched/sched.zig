@@ -12,6 +12,7 @@ const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
 const state = @import("state.zig");
 const thread = @import("thread.zig");
+const vfs = @import("../fs/vfs.zig");
 const vmm = @import("../mm/vmm.zig");
 
 pub const tick_hz = state.tick_hz;
@@ -53,6 +54,7 @@ pub fn startProcess(enqueue: bool) !*proc.Process {
     const process = try allocator.create(proc.Process);
     errdefer allocator.destroy(process);
 
+    const cwd = if (cpu.current().thread) |t| t.parent.cwd else vfs.root();
     process.* = .{
         .pid = 0,
         .parent = 0,
@@ -67,7 +69,10 @@ pub fn startProcess(enqueue: bool) !*proc.Process {
         .brk_start = 0,
         .brk = 0,
         .fds = @splat(null),
+        .cwd = cwd,
     };
+    cwd.retain();
+    errdefer cwd.release();
     errdefer process.vmm.destroy();
     if (cpu.current().thread) |t| {
         process.parent = t.parent.pid;
@@ -201,6 +206,7 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
     state.expectInit();
     // Last close wakes pipe waiters before this process is a zombie.
     file.closeAll(&process.fds);
+    process.cwd.release();
 
     if (process.pid == state.init_pid) {
         logger.err("init exited {d}", .{exit_code});
@@ -246,6 +252,7 @@ pub fn killCurrent(ctx: *cpu.Context, exit_code: u8) void {
 pub fn abortProcess(process: *proc.Process, exit_code: u8) void {
     state.expectInit();
     file.closeAll(&process.fds);
+    process.cwd.release();
     dismantle(process, exit_code);
     reap(process);
 }
