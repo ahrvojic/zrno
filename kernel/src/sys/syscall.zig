@@ -45,6 +45,7 @@ pub const nr_getdents: u64 = 0x36; // rdi=fd, rsi=buf, rdx=len; returns bytes
 pub const nr_unlink: u64 = 0x37; // rdi/rsi=path
 pub const nr_mkdir: u64 = 0x38; // rdi/rsi=path
 pub const nr_rmdir: u64 = 0x39; // rdi/rsi=path; empty directory only
+pub const nr_rename: u64 = 0x3a; // rdi/rsi=old path, rdx/r10=new path
 // 0x40 clock
 pub const nr_sleep: u64 = 0x40;
 pub const nr_uptime: u64 = 0x41; // returns ns since boot
@@ -150,6 +151,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_unlink => sysPath(ctx, vfs.unlinkPath),
         nr_mkdir => sysPath(ctx, vfs.mkdirPath),
         nr_rmdir => sysPath(ctx, vfs.rmdirPath),
+        nr_rename => sys_rename(ctx),
         nr_sleep => sys_sleep(ctx),
         nr_uptime => sys_uptime(),
         nr_reboot => reboot.perform(),
@@ -299,6 +301,21 @@ fn sys_open(ctx: *cpu.Context) u64 {
     const fd = firstFreeFd(0) orelse return errval(EMFILE);
     cpu.currentProcess().fds[fd] = file.File.create(kind) catch return errval(ENOMEM);
     return fd;
+}
+
+fn sys_rename(ctx: *cpu.Context) u64 {
+    var old_buf: [max_path]u8 = undefined;
+    var new_buf: [max_path]u8 = undefined;
+    const old_path = copyUserString(ctx.rdi, ctx.rsi, &old_buf) catch |err| return switch (err) {
+        error.Fault => errval(EFAULT),
+        error.NameTooLong => errval(ENAMETOOLONG),
+    };
+    const new_path = copyUserString(ctx.rdx, ctx.r10, &new_buf) catch |err| return switch (err) {
+        error.Fault => errval(EFAULT),
+        error.NameTooLong => errval(ENAMETOOLONG),
+    };
+    vfs.renamePath(old_path, new_path) catch |err| return fsErr(err);
+    return 0;
 }
 
 fn sysPath(ctx: *cpu.Context, op: *const fn ([]const u8) vfs.Error!void) u64 {
@@ -615,6 +632,7 @@ fn fsErr(err: vfs.Error) u64 {
         error.ReadOnly => EROFS,
         error.Exists => EEXIST,
         error.BadName => EINVAL,
+        error.Invalid => EINVAL,
         error.TooBig => EINVAL,
         error.OutOfMemory => ENOMEM,
     });

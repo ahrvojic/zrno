@@ -29,6 +29,7 @@ pub const nr_getdents: u64 = 0x36;
 pub const nr_unlink: u64 = 0x37;
 pub const nr_mkdir: u64 = 0x38;
 pub const nr_rmdir: u64 = 0x39;
+pub const nr_rename: u64 = 0x3a;
 // 0x40 clock
 pub const nr_sleep: u64 = 0x40;
 pub const nr_uptime: u64 = 0x41;
@@ -152,6 +153,18 @@ pub fn mkdir(path: []const u8) i64 {
 
 pub fn rmdir(path: []const u8) i64 {
     return syscall3(nr_rmdir, @intFromPtr(path.ptr), path.len, 0);
+}
+
+pub fn rename(old_path: []const u8, new_path: []const u8) i64 {
+    return syscall6(
+        nr_rename,
+        @intFromPtr(old_path.ptr),
+        old_path.len,
+        @intFromPtr(new_path.ptr),
+        new_path.len,
+        0,
+        0,
+    );
 }
 
 pub fn close(fd: u64) i64 {

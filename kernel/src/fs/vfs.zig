@@ -22,6 +22,7 @@ pub const Error = error{
     ReadOnly,
     Exists,
     BadName,
+    Invalid,
     TooBig,
     OutOfMemory,
 };
@@ -273,6 +274,34 @@ pub const Tree = struct {
         child.release();
     }
 
+    /// Moves a heap node. The same path is a no-op. An existing file, or an
+    /// empty directory of the same kind, is replaced. A directory cannot be
+    /// moved under itself.
+    pub fn renamePath(self: *Tree, old_path: []const u8, new_path: []const u8) Error!void {
+        const from = try self.parentName(old_path);
+        const to = try self.parentName(new_path);
+        const node = lookupChild(from.parent, from.name) orelse return error.NoEnt;
+        if (from.parent == to.parent and std.mem.eql(u8, from.name, to.name)) return;
+        if (node.isDir() and isInside(node, to.parent)) return error.Invalid;
+        if (!from.parent.isWritableDir() or !to.parent.isWritableDir()) return error.ReadOnly;
+        if (!node.isWritableDir() and !node.isWritableFile()) return error.ReadOnly;
+        if (lookupChild(to.parent, to.name)) |dest| {
+            if (dest.isDir() != node.isDir()) {
+                if (dest.isDir()) return error.IsDir;
+                return error.NotDir;
+            }
+            if (dest.isDir()) {
+                if (dest.child != null) return error.NotEmpty;
+                if (!dest.isWritableDir()) return error.ReadOnly;
+            } else if (!dest.isWritableFile()) return error.ReadOnly;
+            detach(to.parent, dest);
+            dest.release();
+        }
+        detach(from.parent, node);
+        node.setName(to.name);
+        addChild(to.parent, node);
+    }
+
     fn parentName(self: *Tree, path: []const u8) Error!struct { parent: *Node, name: []const u8 } {
         const parts = try splitFinal(path);
         const parent = try self.walk(parts.parent);
@@ -329,6 +358,10 @@ pub fn rmdirPath(path: []const u8) Error!void {
     try tree.rmdirPath(path);
 }
 
+pub fn renamePath(old_path: []const u8, new_path: []const u8) Error!void {
+    try tree.renamePath(old_path, new_path);
+}
+
 fn createChild(parent: *Node, nam: []const u8, kind: enum { file, dir }) Error!*Node {
     // Exists before ReadOnly, so mkdir /tmp is EEXIST.
     if (lookupChild(parent, nam) != null) return error.Exists;
@@ -368,6 +401,15 @@ fn addChild(parent: *Node, child: *Node) void {
     var tail = parent.child.?;
     while (tail.next) |n| tail = n;
     tail.next = child;
+}
+
+fn isInside(dir: *Node, node: *Node) bool {
+    var n: ?*Node = node;
+    while (n) |cur| {
+        if (cur == dir) return true;
+        n = cur.parent;
+    }
+    return false;
 }
 
 fn detach(parent: *Node, child: *Node) void {
@@ -539,4 +581,54 @@ test "tmp directories nest, and rmdir refuses a non-empty dir" {
 
     try t.mkdirPath("/tmp/keep");
     try t.mkdirPath("/tmp/keep/child");
+}
+
+test "rename moves a heap node and replaces a file or empty directory" {
+    var tar: ustar.Fixture = .{};
+    tar.addFile("init", "elf");
+    var t: Tree = .{};
+    defer t.deinit();
+    try t.mount(tar.finish());
+    try t.mountTmp(std.testing.allocator);
+
+    const file = try t.openPath("/tmp/a", true, true);
+    _ = try file.node.writeAt(0, "hello");
+    try t.renamePath("/tmp/a", "/tmp/b");
+    try t.renamePath("/tmp/b", "/tmp/./b");
+    try std.testing.expectError(error.NoEnt, t.walk("/tmp/a"));
+    try std.testing.expect(file.node == try t.walk("/tmp/b"));
+    try std.testing.expectEqualStrings("hello", file.node.bytes().?);
+
+    const replaced = try t.openPath("/tmp/c", true, true);
+    _ = try replaced.node.writeAt(0, "gone");
+    replaced.node.retain();
+    try t.renamePath("/tmp/b", "/tmp/c");
+    try std.testing.expectEqualStrings("hello", (try t.walk("/tmp/c")).bytes().?);
+    try std.testing.expectEqualStrings("gone", replaced.node.bytes().?);
+    replaced.node.release();
+
+    try t.mkdirPath("/tmp/dir");
+    try t.mkdirPath("/tmp/dir/sub");
+    const nested = try t.openPath("/tmp/dir/sub/f", true, true);
+    _ = try nested.node.writeAt(0, "x");
+    try std.testing.expectError(error.Invalid, t.renamePath("/tmp/dir", "/tmp/dir/sub"));
+    try std.testing.expectError(error.Invalid, t.renamePath("/tmp/dir", "/tmp/dir/missing"));
+    try t.mkdirPath("/tmp/full");
+    try t.mkdirPath("/tmp/full/child");
+    try std.testing.expectError(error.NotEmpty, t.renamePath("/tmp/dir", "/tmp/full"));
+    try t.mkdirPath("/tmp/empty");
+    try std.testing.expectError(error.IsDir, t.renamePath("/tmp/c", "/tmp/empty"));
+    try std.testing.expectError(error.NotDir, t.renamePath("/tmp/dir", "/tmp/c"));
+    try t.renamePath("/tmp/dir", "/tmp/empty");
+    try std.testing.expectError(error.NoEnt, t.walk("/tmp/dir"));
+    try std.testing.expectEqualStrings("x", (try t.walk("/tmp/empty/sub/f")).bytes().?);
+    try std.testing.expectEqualStrings("empty", (try t.walk("/tmp/empty/sub/..")).name());
+
+    try t.renamePath("/tmp/c", "/tmp/empty/c");
+    try std.testing.expectEqualStrings("hello", (try t.walk("/tmp/empty/c")).bytes().?);
+
+    try std.testing.expectError(error.ReadOnly, t.renamePath("/init", "/tmp/init"));
+    try std.testing.expectError(error.ReadOnly, t.renamePath("/tmp", "/other"));
+    try std.testing.expectError(error.NoEnt, t.renamePath("/tmp/missing", "/tmp/x"));
+    try std.testing.expectError(error.NotDir, t.renamePath("/init/x", "/tmp/x"));
 }
