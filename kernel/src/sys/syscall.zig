@@ -50,6 +50,7 @@ pub const nr_rmdir: u64 = 0x39; // rdi/rsi=path; empty directory only
 pub const nr_rename: u64 = 0x3a; // rdi/rsi=old path, rdx/r10=new path
 pub const nr_chdir: u64 = 0x3b; // rdi/rsi=path
 pub const nr_getcwd: u64 = 0x3c; // rdi=buf, rsi=len; returns the path length
+pub const nr_poll: u64 = 0x3d; // rdi=*[n]PollFd, rsi=n; returns how many revents are set
 // 0x40 clock
 pub const nr_sleep: u64 = 0x40;
 pub const nr_uptime: u64 = 0x41; // returns ns since boot
@@ -71,6 +72,22 @@ pub const seek_end: u64 = 2;
 pub const open_write: u64 = 1;
 pub const open_create: u64 = 2;
 pub const open_keep: u64 = 4;
+
+// poll events. hup is reported when the other end is gone, not requested.
+// nval is a bad fd. An events value of 0 skips that slot.
+pub const poll_in: u64 = 1;
+pub const poll_out: u64 = 2;
+pub const poll_hup: u64 = 4;
+pub const poll_nval: u64 = 8;
+
+pub const PollFd = extern struct {
+    fd: u64,
+    events: u64,
+    revents: u64,
+};
+comptime {
+    std.debug.assert(@sizeOf(PollFd) == 24);
+}
 
 // Packed dirent. 128 bytes; name is `name_len` bytes, not NUL-terminated.
 pub const dirent_name_max: usize = 112;
@@ -163,6 +180,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_rename => sys_rename(ctx),
         nr_chdir => sys_chdir(ctx),
         nr_getcwd => sys_getcwd(ctx),
+        nr_poll => sys_poll(ctx),
         nr_sleep => sys_sleep(ctx),
         nr_uptime => sys_uptime(),
         nr_reboot => reboot.perform(),
@@ -382,6 +400,83 @@ fn sys_getcwd(ctx: *cpu.Context) u64 {
     return n;
 }
 
+// Level-triggered, no deadline. Sleep only when every requested op would block.
+fn sys_poll(ctx: *cpu.Context) u64 {
+    if (ctx.rsi == 0) return 0;
+    if (ctx.rsi > file.max_fds) return errval(EINVAL);
+    if (cpu.currentProcess().pid == state.kernel_pid) return errval(EINVAL);
+    const n: usize = @intCast(ctx.rsi);
+
+    var slots: [file.max_fds]PollFd = undefined;
+    const set = slots[0..n];
+    const bytes = std.mem.sliceAsBytes(set);
+    userSpace().copyFromUser(bytes, ctx.rdi) catch return errval(EFAULT);
+
+    var chans: [file.max_fds]*const anyopaque = undefined;
+    const current = cpu.currentThread();
+    while (true) {
+        var nchan: usize = 0;
+        var ready: u64 = 0;
+        for (set) |*slot| {
+            if (pollWait(slot)) |chan| {
+                chans[nchan] = chan;
+                nchan += 1;
+            } else if (slot.revents != 0) ready += 1;
+        }
+        if (ready != 0 or nchan == 0) {
+            userSpace().copyToUser(ctx.rdi, bytes) catch return errval(EFAULT);
+            return ready;
+        }
+        // Park on the fd table so close wakes this thread. A pipe or tty
+        // wakeup matches poll_chans instead.
+        current.poll_chans = chans[0..nchan];
+        sched.wait(fdsChan());
+        current.poll_chans = null;
+    }
+}
+
+/// Channel to sleep on, or null when `slot.revents` is already the answer.
+fn pollWait(slot: *PollFd) ?*const anyopaque {
+    slot.revents = 0;
+    if (slot.events == 0) return null;
+    const f = fdFile(slot.fd) orelse {
+        slot.revents = poll_nval;
+        return null;
+    };
+    const want_in = slot.events & poll_in != 0;
+    const want_out = slot.events & poll_out != 0;
+    switch (f.kind) {
+        .file, .dir => {
+            if (want_in) slot.revents |= poll_in;
+            if (want_out) slot.revents |= poll_out;
+            return null;
+        },
+        .tty => {
+            if (want_out) slot.revents |= poll_out;
+            if (!want_in) return null;
+            const chan = tty.readWait() orelse {
+                slot.revents |= poll_in;
+                return null;
+            };
+            return if (slot.revents == 0) chan else null;
+        },
+        .pipe_read => |p| {
+            const hangup = p.writers == 0;
+            if (hangup) slot.revents |= poll_hup;
+            if (want_in and (hangup or !p.ring.empty())) slot.revents |= poll_in;
+            if (want_in and slot.revents == 0) return &p.ring.buf;
+            return null;
+        },
+        .pipe_write => |p| {
+            const hangup = p.readers == 0;
+            if (hangup) slot.revents |= poll_hup;
+            if (want_out and (hangup or p.ring.room() > 0)) slot.revents |= poll_out;
+            if (want_out and slot.revents == 0) return &p.ring.head;
+            return null;
+        },
+    }
+}
+
 fn sysPath(ctx: *cpu.Context, op: *const fn (*vfs.Node, []const u8) vfs.Error!void) u64 {
     var buf: [max_path]u8 = undefined;
     const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return switch (err) {
@@ -397,6 +492,7 @@ fn sys_close(ctx: *cpu.Context) u64 {
     const f = slot.* orelse return errval(EBADF);
     slot.* = null;
     f.release();
+    sched.wakeup(fdsChan());
     return 0;
 }
 
@@ -631,6 +727,10 @@ fn fdSlot(fd: u64) ?*file.Fd {
 fn fdFile(fd: u64) ?*file.File {
     const slot = fdSlot(fd) orelse return null;
     return slot.*;
+}
+
+fn fdsChan() *const anyopaque {
+    return &cpu.currentProcess().fds;
 }
 
 fn userSpace() *vmm.VMM {

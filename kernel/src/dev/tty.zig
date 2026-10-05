@@ -23,8 +23,14 @@ pub fn writeBytes(string: []const u8) void {
 /// Block until a cooked line is queued, then copy up to the first newline.
 pub fn peek(out: []u8) usize {
     if (out.len == 0) return 0;
-    while (input.empty()) sched.wait(&input.in.buf);
+    while (readWait()) |chan| sched.wait(chan);
     return input.copyOut(out);
+}
+
+/// Null when a cooked line is queued. Otherwise the channel `peek` sleeps on.
+pub fn readWait() ?*const anyopaque {
+    if (!input.empty()) return null;
+    return &input.in.buf;
 }
 
 pub fn consume(n: usize) void {

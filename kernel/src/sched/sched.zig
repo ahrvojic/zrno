@@ -293,14 +293,15 @@ pub fn wakeWord(process: *proc.Process, addr: usize) usize {
     return wakeOn(@ptrFromInt(addr), process);
 }
 
-/// `process` null wakes every thread on `chan`. A process wakes only its own.
+/// `process` null wakes every waiter on `chan`, including a poller whose
+/// interest list contains it. A process wakes only its own `wait` on `chan`.
 fn wakeOn(chan: *const anyopaque, process: ?*proc.Process) usize {
     state.expectInit();
     var n: usize = 0;
     var node = state.threads.first;
     while (node) |nd| {
         const t = threadFromSched(nd);
-        if (t.status == .waiting and t.wait_chan == chan and (process == null or t.parent == process)) {
+        if (t.status == .waiting and (process == null or t.parent == process) and waitingOn(t, chan, process == null)) {
             t.wait_chan = null;
             t.status = .ready;
             n += 1;
@@ -308,6 +309,14 @@ fn wakeOn(chan: *const anyopaque, process: ?*proc.Process) usize {
         node = nd.next;
     }
     return n;
+}
+
+fn waitingOn(t: *const proc.Thread, chan: *const anyopaque, poll: bool) bool {
+    if (t.wait_chan == chan) return true;
+    if (!poll) return false;
+    const set = t.poll_chans orelse return false;
+    for (set) |c| if (c == chan) return true;
+    return false;
 }
 
 pub fn schedule(ctx: *cpu.Context) void {

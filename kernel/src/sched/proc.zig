@@ -51,6 +51,9 @@ pub const Thread = struct {
     // alignment and break `@fieldParentPtr` from the list nodes.
     fpu: *cpu.FpuState,
     wait_chan: ?*const anyopaque = null,
+    // Set only while this thread is inside poll, at a slice on that call's
+    // stack. Wakeup compares the pointers and does not dereference them.
+    poll_chans: ?[]const *const anyopaque = null,
     wake_tick: u64 = 0,
     stack_phys: usize,
     // Mapped VA of the kernel stack (guard page is the page below).

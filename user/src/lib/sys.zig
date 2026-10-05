@@ -34,6 +34,7 @@ pub const nr_rmdir: u64 = 0x39;
 pub const nr_rename: u64 = 0x3a;
 pub const nr_chdir: u64 = 0x3b;
 pub const nr_getcwd: u64 = 0x3c;
+pub const nr_poll: u64 = 0x3d;
 // 0x40 clock
 pub const nr_sleep: u64 = 0x40;
 pub const nr_uptime: u64 = 0x41;
@@ -55,6 +56,22 @@ pub const seek_end: u64 = 2;
 pub const open_write: u64 = 1;
 pub const open_create: u64 = 2;
 pub const open_keep: u64 = 4;
+
+// poll events. hup is reported when the other end is gone, not requested.
+// nval is a bad fd. An events value of 0 skips that slot.
+pub const poll_in: u64 = 1;
+pub const poll_out: u64 = 2;
+pub const poll_hup: u64 = 4;
+pub const poll_nval: u64 = 8;
+
+pub const PollFd = extern struct {
+    fd: u64,
+    events: u64,
+    revents: u64,
+};
+comptime {
+    if (@sizeOf(PollFd) != 24) @compileError("PollFd must be 24 bytes");
+}
 
 // Packed dirent. Matches kernel/src/sys/syscall.zig. Name is `name_len` bytes.
 pub const dirent_name_max: usize = 112;
@@ -167,6 +184,12 @@ pub fn chdir(path: []const u8) i64 {
 
 pub fn getcwd(buf: []u8) i64 {
     return syscall3(nr_getcwd, @intFromPtr(buf.ptr), buf.len, 0);
+}
+
+/// Wait until any descriptor is ready. Returns how many `revents` are set.
+/// A regular file or directory is always ready. No timeout.
+pub fn poll(fds: []PollFd) i64 {
+    return syscall3(nr_poll, @intFromPtr(fds.ptr), fds.len, 0);
 }
 
 pub fn rename(old_path: []const u8, new_path: []const u8) i64 {
