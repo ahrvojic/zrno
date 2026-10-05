@@ -31,6 +31,7 @@ pub const nr_mkdir: u64 = 0x38;
 pub const nr_rmdir: u64 = 0x39;
 pub const nr_rename: u64 = 0x3a;
 pub const nr_chdir: u64 = 0x3b;
+pub const nr_getcwd: u64 = 0x3c;
 // 0x40 clock
 pub const nr_sleep: u64 = 0x40;
 pub const nr_uptime: u64 = 0x41;
@@ -158,6 +159,10 @@ pub fn rmdir(path: []const u8) i64 {
 
 pub fn chdir(path: []const u8) i64 {
     return syscall3(nr_chdir, @intFromPtr(path.ptr), path.len, 0);
+}
+
+pub fn getcwd(buf: []u8) i64 {
+    return syscall3(nr_getcwd, @intFromPtr(buf.ptr), buf.len, 0);
 }
 
 pub fn rename(old_path: []const u8, new_path: []const u8) i64 {

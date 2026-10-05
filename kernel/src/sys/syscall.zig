@@ -47,6 +47,7 @@ pub const nr_mkdir: u64 = 0x38; // rdi/rsi=path
 pub const nr_rmdir: u64 = 0x39; // rdi/rsi=path; empty directory only
 pub const nr_rename: u64 = 0x3a; // rdi/rsi=old path, rdx/r10=new path
 pub const nr_chdir: u64 = 0x3b; // rdi/rsi=path
+pub const nr_getcwd: u64 = 0x3c; // rdi=buf, rsi=len; returns the path length
 // 0x40 clock
 pub const nr_sleep: u64 = 0x40;
 pub const nr_uptime: u64 = 0x41; // returns ns since boot
@@ -119,6 +120,7 @@ const EMFILE: i64 = 24;
 const ESPIPE: i64 = 29;
 const EROFS: i64 = 30;
 const EPIPE: i64 = 32;
+const ERANGE: i64 = 34;
 const ENAMETOOLONG: i64 = 36;
 const ENOSYS: i64 = 38;
 const ENOTEMPTY: i64 = 39;
@@ -154,6 +156,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_rmdir => sysPath(ctx, vfs.rmdirPathFrom),
         nr_rename => sys_rename(ctx),
         nr_chdir => sys_chdir(ctx),
+        nr_getcwd => sys_getcwd(ctx),
         nr_sleep => sys_sleep(ctx),
         nr_uptime => sys_uptime(),
         nr_reboot => reboot.perform(),
@@ -333,6 +336,18 @@ fn sys_chdir(ctx: *cpu.Context) u64 {
     process.cwd.release();
     process.cwd = node;
     return 0;
+}
+
+fn sys_getcwd(ctx: *cpu.Context) u64 {
+    var buf: [max_path]u8 = undefined;
+    const n = vfs.pathOf(cpu.currentProcess().cwd, &buf) catch |err| return switch (err) {
+        error.NoEnt => errval(ENOENT),
+        error.NameTooLong => errval(ENAMETOOLONG),
+    };
+    // A path is at least `/`, so an empty buffer lands here too.
+    if (n > ctx.rsi) return errval(ERANGE);
+    userSpace().copyToUser(ctx.rdi, buf[0..n]) catch return errval(EFAULT);
+    return n;
 }
 
 fn sysPath(ctx: *cpu.Context, op: *const fn (*vfs.Node, []const u8) vfs.Error!void) u64 {

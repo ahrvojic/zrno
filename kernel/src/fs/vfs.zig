@@ -245,6 +245,38 @@ pub const Tree = struct {
         return node;
     }
 
+    /// Absolute path of `node`, with no trailing slash except for `/`.
+    /// A node removed while still referenced has no name to walk.
+    pub fn pathOf(self: *Tree, node: *Node, out: []u8) error{ NoEnt, NameTooLong }!usize {
+        const base = self.root orelse return error.NoEnt;
+        if (node == base) {
+            if (out.len == 0) return error.NameTooLong;
+            out[0] = '/';
+            return 1;
+        }
+
+        var len: usize = 0;
+        var n: *Node = node;
+        while (n != base) {
+            const parent = n.parent orelse return error.NoEnt;
+            len = std.math.add(usize, len, n.name_len + 1) catch return error.NameTooLong;
+            n = parent;
+        }
+        if (len > out.len) return error.NameTooLong;
+
+        var end = len;
+        n = node;
+        while (n != base) {
+            const nam = n.name();
+            end -= nam.len;
+            @memcpy(out[end..][0..nam.len], nam);
+            end -= 1;
+            out[end] = '/';
+            n = n.parent orelse return error.NoEnt;
+        }
+        return len;
+    }
+
     /// `write_access` truncates an existing ramfs file. `create` makes a
     /// missing file. Create without write is rejected.
     pub fn openPath(self: *Tree, path: []const u8, write_access: bool, create: bool) Error!Open {
@@ -385,6 +417,10 @@ pub fn root() *Node {
 
 pub fn walkFrom(start: *Node, path: []const u8) error{ NoEnt, NotDir }!*Node {
     return tree.walkFrom(start, path);
+}
+
+pub fn pathOf(node: *Node, out: []u8) error{ NoEnt, NameTooLong }!usize {
+    return tree.pathOf(node, out);
 }
 
 pub fn openPathFrom(start: *Node, path: []const u8, write_access: bool, create: bool) Error!Open {
@@ -705,4 +741,27 @@ test "relative paths start at the given directory" {
     try std.testing.expect(child.node.parent == null);
     try std.testing.expectEqualStrings("x", child.node.bytes().?);
     child.node.release();
+}
+
+test "pathOf rebuilds a path from parent links" {
+    var tar: ustar.Fixture = .{};
+    tar.addFile("init", "elf");
+    var t: Tree = .{};
+    defer t.deinit();
+    try t.mount(tar.finish());
+    try t.mountTmp(std.testing.allocator);
+
+    var buf: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("/", buf[0..try t.pathOf(try t.walk("/"), &buf)]);
+
+    try t.mkdirPath("/tmp/a");
+    try t.mkdirPath("/tmp/a/b");
+    const dir = try t.walk("/tmp/a/b");
+    try std.testing.expectEqualStrings("/tmp/a/b", buf[0..try t.pathOf(dir, &buf)]);
+    try std.testing.expectError(error.NameTooLong, t.pathOf(dir, buf[0..4]));
+
+    dir.retain();
+    try t.rmdirPath("/tmp/a/b");
+    try std.testing.expectError(error.NoEnt, t.pathOf(dir, &buf));
+    dir.release();
 }
