@@ -1,15 +1,18 @@
 //! One name tree. `/` is the initramfs: static nodes, bytes borrowed from the
 //! ustar image, mounted before the heap exists. `/tmp` is a ramfs whose
-//! directories, files, and file bytes come from the heap.
+//! directories and files come from the heap. A file's bytes are page-sized
+//! heap blocks.
 
 const std = @import("std");
 
 const heap = @import("../mm/heap.zig");
+const mem = @import("../lib/mem.zig");
 const ustar = @import("ustar.zig");
 
 pub const max_files: usize = 32;
 pub const max_name: usize = ustar.max_name;
-pub const max_file_bytes: usize = 256 * 1024;
+
+const block_size = mem.page_size;
 
 const pool_len = max_files + 1;
 const tmp_name = "tmp";
@@ -45,8 +48,56 @@ pub const Node = struct {
     kind: Kind,
 
     const Owned = struct {
-        data: []u8,
         heap: std.mem.Allocator,
+        blocks: [][]u8 = &.{},
+        len: usize = 0,
+
+        fn clear(self: *Owned) void {
+            for (self.blocks) |page| self.heap.free(page);
+            if (self.blocks.len != 0) self.heap.free(self.blocks);
+            self.blocks = &.{};
+            self.len = 0;
+        }
+
+        fn addBlock(self: *Owned) error{OutOfMemory}!void {
+            const page = try self.heap.alloc(u8, block_size);
+            const grown = self.heap.alloc([]u8, self.blocks.len + 1) catch |err| {
+                self.heap.free(page);
+                return err;
+            };
+            @memcpy(grown[0..self.blocks.len], self.blocks);
+            if (self.blocks.len != 0) self.heap.free(self.blocks);
+            grown[self.blocks.len] = page;
+            self.blocks = grown;
+        }
+
+        fn ensure(self: *Owned, end: usize) error{ TooBig, OutOfMemory }!void {
+            const need = std.math.divCeil(usize, end, block_size) catch return error.TooBig;
+            while (self.blocks.len < need) try self.addBlock();
+        }
+
+        fn transfer(self: *const Owned, off: usize, buf: []u8, comptime to_file: bool) void {
+            var done: usize = 0;
+            while (done < buf.len) {
+                const at = off + done;
+                const page = self.blocks[at / block_size];
+                const page_off = at % block_size;
+                const n = @min(buf.len - done, block_size - page_off);
+                const file_bytes = page[page_off..][0..n];
+                const buf_bytes = buf[done..][0..n];
+                if (to_file) @memcpy(file_bytes, buf_bytes) else @memcpy(buf_bytes, file_bytes);
+                done += n;
+            }
+        }
+
+        fn write(self: *Owned, off: usize, src: []const u8) error{ TooBig, OutOfMemory }!usize {
+            const end = std.math.add(usize, off, src.len) catch return error.TooBig;
+            if (off > self.len) return error.TooBig;
+            if (end > self.len) try self.ensure(end);
+            self.transfer(off, @constCast(src), true);
+            if (end > self.len) self.len = end;
+            return src.len;
+        }
     };
 
     /// `dir` null is the static initramfs. A set allocator owns the node.
@@ -64,16 +115,33 @@ pub const Node = struct {
         return self.kind == .dir;
     }
 
+    /// Initramfs bytes. An owned file is stored in pages; use `readAt`.
     pub fn bytes(self: *const Node) ?[]const u8 {
         return switch (self.kind) {
             .borrowed => |b| b,
-            .owned => |o| o.data,
-            .dir => null,
+            .owned, .dir => null,
         };
     }
 
     pub fn size(self: *const Node) usize {
-        return if (self.bytes()) |b| b.len else 0;
+        return switch (self.kind) {
+            .borrowed => |b| b.len,
+            .owned => |o| o.len,
+            .dir => 0,
+        };
+    }
+
+    pub fn readAt(self: *const Node, off: usize, dest: []u8) usize {
+        const len = self.size();
+        if (off >= len) return 0;
+        const n = @min(dest.len, len - off);
+        if (n == 0) return 0;
+        switch (self.kind) {
+            .borrowed => |b| @memcpy(dest[0..n], b[off..][0..n]),
+            .owned => |o| o.transfer(off, dest[0..n], false),
+            .dir => unreachable,
+        }
+        return n;
     }
 
     pub fn childAt(self: *Node, index: usize) ?*Node {
@@ -111,18 +179,7 @@ pub const Node = struct {
 
     pub fn writeAt(self: *Node, off: usize, src: []const u8) error{ ReadOnly, IsDir, TooBig, OutOfMemory }!usize {
         switch (self.kind) {
-            .owned => |*o| {
-                const end = std.math.add(usize, off, src.len) catch return error.TooBig;
-                if (end > max_file_bytes or off > o.data.len) return error.TooBig;
-                if (end > o.data.len) {
-                    const grown = try o.heap.alloc(u8, end);
-                    @memcpy(grown[0..o.data.len], o.data);
-                    if (o.data.len != 0) o.heap.free(o.data);
-                    o.data = grown;
-                }
-                @memcpy(o.data[off..][0..src.len], src);
-                return src.len;
-            },
+            .owned => |*o| return o.write(off, src),
             .borrowed => return error.ReadOnly,
             .dir => return error.IsDir,
         }
@@ -130,10 +187,7 @@ pub const Node = struct {
 
     fn truncate(self: *Node) void {
         switch (self.kind) {
-            .owned => |*o| {
-                if (o.data.len != 0) o.heap.free(o.data);
-                o.data = &.{};
-            },
+            .owned => |*o| o.clear(),
             else => {},
         }
     }
@@ -155,8 +209,8 @@ pub const Node = struct {
 
     fn discard(self: *Node) void {
         switch (self.kind) {
-            .owned => |o| {
-                if (o.data.len != 0) o.heap.free(o.data);
+            .owned => |*o| {
+                o.clear();
                 o.heap.destroy(self);
             },
             .dir => |alloc| {
@@ -456,7 +510,7 @@ fn createChild(parent: *Node, nam: []const u8, kind: enum { file, dir }) Error!*
     const node = try alloc.create(Node);
     node.* = .{
         .kind = switch (kind) {
-            .file => .{ .owned = .{ .data = &.{}, .heap = alloc } },
+            .file => .{ .owned = .{ .heap = alloc } },
             .dir => .{ .dir = alloc },
         },
     };
@@ -592,6 +646,28 @@ test "mount drops a partial table on BadTar" {
     try std.testing.expectError(error.NoEnt, t.walk("init"));
 }
 
+fn textOf(node: *Node, buf: []u8) []const u8 {
+    return buf[0..node.readAt(0, buf)];
+}
+
+test "an owned file grows by whole pages" {
+    var tar: ustar.Fixture = .{};
+    tar.addFile("init", "elf");
+    var t: Tree = .{};
+    defer t.deinit();
+    try t.mount(tar.finish());
+    try t.mountTmp(std.testing.allocator);
+
+    var page: [block_size]u8 = undefined;
+    @memset(&page, 'a');
+    const f = try t.openPath("/tmp/big", .write, true);
+    _ = try f.node.writeAt(0, &page);
+    _ = try f.node.writeAt(block_size, "bbbb");
+
+    var across: [8]u8 = undefined;
+    try std.testing.expectEqualStrings("aaaabbbb", across[0..f.node.readAt(block_size - 4, &across)]);
+}
+
 test "tmp ramfs creates, writes, and unlinks" {
     var tar: ustar.Fixture = .{};
     tar.addFile("init", "elf");
@@ -608,24 +684,24 @@ test "tmp ramfs creates, writes, and unlinks" {
     try std.testing.expectError(error.IsDir, t.unlinkPath("/"));
     try std.testing.expectError(error.NoEnt, t.openPath("/tmp/missing", .write, false));
 
+    var buf: [8]u8 = undefined;
     const created = try t.openPath("/tmp/a", .write, true);
     _ = try created.node.writeAt(0, "hello");
-    try std.testing.expectEqualStrings("hello", (try t.walk("/tmp/a")).bytes().?);
+    try std.testing.expectEqualStrings("hello", textOf(try t.walk("/tmp/a"), &buf));
 
     const again = try t.openPath("/tmp/a", .write, false);
-    try std.testing.expectEqual(@as(usize, 0), again.node.bytes().?.len);
+    try std.testing.expectEqual(@as(usize, 0), again.node.size());
     _ = try again.node.writeAt(0, "hi");
-    try std.testing.expectEqualStrings("hi", again.node.bytes().?);
+    try std.testing.expectEqualStrings("hi", textOf(again.node, &buf));
     try std.testing.expectError(error.TooBig, again.node.writeAt(3, "z"));
-    try std.testing.expectError(error.TooBig, again.node.writeAt(max_file_bytes, "x"));
 
     const kept = try t.openPath("/tmp/a", .keep, false);
-    try std.testing.expectEqualStrings("hi", kept.node.bytes().?);
+    try std.testing.expectEqualStrings("hi", textOf(kept.node, &buf));
 
     again.node.retain();
     try t.unlinkPath("/tmp/a");
     try std.testing.expectError(error.NoEnt, t.walk("/tmp/a"));
-    try std.testing.expectEqualStrings("hi", again.node.bytes().?);
+    try std.testing.expectEqualStrings("hi", textOf(again.node, &buf));
     again.node.release();
 
     try std.testing.expectError(error.NotDir, t.walk("/init/x"));
@@ -644,7 +720,8 @@ test "tmp directories nest, and rmdir refuses a non-empty dir" {
     try t.mkdirPath("/tmp/a/b");
     const created = try t.openPath("/tmp/a/b/c", .write, true);
     _ = try created.node.writeAt(0, "x");
-    try std.testing.expectEqualStrings("x", (try t.walk("/tmp/a/b/c")).bytes().?);
+    var buf: [8]u8 = undefined;
+    try std.testing.expectEqualStrings("x", textOf(try t.walk("/tmp/a/b/c"), &buf));
 
     try std.testing.expectError(error.NotEmpty, t.rmdirPath("/tmp/a/b"));
     try std.testing.expectError(error.NotDir, t.rmdirPath("/tmp/a/b/c"));
@@ -676,14 +753,15 @@ test "rename moves a heap node and replaces a file or empty directory" {
     try t.renamePath("/tmp/b", "/tmp/./b");
     try std.testing.expectError(error.NoEnt, t.walk("/tmp/a"));
     try std.testing.expect(file.node == try t.walk("/tmp/b"));
-    try std.testing.expectEqualStrings("hello", file.node.bytes().?);
+    var buf: [8]u8 = undefined;
+    try std.testing.expectEqualStrings("hello", textOf(file.node, &buf));
 
     const replaced = try t.openPath("/tmp/c", .write, true);
     _ = try replaced.node.writeAt(0, "gone");
     replaced.node.retain();
     try t.renamePath("/tmp/b", "/tmp/c");
-    try std.testing.expectEqualStrings("hello", (try t.walk("/tmp/c")).bytes().?);
-    try std.testing.expectEqualStrings("gone", replaced.node.bytes().?);
+    try std.testing.expectEqualStrings("hello", textOf(try t.walk("/tmp/c"), &buf));
+    try std.testing.expectEqualStrings("gone", textOf(replaced.node, &buf));
     replaced.node.release();
 
     try t.mkdirPath("/tmp/dir");
@@ -700,11 +778,11 @@ test "rename moves a heap node and replaces a file or empty directory" {
     try std.testing.expectError(error.NotDir, t.renamePath("/tmp/dir", "/tmp/c"));
     try t.renamePath("/tmp/dir", "/tmp/empty");
     try std.testing.expectError(error.NoEnt, t.walk("/tmp/dir"));
-    try std.testing.expectEqualStrings("x", (try t.walk("/tmp/empty/sub/f")).bytes().?);
+    try std.testing.expectEqualStrings("x", textOf(try t.walk("/tmp/empty/sub/f"), &buf));
     try std.testing.expectEqualStrings("empty", (try t.walk("/tmp/empty/sub/..")).name());
 
     try t.renamePath("/tmp/c", "/tmp/empty/c");
-    try std.testing.expectEqualStrings("hello", (try t.walk("/tmp/empty/c")).bytes().?);
+    try std.testing.expectEqualStrings("hello", textOf(try t.walk("/tmp/empty/c"), &buf));
 
     try std.testing.expectError(error.ReadOnly, t.renamePath("/init", "/tmp/init"));
     try std.testing.expectError(error.ReadOnly, t.renamePath("/tmp", "/other"));
@@ -731,7 +809,8 @@ test "relative paths start at the given directory" {
 
     try t.mkdirPath("/tmp/a/sub");
     try t.renamePathFrom(dir, "f", "sub/g");
-    try std.testing.expectEqualStrings("hi", (try t.walk("/tmp/a/sub/g")).bytes().?);
+    var buf: [8]u8 = undefined;
+    try std.testing.expectEqualStrings("hi", textOf(try t.walk("/tmp/a/sub/g"), &buf));
     try t.unlinkPath("/tmp/a/sub/g");
     try t.rmdirPath("/tmp/a/sub");
 
@@ -745,7 +824,7 @@ test "relative paths start at the given directory" {
     child.node.retain();
     dir.release();
     try std.testing.expect(child.node.parent == null);
-    try std.testing.expectEqualStrings("x", child.node.bytes().?);
+    try std.testing.expectEqualStrings("x", textOf(child.node, &buf));
     child.node.release();
 }
 

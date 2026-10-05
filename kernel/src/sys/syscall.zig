@@ -179,10 +179,10 @@ fn sys_read(ctx: *cpu.Context) u64 {
     switch (f.kind) {
         .tty => return readPeek(tty, addr, len),
         .file => |*open| {
-            const data = open.node.bytes() orelse unreachable;
-            if (open.pos >= data.len) return 0;
-            const n = @min(len, data.len - open.pos);
-            userSpace().copyToUser(addr, data[open.pos..][0..n]) catch return errval(EFAULT);
+            var tmp: [max_io]u8 = undefined;
+            const n = open.node.readAt(open.pos, tmp[0..@min(tmp.len, len)]);
+            if (n == 0) return 0;
+            userSpace().copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
             open.pos += n;
             return n;
         },

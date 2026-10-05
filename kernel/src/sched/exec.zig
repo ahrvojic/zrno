@@ -1,6 +1,7 @@
 const cpu = @import("../sys/cpu.zig");
 const elf = @import("../sys/elf.zig");
 const file = @import("../fs/file.zig");
+const heap = @import("../mm/heap.zig");
 const pmm = @import("../mm/pmm.zig");
 const vfs = @import("../fs/vfs.zig");
 const sched = @import("sched.zig");
@@ -38,8 +39,14 @@ fn spawn(path: []const u8, argv: []const []const u8, stdio: ?[3]u64) SpawnError!
 
 fn loadPath(vm: *vmm.VMM, cwd: *vfs.Node, path: []const u8) SpawnError!elf.Loaded {
     const node = vfs.walkFrom(cwd, path) catch return error.NoEnt;
-    const image = node.bytes() orelse return error.NoEnt;
+    if (node.isDir()) return error.NoEnt;
     var space: VmmSpace = .{ .vmm = vm };
+    if (node.bytes()) |image| return elf.load(&space, image) catch |err| spawnFail(err);
+    const n = node.size();
+    if (n == 0) return elf.load(&space, &.{}) catch |err| spawnFail(err);
+    const image = heap.kernel_heap.allocator().alloc(u8, n) catch return error.OutOfMemory;
+    defer heap.kernel_heap.allocator().free(image);
+    _ = node.readAt(0, image);
     return elf.load(&space, image) catch |err| spawnFail(err);
 }
 
