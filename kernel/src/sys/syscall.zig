@@ -30,6 +30,8 @@ pub const nr_thread: u64 = 0x10; // rdi=entry, rsi=arg; new thread in this proce
 pub const nr_thread_exit: u64 = 0x11; // rdi=code; last thread exits the process
 pub const nr_gettid: u64 = 0x12;
 pub const nr_yield: u64 = 0x13;
+pub const nr_wait_word: u64 = 0x14; // rdi=addr, rsi=expected; sleep while the u64 at addr equals it
+pub const nr_wake_word: u64 = 0x15; // rdi=addr; wake this process's waiters; returns how many
 // 0x20 memory
 pub const nr_brk: u64 = 0x20; // rdi=0 query; else set program break, return it
 pub const nr_mmap: u64 = 0x21; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX
@@ -143,6 +145,8 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_thread_exit => sys_thread_exit(ctx),
         nr_gettid => sys_gettid(),
         nr_yield => sys_yield(),
+        nr_wait_word => sys_wait_word(ctx),
+        nr_wake_word => sys_wake_word(ctx),
         nr_brk => sys_brk(ctx),
         nr_mmap => sys_mmap(ctx),
         nr_munmap => sys_munmap(ctx),
@@ -278,6 +282,29 @@ fn userText(addr: usize) bool {
 fn sys_yield() u64 {
     sched.yield();
     return 0;
+}
+
+fn sys_wait_word(ctx: *cpu.Context) u64 {
+    const addr = userWord(ctx.rdi) orelse return errval(EINVAL);
+    var word: u64 = undefined;
+    userSpace().copyFromUser(std.mem.asBytes(&word), addr) catch return errval(EFAULT);
+    // Mismatch returns without sleeping. The caller rechecks the word.
+    if (word != ctx.rsi) return 0;
+    sched.wait(@ptrFromInt(addr));
+    return 0;
+}
+
+fn sys_wake_word(ctx: *cpu.Context) u64 {
+    const addr = userWord(ctx.rdi) orelse return errval(EINVAL);
+    return sched.wakeWord(cpu.currentProcess(), addr);
+}
+
+fn userWord(raw: u64) ?usize {
+    if (cpu.currentProcess().pid == state.kernel_pid) return null;
+    const addr: usize = @intCast(raw);
+    if (!std.mem.isAligned(addr, @sizeOf(u64))) return null;
+    if (!vmm.userRange(addr, @sizeOf(u64))) return null;
+    return addr;
 }
 
 fn sys_sleep(ctx: *cpu.Context) u64 {

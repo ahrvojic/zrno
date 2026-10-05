@@ -14,6 +14,8 @@ pub const nr_thread: u64 = 0x10;
 pub const nr_thread_exit: u64 = 0x11;
 pub const nr_gettid: u64 = 0x12;
 pub const nr_yield: u64 = 0x13;
+pub const nr_wait_word: u64 = 0x14;
+pub const nr_wake_word: u64 = 0x15;
 // 0x20 memory
 pub const nr_brk: u64 = 0x20;
 pub const nr_mmap: u64 = 0x21;
@@ -239,6 +241,18 @@ pub fn thread(entry: *const fn (u64) callconv(.c) noreturn, arg: u64) i64 {
 pub fn threadExit(code: u64) noreturn {
     _ = syscall3(nr_thread_exit, code, 0, 0);
     unreachable;
+}
+
+/// Sleep while the u64 at `word` still equals `expected`. Recheck `word`
+/// after return: a wake is a broadcast, and a changed word returns without sleeping.
+pub fn waitWord(word: *const u64, expected: u64) i64 {
+    return syscall3(nr_wait_word, @intFromPtr(word), expected, 0);
+}
+
+/// Wake threads in this process sleeping in `waitWord` on `word`.
+/// Store the new value first. Returns how many woke.
+pub fn wakeWord(word: *const u64) i64 {
+    return syscall3(nr_wake_word, @intFromPtr(word), 0, 0);
 }
 
 pub fn getppid() i64 {

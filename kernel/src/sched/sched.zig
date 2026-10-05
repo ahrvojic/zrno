@@ -285,16 +285,29 @@ pub fn wait(chan: *const anyopaque) void {
 }
 
 pub fn wakeup(chan: *const anyopaque) void {
+    _ = wakeOn(chan, null);
+}
+
+/// Wake threads in `process` parked by `wait` on the user address `addr`.
+pub fn wakeWord(process: *proc.Process, addr: usize) usize {
+    return wakeOn(@ptrFromInt(addr), process);
+}
+
+/// `process` null wakes every thread on `chan`. A process wakes only its own.
+fn wakeOn(chan: *const anyopaque, process: ?*proc.Process) usize {
     state.expectInit();
+    var n: usize = 0;
     var node = state.threads.first;
-    while (node) |n| {
-        const t = threadFromSched(n);
-        if (t.status == .waiting and t.wait_chan == chan) {
+    while (node) |nd| {
+        const t = threadFromSched(nd);
+        if (t.status == .waiting and t.wait_chan == chan and (process == null or t.parent == process)) {
             t.wait_chan = null;
             t.status = .ready;
+            n += 1;
         }
-        node = n.next;
+        node = nd.next;
     }
+    return n;
 }
 
 pub fn schedule(ctx: *cpu.Context) void {
