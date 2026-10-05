@@ -48,9 +48,11 @@ pub const seek_cur: u64 = 1;
 pub const seek_end: u64 = 2;
 
 // open flags. Zero reads. Write truncates a file under /tmp.
-// Create makes a missing file and requires write.
+// Create makes a missing file and requires write. Keep, with write, does not
+// truncate.
 pub const open_write: u64 = 1;
 pub const open_create: u64 = 2;
+pub const open_keep: u64 = 4;
 
 // Packed dirent. Matches kernel/src/sys/syscall.zig. Name is `name_len` bytes.
 pub const dirent_name_max: usize = 112;

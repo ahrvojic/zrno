@@ -64,9 +64,11 @@ pub const seek_cur: u64 = 1;
 pub const seek_end: u64 = 2;
 
 // open flags. Zero reads an existing file. Write truncates a ramfs file.
-// Create makes a missing file and requires write.
+// Create makes a missing file and requires write. Keep, with write, does not
+// truncate.
 pub const open_write: u64 = 1;
 pub const open_create: u64 = 2;
+pub const open_keep: u64 = 4;
 
 // Packed dirent. 128 bytes; name is `name_len` bytes, not NUL-terminated.
 pub const dirent_name_max: usize = 112;
@@ -295,10 +297,13 @@ fn sys_open(ctx: *cpu.Context) u64 {
         error.NameTooLong => errval(ENAMETOOLONG),
     };
     const flags = ctx.rdx;
-    if (flags & ~(open_write | open_create) != 0) return errval(EINVAL);
+    if (flags & ~(open_write | open_create | open_keep) != 0) return errval(EINVAL);
     const want_write = flags & open_write != 0;
     const want_create = flags & open_create != 0;
-    const opened = vfs.openPathFrom(cpu.currentProcess().cwd, path, want_write, want_create) catch |err| return fsErr(err);
+    const want_keep = flags & open_keep != 0;
+    if (want_keep and !want_write) return errval(EINVAL);
+    const mode: vfs.Mode = if (!want_write) .read else if (want_keep) .keep else .write;
+    const opened = vfs.openPathFrom(cpu.currentProcess().cwd, path, mode, want_create) catch |err| return fsErr(err);
     const kind: file.File.Kind = if (opened.node.isDir())
         .{ .dir = .{ .node = opened.node, .pos = 0 } }
     else

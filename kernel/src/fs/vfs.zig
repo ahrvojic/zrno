@@ -32,6 +32,9 @@ pub const Open = struct {
     can_write: bool,
 };
 
+/// `.write` truncates an existing file. `.keep` does not.
+pub const Mode = enum { read, write, keep };
+
 pub const Node = struct {
     refs: usize = 1,
     name_buf: [max_name]u8 = undefined,
@@ -277,14 +280,14 @@ pub const Tree = struct {
         return len;
     }
 
-    /// `write_access` truncates an existing ramfs file. `create` makes a
-    /// missing file. Create without write is rejected.
-    pub fn openPath(self: *Tree, path: []const u8, write_access: bool, create: bool) Error!Open {
+    /// `create` makes a missing file and requires `.write` or `.keep`.
+    pub fn openPath(self: *Tree, path: []const u8, mode: Mode, create: bool) Error!Open {
         const start = self.root orelse return error.NoEnt;
-        return self.openPathFrom(start, path, write_access, create);
+        return self.openPathFrom(start, path, mode, create);
     }
 
-    pub fn openPathFrom(self: *Tree, start: *Node, path: []const u8, write_access: bool, create: bool) Error!Open {
+    pub fn openPathFrom(self: *Tree, start: *Node, path: []const u8, mode: Mode, create: bool) Error!Open {
+        const write_access = mode != .read;
         if (create and !write_access) return error.BadName;
         if (self.walkFrom(start, path)) |node| {
             if (node.isDir()) {
@@ -293,7 +296,7 @@ pub const Tree = struct {
             }
             if (write_access) {
                 if (!node.isWritableFile()) return error.ReadOnly;
-                node.truncate();
+                if (mode == .write) node.truncate();
                 return .{ .node = node, .can_write = true };
             }
             return .{ .node = node, .can_write = false };
@@ -423,8 +426,8 @@ pub fn pathOf(node: *Node, out: []u8) error{ NoEnt, NameTooLong }!usize {
     return tree.pathOf(node, out);
 }
 
-pub fn openPathFrom(start: *Node, path: []const u8, write_access: bool, create: bool) Error!Open {
-    return tree.openPathFrom(start, path, write_access, create);
+pub fn openPathFrom(start: *Node, path: []const u8, mode: Mode, create: bool) Error!Open {
+    return tree.openPathFrom(start, path, mode, create);
 }
 
 pub fn unlinkPathFrom(start: *Node, path: []const u8) Error!void {
@@ -598,23 +601,26 @@ test "tmp ramfs creates, writes, and unlinks" {
     try t.mountTmp(std.testing.allocator);
 
     try std.testing.expectEqualStrings("tmp", (try t.walk("/")).childAt(1).?.name());
-    try std.testing.expectError(error.ReadOnly, t.openPath("/init", true, true));
-    try std.testing.expectError(error.ReadOnly, t.openPath("/new", true, true));
+    try std.testing.expectError(error.ReadOnly, t.openPath("/init", .write, true));
+    try std.testing.expectError(error.ReadOnly, t.openPath("/new", .write, true));
     try std.testing.expectError(error.ReadOnly, t.unlinkPath("/init"));
     try std.testing.expectError(error.IsDir, t.unlinkPath("/tmp"));
     try std.testing.expectError(error.IsDir, t.unlinkPath("/"));
-    try std.testing.expectError(error.NoEnt, t.openPath("/tmp/missing", true, false));
+    try std.testing.expectError(error.NoEnt, t.openPath("/tmp/missing", .write, false));
 
-    const created = try t.openPath("/tmp/a", true, true);
+    const created = try t.openPath("/tmp/a", .write, true);
     _ = try created.node.writeAt(0, "hello");
     try std.testing.expectEqualStrings("hello", (try t.walk("/tmp/a")).bytes().?);
 
-    const again = try t.openPath("/tmp/a", true, false);
+    const again = try t.openPath("/tmp/a", .write, false);
     try std.testing.expectEqual(@as(usize, 0), again.node.bytes().?.len);
     _ = try again.node.writeAt(0, "hi");
     try std.testing.expectEqualStrings("hi", again.node.bytes().?);
     try std.testing.expectError(error.TooBig, again.node.writeAt(3, "z"));
     try std.testing.expectError(error.TooBig, again.node.writeAt(max_file_bytes, "x"));
+
+    const kept = try t.openPath("/tmp/a", .keep, false);
+    try std.testing.expectEqualStrings("hi", kept.node.bytes().?);
 
     again.node.retain();
     try t.unlinkPath("/tmp/a");
@@ -636,7 +642,7 @@ test "tmp directories nest, and rmdir refuses a non-empty dir" {
 
     try t.mkdirPath("/tmp/a");
     try t.mkdirPath("/tmp/a/b");
-    const created = try t.openPath("/tmp/a/b/c", true, true);
+    const created = try t.openPath("/tmp/a/b/c", .write, true);
     _ = try created.node.writeAt(0, "x");
     try std.testing.expectEqualStrings("x", (try t.walk("/tmp/a/b/c")).bytes().?);
 
@@ -664,7 +670,7 @@ test "rename moves a heap node and replaces a file or empty directory" {
     try t.mount(tar.finish());
     try t.mountTmp(std.testing.allocator);
 
-    const file = try t.openPath("/tmp/a", true, true);
+    const file = try t.openPath("/tmp/a", .write, true);
     _ = try file.node.writeAt(0, "hello");
     try t.renamePath("/tmp/a", "/tmp/b");
     try t.renamePath("/tmp/b", "/tmp/./b");
@@ -672,7 +678,7 @@ test "rename moves a heap node and replaces a file or empty directory" {
     try std.testing.expect(file.node == try t.walk("/tmp/b"));
     try std.testing.expectEqualStrings("hello", file.node.bytes().?);
 
-    const replaced = try t.openPath("/tmp/c", true, true);
+    const replaced = try t.openPath("/tmp/c", .write, true);
     _ = try replaced.node.writeAt(0, "gone");
     replaced.node.retain();
     try t.renamePath("/tmp/b", "/tmp/c");
@@ -682,7 +688,7 @@ test "rename moves a heap node and replaces a file or empty directory" {
 
     try t.mkdirPath("/tmp/dir");
     try t.mkdirPath("/tmp/dir/sub");
-    const nested = try t.openPath("/tmp/dir/sub/f", true, true);
+    const nested = try t.openPath("/tmp/dir/sub/f", .write, true);
     _ = try nested.node.writeAt(0, "x");
     try std.testing.expectError(error.Invalid, t.renamePath("/tmp/dir", "/tmp/dir/sub"));
     try std.testing.expectError(error.Invalid, t.renamePath("/tmp/dir", "/tmp/dir/missing"));
@@ -716,7 +722,7 @@ test "relative paths start at the given directory" {
 
     try t.mkdirPath("/tmp/a");
     const dir = try t.walk("/tmp/a");
-    const file = try t.openPathFrom(dir, "f", true, true);
+    const file = try t.openPathFrom(dir, "f", .write, true);
     _ = try file.node.writeAt(0, "hi");
     try std.testing.expectError(error.NoEnt, t.walk("f"));
     try std.testing.expect(file.node == try t.walkFrom(dir, "f"));
@@ -734,7 +740,7 @@ test "relative paths start at the given directory" {
     try std.testing.expect(try t.walkFrom(dir, "..") == dir);
 
     try t.mkdirPathFrom(dir, "b");
-    const child = try t.openPathFrom(dir, "b/f", true, true);
+    const child = try t.openPathFrom(dir, "b/f", .write, true);
     _ = try child.node.writeAt(0, "x");
     child.node.retain();
     dir.release();

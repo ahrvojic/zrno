@@ -53,6 +53,7 @@ fn help() void {
     lib.print("a | b         pipe a stdout to b stdin\n");
     lib.print("cmd < file    stdin from file\n");
     lib.print("cmd > file    stdout to file\n");
+    lib.print("cmd >> file   append stdout to file\n");
     lib.print("Ctrl-C        stop the running command\n");
 }
 
@@ -97,6 +98,7 @@ const Cmd = struct {
     n: usize,
     in_file: ?[]const u8 = null,
     out_file: ?[]const u8 = null,
+    append: bool = false,
 };
 
 fn parseCmd(path: []const u8, ps: *[]u8) ?Cmd {
@@ -105,10 +107,13 @@ fn parseCmd(path: []const u8, ps: *[]u8) ?Cmd {
     var n: usize = 1;
     var in_file: ?[]const u8 = null;
     var out_file: ?[]const u8 = null;
+    var append = false;
     while (nextTok(ps)) |tok| {
         if (tok.len > 0 and tok[0] == '>') {
-            const name = if (tok.len > 1) tok[1..] else nextTok(ps) orelse {
-                lib.eprint("usage: cmd > file\n");
+            const appending = tok.len > 1 and tok[1] == '>';
+            const skip: usize = if (appending) 2 else 1;
+            const name = if (tok.len > skip) tok[skip..] else nextTok(ps) orelse {
+                lib.eprint(if (appending) "usage: cmd >> file\n" else "usage: cmd > file\n");
                 return null;
             };
             if (out_file) |_| {
@@ -116,6 +121,7 @@ fn parseCmd(path: []const u8, ps: *[]u8) ?Cmd {
                 return null;
             }
             out_file = name;
+            append = appending;
             continue;
         }
         if (tok.len > 0 and tok[0] == '<') {
@@ -137,7 +143,7 @@ fn parseCmd(path: []const u8, ps: *[]u8) ?Cmd {
         argv[n] = tok;
         n += 1;
     }
-    return .{ .argv = argv, .n = n, .in_file = in_file, .out_file = out_file };
+    return .{ .argv = argv, .n = n, .in_file = in_file, .out_file = out_file, .append = append };
 }
 
 // A token with no '/' is a command at the root (`ls` runs `/ls` after `cd /tmp`).
@@ -173,7 +179,8 @@ fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout0: u64) i64 {
     }
     var stdout = stdout0;
     if (cmd.out_file) |f| {
-        const fd = sys.openAt(f, sys.open_write | sys.open_create);
+        const flags = sys.open_write | sys.open_create | if (cmd.append) sys.open_keep else 0;
+        const fd = sys.openAt(f, flags);
         if (fd < 0) {
             lib.eprint(f);
             lib.printErr(": err ", fd);
@@ -182,6 +189,13 @@ fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout0: u64) i64 {
         const nfd: u64 = @intCast(fd);
         opened_out = nfd;
         stdout = nfd;
+        if (cmd.append) {
+            const pos = sys.lseek(nfd, 0, sys.seek_end);
+            if (pos < 0) {
+                lib.printErr("lseek: err ", pos);
+                return pos;
+            }
+        }
     }
     var path_buf: [max_path]u8 = undefined;
     const exe = rooted(cmd.argv[0], &path_buf) orelse {
