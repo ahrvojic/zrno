@@ -77,6 +77,7 @@ fn help() void {
         \\cmd > file    stdout to file
         \\cmd >> file   append stdout to file
         \\Ctrl-C        stop the running command
+        \\
     );
 }
 
