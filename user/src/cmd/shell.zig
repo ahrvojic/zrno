@@ -9,8 +9,10 @@ pub fn main() u64 {
     var buf: [256]u8 = undefined;
     while (true) {
         lib.print("> ");
-        dispatch(readLine(&buf));
+        const line = readLine(&buf) orelse break;
+        dispatch(line);
     }
+    return 0;
 }
 
 fn skipSpaces(s: []u8) []u8 {
@@ -32,12 +34,31 @@ fn nextTok(ps: *[]u8) ?[]u8 {
     return tok;
 }
 
-fn readLine(buf: *[256]u8) []u8 {
-    const r = sys.read(0, buf);
-    if (r <= 0) return buf[0..0];
-    const n: usize = @intCast(r);
-    if (buf[n - 1] == '\n') return buf[0 .. n - 1];
-    return buf[0..n];
+fn readByte() ?u8 {
+    var buf: [1]u8 = undefined;
+    const r = sys.read(0, &buf);
+    if (r < 0) {
+        lib.printErr("read: err ", r);
+        sys.exit(1);
+    }
+    if (r == 0) return null;
+    return buf[0];
+}
+
+// Null is EOF. A line that does not fit is dropped.
+fn readLine(buf: *[256]u8) ?[]u8 {
+    var n: usize = 0;
+    while (readByte()) |ch| {
+        if (ch == '\n') return buf[0..n];
+        if (n == buf.len) {
+            while (readByte()) |extra| if (extra == '\n') break;
+            lib.eprint("line too long\n");
+            return buf[0..0];
+        }
+        buf[n] = ch;
+        n += 1;
+    }
+    return if (n == 0) null else buf[0..n];
 }
 
 fn help() void {
