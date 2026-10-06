@@ -1,6 +1,5 @@
 const std = @import("std");
 
-const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
 const pmm = @import("../mm/pmm.zig");
 const state = @import("state.zig");
 const vmm = @import("../mm/vmm.zig");
@@ -24,9 +23,9 @@ comptime {
 const DoomedStack = struct { phys: usize, base: usize };
 var doomed_stack: ?DoomedStack = null;
 var kstack_next: usize = kstack_region_base;
-// Recycled stack VAs below `kstack_next` (high-water; guard-page check).
-const max_kstack_free = 256;
-var kstack_free: BoundedArray(usize, max_kstack_free) = .{};
+// Free slots below the high-water mark. The top slot rewinds instead of being marked.
+const max_slots = (kstack_region_end - kstack_region_base) / kstack_slot;
+var slot_free: std.bit_set.Static(max_slots) = .empty;
 
 pub const KernelStack = struct { phys: usize, base: usize };
 
@@ -76,7 +75,10 @@ fn unmap(phys: usize, base: usize) void {
 }
 
 fn takeSlot() error{OutOfMemory}!usize {
-    if (kstack_free.pop()) |base| return base;
+    if (slot_free.findFirstSet()) |index| {
+        slot_free.unset(index);
+        return kstack_region_base + index * kstack_slot + pmm.page_size;
+    }
     if (kstack_next >= kstack_region_end or kstack_region_end - kstack_next < kstack_slot) {
         return error.OutOfMemory;
     }
@@ -90,24 +92,18 @@ fn releaseSlot(base: usize) void {
     if (slot + kstack_slot == kstack_next) {
         kstack_next = slot;
         while (kstack_next > kstack_region_base) {
-            const top = kstack_next - kstack_slot + pmm.page_size;
-            if (!removeFree(top)) break;
+            const index = slotIndex(kstack_next - kstack_slot);
+            if (!slot_free.isSet(index)) break;
+            slot_free.unset(index);
             kstack_next -= kstack_slot;
         }
         return;
     }
-    // Holes under a live high-water slot. Dropping the VA would leak the slot.
-    kstack_free.append(base) catch @panic("kstack free list full");
+    slot_free.set(slotIndex(slot));
 }
 
-fn removeFree(base: usize) bool {
-    for (kstack_free.constSlice(), 0..) |b, i| {
-        if (b == base) {
-            _ = kstack_free.swapRemove(i);
-            return true;
-        }
-    }
-    return false;
+fn slotIndex(slot: usize) usize {
+    return (slot - kstack_region_base) / kstack_slot;
 }
 
 fn rspInStack(stack_base: usize) bool {
