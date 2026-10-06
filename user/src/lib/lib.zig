@@ -10,11 +10,11 @@ pub fn eql(a: []const u8, b: []const u8) bool {
 }
 
 pub fn print(bytes: []const u8) void {
-    sys.writeAll(1, bytes);
+    _ = sys.writeAll(1, bytes);
 }
 
 pub fn eprint(bytes: []const u8) void {
-    sys.writeAll(2, bytes);
+    _ = sys.writeAll(2, bytes);
 }
 
 fn writeU64(fd: u64, v0: u64) void {
@@ -27,7 +27,7 @@ fn writeU64(fd: u64, v0: u64) void {
         v /= 10;
         if (v == 0) break;
     }
-    sys.writeAll(fd, tmp[i..]);
+    _ = sys.writeAll(fd, tmp[i..]);
 }
 
 pub fn printU64(v0: u64) void {
@@ -58,6 +58,7 @@ pub fn copyFd(src: u64, dst: u64) i64 {
     while (true) {
         const n = sys.read(src, &buf);
         if (n <= 0) return n;
-        sys.writeAll(dst, buf[0..@intCast(n)]);
+        const w = sys.writeAll(dst, buf[0..@intCast(n)]);
+        if (w < 0) return w;
     }
 }

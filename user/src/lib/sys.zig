@@ -133,13 +133,14 @@ pub fn write(fd: u64, bytes: []const u8) i64 {
     return syscall3(nr_write, fd, @intFromPtr(bytes.ptr), bytes.len);
 }
 
-pub fn writeAll(fd: u64, bytes: []const u8) void {
+pub fn writeAll(fd: u64, bytes: []const u8) i64 {
     var off: usize = 0;
     while (off < bytes.len) {
         const r = write(fd, bytes[off..]);
-        if (r <= 0) return;
+        if (r < 0) return r;
         off += @intCast(r);
     }
+    return 0;
 }
 
 pub fn exit(code: u64) noreturn {
