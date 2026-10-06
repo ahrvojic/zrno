@@ -41,7 +41,7 @@ pub const File = struct {
         return f;
     }
 
-    fn retain(self: *File) void {
+    pub fn retain(self: *File) void {
         self.refs += 1;
     }
 

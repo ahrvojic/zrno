@@ -208,7 +208,12 @@ fn sys_read(ctx: *cpu.Context) u64 {
         },
         .dir => return errval(EISDIR),
         .pipe_write => return errval(EBADF),
-        .pipe_read => |p| return readPeek(p, addr, len),
+        .pipe_read => |p| {
+            // Keep this end alive across wait. The pipe is freed when both ends hit zero.
+            f.retain();
+            defer f.release();
+            return readPeek(p, addr, len);
+        },
     }
 }
 
@@ -232,7 +237,12 @@ fn sys_write(ctx: *cpu.Context) u64 {
         },
         .dir => return errval(EISDIR),
         .pipe_read => return errval(EBADF),
-        .pipe_write => |p| return writeUser(addr, len, p),
+        .pipe_write => |p| {
+            // Keep this end alive across wait. The pipe is freed when both ends hit zero.
+            f.retain();
+            defer f.release();
+            return writeUser(addr, len, p);
+        },
         .tty => return writeUser(addr, len, TtySink{}),
     }
 }
