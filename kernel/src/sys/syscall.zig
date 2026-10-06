@@ -34,7 +34,7 @@ pub const nr_wait_word: u64 = 0x14; // rdi=addr, rsi=expected; sleep while the u
 pub const nr_wake_word: u64 = 0x15; // rdi=addr; wake this process's waiters; returns how many
 // 0x20 memory
 pub const nr_brk: u64 = 0x20; // rdi=0 query; else set program break, return it
-pub const nr_mmap: u64 = 0x21; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX
+pub const nr_mmap: u64 = 0x21; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX, zero page on first touch
 pub const nr_munmap: u64 = 0x22; // rdi=addr, rsi=len; one whole mapping from mmap
 // 0x30 file
 pub const nr_open: u64 = 0x30; // rdi/rsi=path, rdx=flags (0 = read)

@@ -54,6 +54,8 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
                 fatalException(ctx, "Kernel stack overflow");
             } else if (reason.user and sched.isUserStackGuard(fault_addr)) {
                 handleException(ctx, "User stack overflow");
+            } else if (userDemand(reason) and sched.fillUserPage(fault_addr, reason.write)) {
+                // iret runs the faulting instruction again.
             } else {
                 handleException(ctx, "Unhandled page fault");
             }
@@ -313,6 +315,10 @@ fn exceptionName(vector: u64) []const u8 {
         30 => "Security exception",
         else => "Exception",
     };
+}
+
+fn userDemand(reason: vmm.FaultReason) bool {
+    return reason.user and !reason.protection and !reason.reserved and !reason.inst_fetch;
 }
 
 // CPL 3: stop the process and switch. Kernel faults stay fatal.

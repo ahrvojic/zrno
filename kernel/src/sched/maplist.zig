@@ -7,6 +7,7 @@ pub const max_maps = 32;
 pub const Map = struct {
     base: usize,
     size: usize,
+    writable: bool = false,
 };
 
 pub const List = BoundedArray(Map, max_maps);
@@ -22,6 +23,13 @@ pub fn remove(list: *List, next: *usize, addr: usize, size: usize) bool {
         return true;
     }
     return false;
+}
+
+pub fn find(list: *const List, addr: usize) ?Map {
+    for (list.constSlice()) |m| {
+        if (addr >= m.base and addr - m.base < m.size) return m;
+    }
+    return null;
 }
 
 test "munmap rewinds only the lowest mapping" {
@@ -43,4 +51,13 @@ test "munmap rewinds only the lowest mapping" {
     try std.testing.expectEqual(0x4000, next);
     try std.testing.expectEqual(0, list.len);
     try std.testing.expect(!remove(&list, &next, 0x2000, 0x2000));
+}
+
+test "find hits the interior and misses the ends" {
+    var list: List = .{};
+    try list.append(.{ .base = 0x2000, .size = 0x2000 });
+    try std.testing.expect(find(&list, 0x1fff) == null);
+    try std.testing.expect(find(&list, 0x2000) != null);
+    try std.testing.expect(find(&list, 0x3fff) != null);
+    try std.testing.expect(find(&list, 0x4000) == null);
 }

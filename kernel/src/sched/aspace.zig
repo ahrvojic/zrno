@@ -79,16 +79,24 @@ fn mapPages(space: *vmm.VMM, addr: usize, size: usize, flags: vmm.Flags) error{O
 }
 
 fn unmapPages(space: *vmm.VMM, addr: usize, size: usize) void {
+    unmapSpan(space, addr, size, false);
+}
+
+fn unmapSpan(space: *vmm.VMM, addr: usize, size: usize, holes: bool) void {
     var off: usize = 0;
     while (off < size) : (off += pmm.page_size) {
-        const phys = space.virtToPhys(addr + off) catch @panic("user page unmap");
+        const phys = space.virtToPhys(addr + off) catch {
+            if (!holes) @panic("user page unmap");
+            continue;
+        };
         space.unmap(addr + off, pmm.page_size) catch @panic("user page unmap");
         pmm.free(std.mem.alignBackward(usize, phys, pmm.page_size), 1);
     }
 }
 
-// Anonymous mmap: kernel picks the address (`addr` hint must be 0 at the
-// syscall). Eager map, NX. Grows down from `user_mmap_top`.
+// Anonymous mmap. The kernel picks the address (`addr` hint must be 0).
+// The range is only reserved; the first access allocates a zero page. NX.
+// Grows down from `user_mmap_top`.
 pub fn mapAnon(len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
     state.expectInit();
     const process = cpu.currentProcess();
@@ -102,22 +110,31 @@ pub fn mapAnon(len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
     if (old < size) return error.OutOfMemory;
     const base = old - size;
     if (base < process.brk or state.user_mmap_top - base > max_mmap) return error.OutOfMemory;
-    process.maps.append(.{ .base = base, .size = size }) catch return error.OutOfMemory;
+    process.maps.append(.{ .base = base, .size = size, .writable = writable }) catch return error.OutOfMemory;
     process.mmap_next = base;
+    return base;
+}
 
-    const flags = vmm.Flags{
+/// Allocate the zero page for an anonymous reservation. False when `addr`
+/// is outside one, the access writes a read-only reservation, or the
+/// allocator is empty. `pmm.alloc` supplies the zeros.
+pub fn fillUserPage(addr: usize, write: bool) bool {
+    const process = cpu.currentProcess();
+    const page = std.mem.alignBackward(usize, addr, pmm.page_size);
+    const map = maplist.find(&process.maps, page) orelse return false;
+    if (write and !map.writable) return false;
+
+    const phys = pmm.alloc(1) orelse return false;
+    process.vmm.map(page, phys, pmm.page_size, .{
         .present = true,
-        .writable = writable,
+        .writable = map.writable,
         .user = true,
         .noexec = true,
+    }) catch {
+        pmm.free(phys, 1);
+        return false;
     };
-    // The record is reserved. Drop it if the pages never land. `mapPages`
-    // unmaps any prefix it mapped.
-    mapPages(&process.vmm, base, size, flags) catch {
-        _ = maplist.remove(&process.maps, &process.mmap_next, base, size);
-        return error.OutOfMemory;
-    };
-    return base;
+    return true;
 }
 
 /// Inverse of `mapAnon`. `len` is rounded the same way. The address must be
@@ -133,7 +150,8 @@ pub fn unmapAnon(addr: usize, len: usize) error{Invalid}!void {
     const size = std.mem.alignForward(usize, len, pmm.page_size);
 
     if (!maplist.remove(&process.maps, &process.mmap_next, addr, size)) return error.Invalid;
-    unmapPages(&process.vmm, addr, size);
+    // A hole is a page the program never touched.
+    unmapSpan(&process.vmm, addr, size, true);
 }
 
 pub fn dropAddressSpace(space: *vmm.VMM) void {
