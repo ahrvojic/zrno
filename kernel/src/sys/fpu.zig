@@ -21,13 +21,3 @@ comptime {
     std.debug.assert(xcr0_mask == 0b111);
 }
 
-pub fn initState(state: *State) void {
-    state.* = .{};
-}
-
-test "default XSAVE image is zero" {
-    var state: State = undefined;
-    @memset(&state.bytes, 0xff);
-    initState(&state);
-    try std.testing.expectEqualSlices(u8, &@as([state_size]u8, @splat(0)), &state.bytes);
-}

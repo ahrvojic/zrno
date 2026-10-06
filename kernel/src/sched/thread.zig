@@ -39,33 +39,33 @@ pub fn startKernelThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: 
     return thread;
 }
 
+const UserEntry = union(enum) {
+    argv: []const []const u8,
+    // rdi = arg. The word at rsp is 0, so a `ret` faults.
+    arg: u64,
+};
+
 pub fn startUserThread(parent: *proc.Process, pc: usize, argv: []const []const u8, enqueue: bool) !*proc.Thread {
-    const thread = try allocKthread(parent);
-    errdefer abandonKthread(thread);
-
-    const user_stack_base = try aspace.takeUserStack(parent);
-    errdefer aspace.releaseUserStack(parent, user_stack_base);
-    try setupUserStack(&parent.vmm, user_stack_base, pc, argv, &thread.ctx);
-    thread.user_stack = user_stack_base;
-
-    publishThread(parent, thread, enqueue);
-    return thread;
+    return startUser(parent, pc, enqueue, .{ .argv = argv });
 }
 
 // One more thread in `parent`. Same page tables and file descriptors.
-// `pc(arg)` is entered by iretq with rdi = arg; the word at rsp is 0, so
-// a `ret` faults instead of running off the stack. The thread must
-// `thread_exit`. Enqueued; it runs after the caller leaves the syscall.
+// `pc(arg)` is entered by iretq. The thread must `thread_exit`. Enqueued;
+// it runs after the caller leaves the syscall.
 pub fn createUserThread(parent: *proc.Process, pc: usize, arg: u64) !*proc.Thread {
+    return startUser(parent, pc, true, .{ .arg = arg });
+}
+
+fn startUser(parent: *proc.Process, pc: usize, enqueue: bool, entry: UserEntry) !*proc.Thread {
     const thread = try allocKthread(parent);
     errdefer abandonKthread(thread);
 
     const user_stack_base = try aspace.takeUserStack(parent);
     errdefer aspace.releaseUserStack(parent, user_stack_base);
-    try setupThreadStack(&parent.vmm, user_stack_base, pc, arg, &thread.ctx);
+    try setupUserStack(&parent.vmm, user_stack_base, pc, entry, &thread.ctx);
     thread.user_stack = user_stack_base;
 
-    publishThread(parent, thread, true);
+    publishThread(parent, thread, enqueue);
     return thread;
 }
 
@@ -77,7 +77,7 @@ fn allocKthread(parent: *proc.Process) !*proc.Thread {
     errdefer kstack.free(stack.phys, stack.base);
     const fpu_state = try allocator.create(cpu.FpuState);
     errdefer allocator.destroy(fpu_state);
-    cpu.initFpuState(fpu_state);
+    fpu_state.* = .{};
     thread.* = .{
         .tid = 0,
         .status = .ready,
@@ -109,7 +109,7 @@ fn setupUserStack(
     space: *vmm.VMM,
     stack_base: usize,
     pc: usize,
-    argv: []const []const u8,
+    entry: UserEntry,
     ctx: *cpu.Context,
 ) !void {
     const stack_phys = pmm.alloc(state.stack_pages) orelse return error.OutOfMemory;
@@ -117,29 +117,20 @@ fn setupUserStack(
     // Page below `stack_base` is the slot guard; left unmapped.
     try space.map(stack_base, stack_phys, state.stack_size, user_stack_flags);
     errdefer space.unmap(stack_base, state.stack_size) catch {};
-    const frame = try setupUserArgv(stack_phys, stack_base, argv);
-    applyUserRegs(ctx, pc, frame);
-}
-
-fn setupThreadStack(
-    space: *vmm.VMM,
-    stack_base: usize,
-    pc: usize,
-    arg: u64,
-    ctx: *cpu.Context,
-) !void {
-    const stack_phys = pmm.alloc(state.stack_pages) orelse return error.OutOfMemory;
-    errdefer pmm.free(stack_phys, state.stack_pages);
-    try space.map(stack_base, stack_phys, state.stack_size, user_stack_flags);
-    errdefer space.unmap(stack_base, state.stack_size) catch {};
     const mem = virt.toHH([*]u8, stack_phys)[0..state.stack_size];
-    // Same entry slot as `_start`: rsp ≡ 8 (mod 16), empty return word.
-    writeU64(mem, state.stack_size - @sizeOf(u64), 0);
-    applyUserRegs(ctx, pc, .{
-        .rsp = @intCast(stack_base + state.stack_size - @sizeOf(u64)),
-        .argc = 0,
-        .argv_va = arg,
-    });
+    const frame: ArgvFrame = switch (entry) {
+        .argv => |argv| try setupUserArgv(mem, stack_base, argv),
+        .arg => |arg| blk: {
+            // Same entry slot as `_start`: rsp ≡ 8 (mod 16), empty return word.
+            writeU64(mem, state.stack_size - @sizeOf(u64), 0);
+            break :blk .{
+                .rsp = @intCast(stack_base + state.stack_size - @sizeOf(u64)),
+                .argc = 0,
+                .argv_va = arg,
+            };
+        },
+    };
+    applyUserRegs(ctx, pc, frame);
 }
 
 pub fn stop(thread: *proc.Thread) void {
@@ -184,8 +175,7 @@ fn applyUserRegs(ctx: *cpu.Context, pc: usize, frame: ArgvFrame) void {
 }
 
 // argv is `{ptr,len}` slices on the stack; rdi=ptr, rsi=count. No NULs.
-fn setupUserArgv(stack_phys: usize, stack_va: usize, argv: []const []const u8) error{OutOfMemory}!ArgvFrame {
-    const mem = virt.toHH([*]u8, stack_phys)[0..state.stack_size];
+fn setupUserArgv(mem: []u8, stack_va: usize, argv: []const []const u8) error{OutOfMemory}!ArgvFrame {
     var off: usize = state.stack_size;
 
     var strs: [state.max_argv]struct { va: usize, len: usize } = undefined;

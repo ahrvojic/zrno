@@ -41,6 +41,23 @@ pub fn printErr(prefix: []const u8, err: i64) void {
     eprint("\n");
 }
 
+pub fn eachPath(argv: []const []const u8, usage: []const u8, op: *const fn ([]const u8) i64) u64 {
+    if (argv.len < 2) {
+        eprint(usage);
+        return 1;
+    }
+    var status: u64 = 0;
+    for (argv[1..]) |path| {
+        const rc = op(path);
+        if (rc < 0) {
+            eprint(path);
+            printErr(": err ", rc);
+            status = 1;
+        }
+    }
+    return status;
+}
+
 pub fn parseU64(s: []const u8) ?u64 {
     if (s.len == 0) return null;
     var v: u64 = 0;

@@ -13,12 +13,6 @@ pub fn BoundedArray(comptime T: type, comptime capacity: usize) type {
             self.len += 1;
         }
 
-        pub fn pop(self: *Self) ?T {
-            if (self.len == 0) return null;
-            self.len -= 1;
-            return self.buffer[self.len];
-        }
-
         pub fn swapRemove(self: *Self, index: usize) T {
             std.debug.assert(index < self.len);
             const item = self.buffer[index];
@@ -34,23 +28,15 @@ pub fn BoundedArray(comptime T: type, comptime capacity: usize) type {
         pub fn constSlice(self: *const Self) []const T {
             return self.buffer[0..self.len];
         }
-
-        pub fn resize(self: *Self, new_len: usize) error{Overflow}!void {
-            if (new_len > capacity) return error.Overflow;
-            self.len = new_len;
-        }
     };
 }
 
-test "append pop slice" {
+test "append and slice" {
     var a = BoundedArray(u8, 4){};
     try a.append(1);
     try a.append(2);
     try std.testing.expectEqualSlices(u8, &.{ 1, 2 }, a.constSlice());
-    try std.testing.expectEqual(2, a.pop().?);
-    try std.testing.expectEqualSlices(u8, &.{1}, a.slice());
-    try std.testing.expectEqual(1, a.pop().?);
-    try std.testing.expect(a.pop() == null);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2 }, a.slice());
 }
 
 test "swapRemove last and middle" {
@@ -72,10 +58,3 @@ test "append at capacity is Overflow" {
     try std.testing.expectEqualSlices(u8, &.{ 1, 2 }, a.constSlice());
 }
 
-test "resize zero clears; overflow is rejected" {
-    var a = BoundedArray(u8, 2){};
-    try a.append(1);
-    try a.resize(0);
-    try std.testing.expectEqual(0, a.constSlice().len);
-    try std.testing.expectError(error.Overflow, a.resize(3));
-}

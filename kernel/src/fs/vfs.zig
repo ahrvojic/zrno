@@ -703,13 +703,18 @@ fn textOf(node: *Node, buf: []u8) []const u8 {
     return buf[0..node.readAt(0, buf)];
 }
 
-test "an owned file grows by whole pages" {
-    var tar: ustar.Fixture = .{};
+// Borrowed initramfs bytes point into `tar`, so it must outlive `t`.
+fn mountFixture(t: *Tree, tar: *ustar.Fixture) !void {
     tar.addFile("init", "elf");
-    var t: Tree = .{};
-    defer t.deinit();
     try t.mount(tar.finish());
     try t.mountTmp(std.testing.allocator);
+}
+
+test "an owned file grows by whole pages" {
+    var tar: ustar.Fixture = .{};
+    var t: Tree = .{};
+    defer t.deinit();
+    try mountFixture(&t, &tar);
 
     var page: [block_size]u8 = undefined;
     @memset(&page, 'a');
@@ -723,11 +728,9 @@ test "an owned file grows by whole pages" {
 
 test "tmp ramfs creates, writes, and unlinks" {
     var tar: ustar.Fixture = .{};
-    tar.addFile("init", "elf");
     var t: Tree = .{};
     defer t.deinit();
-    try t.mount(tar.finish());
-    try t.mountTmp(std.testing.allocator);
+    try mountFixture(&t, &tar);
 
     try std.testing.expectEqualStrings("tmp", (try t.walk("/")).childAt(1).?.name());
     try std.testing.expectError(error.ReadOnly, t.openPath("/init", .write, true));
@@ -770,11 +773,9 @@ test "tmp ramfs creates, writes, and unlinks" {
 
 test "tmp directories nest, and rmdir refuses a non-empty dir" {
     var tar: ustar.Fixture = .{};
-    tar.addFile("init", "elf");
     var t: Tree = .{};
     defer t.deinit();
-    try t.mount(tar.finish());
-    try t.mountTmp(std.testing.allocator);
+    try mountFixture(&t, &tar);
 
     try t.mkdirPath("/tmp/a");
     try t.mkdirPath("/tmp/a/b");
@@ -801,11 +802,9 @@ test "tmp directories nest, and rmdir refuses a non-empty dir" {
 
 test "rename moves a heap node and replaces a file or empty directory" {
     var tar: ustar.Fixture = .{};
-    tar.addFile("init", "elf");
     var t: Tree = .{};
     defer t.deinit();
-    try t.mount(tar.finish());
-    try t.mountTmp(std.testing.allocator);
+    try mountFixture(&t, &tar);
 
     const file = try t.openPath("/tmp/a", .write, true);
     _ = try file.node.writeAt(0, "hello");
@@ -852,11 +851,9 @@ test "rename moves a heap node and replaces a file or empty directory" {
 
 test "relative paths start at the given directory" {
     var tar: ustar.Fixture = .{};
-    tar.addFile("init", "elf");
     var t: Tree = .{};
     defer t.deinit();
-    try t.mount(tar.finish());
-    try t.mountTmp(std.testing.allocator);
+    try mountFixture(&t, &tar);
 
     try t.mkdirPath("/tmp/a");
     const dir = try t.walk("/tmp/a");
@@ -890,11 +887,9 @@ test "relative paths start at the given directory" {
 
 test "pathOf rebuilds a path from parent links" {
     var tar: ustar.Fixture = .{};
-    tar.addFile("init", "elf");
     var t: Tree = .{};
     defer t.deinit();
-    try t.mount(tar.finish());
-    try t.mountTmp(std.testing.allocator);
+    try mountFixture(&t, &tar);
 
     var buf: [32]u8 = undefined;
     try std.testing.expectEqualStrings("/", buf[0..try t.pathOf(try t.walk("/"), &buf)]);

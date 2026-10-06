@@ -383,7 +383,6 @@ fn enableFpu() void {
 }
 
 pub const FpuState = fpu.State;
-pub const initFpuState = fpu.initState;
 
 pub fn saveFpu(state: *FpuState) void {
     xsaveOp(false, state);

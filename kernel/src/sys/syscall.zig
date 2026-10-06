@@ -349,10 +349,7 @@ fn sys_uptime() u64 {
 
 fn sys_open(ctx: *cpu.Context) u64 {
     var buf: [max_path]u8 = undefined;
-    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return switch (err) {
-        error.Fault => errval(EFAULT),
-        error.NameTooLong => errval(ENAMETOOLONG),
-    };
+    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return pathErr(err);
     const flags = ctx.rdx;
     if (flags & ~(open_write | open_create | open_keep) != 0) return errval(EINVAL);
     const want_write = flags & open_write != 0;
@@ -373,24 +370,15 @@ fn sys_open(ctx: *cpu.Context) u64 {
 fn sys_rename(ctx: *cpu.Context) u64 {
     var old_buf: [max_path]u8 = undefined;
     var new_buf: [max_path]u8 = undefined;
-    const old_path = copyUserString(ctx.rdi, ctx.rsi, &old_buf) catch |err| return switch (err) {
-        error.Fault => errval(EFAULT),
-        error.NameTooLong => errval(ENAMETOOLONG),
-    };
-    const new_path = copyUserString(ctx.rdx, ctx.r10, &new_buf) catch |err| return switch (err) {
-        error.Fault => errval(EFAULT),
-        error.NameTooLong => errval(ENAMETOOLONG),
-    };
+    const old_path = copyUserString(ctx.rdi, ctx.rsi, &old_buf) catch |err| return pathErr(err);
+    const new_path = copyUserString(ctx.rdx, ctx.r10, &new_buf) catch |err| return pathErr(err);
     vfs.renamePathFrom(cpu.currentProcess().cwd, old_path, new_path) catch |err| return fsErr(err);
     return 0;
 }
 
 fn sys_chdir(ctx: *cpu.Context) u64 {
     var buf: [max_path]u8 = undefined;
-    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return switch (err) {
-        error.Fault => errval(EFAULT),
-        error.NameTooLong => errval(ENAMETOOLONG),
-    };
+    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return pathErr(err);
     const process = cpu.currentProcess();
     const node = vfs.walkFrom(process.cwd, path) catch |err| return fsErr(err);
     if (!node.isDir()) return errval(ENOTDIR);
@@ -491,10 +479,7 @@ fn pollWait(slot: *PollFd) ?*const anyopaque {
 
 fn sysPath(ctx: *cpu.Context, op: *const fn (*vfs.Node, []const u8) vfs.Error!void) u64 {
     var buf: [max_path]u8 = undefined;
-    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return switch (err) {
-        error.Fault => errval(EFAULT),
-        error.NameTooLong => errval(ENAMETOOLONG),
-    };
+    const path = copyUserString(ctx.rdi, ctx.rsi, &buf) catch |err| return pathErr(err);
     op(cpu.currentProcess().cwd, path) catch |err| return fsErr(err);
     return 0;
 }
@@ -759,10 +744,17 @@ fn userSpace() *vmm.VMM {
     return &cpu.currentProcess().vmm;
 }
 
-fn argvErr(err: error{ Fault, NameTooLong, TooMany }) u64 {
+fn pathErr(err: error{ Fault, NameTooLong }) u64 {
     return switch (err) {
         error.Fault => errval(EFAULT),
         error.NameTooLong => errval(ENAMETOOLONG),
+    };
+}
+
+fn argvErr(err: error{ Fault, NameTooLong, TooMany }) u64 {
+    return switch (err) {
+        error.Fault => pathErr(error.Fault),
+        error.NameTooLong => pathErr(error.NameTooLong),
         error.TooMany => errval(E2BIG),
     };
 }

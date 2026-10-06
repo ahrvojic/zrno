@@ -62,20 +62,22 @@ fn readLine(buf: *[256]u8) ?[]u8 {
 }
 
 fn help() void {
-    lib.print("help          commands\n");
-    lib.print("yield         yield the CPU\n");
-    lib.print("sleep [ms]    sleep (default 1000)\n");
-    lib.print("uptime        time since boot\n");
-    lib.print("exit [code]   exit the shell\n");
-    lib.print("reboot        reboot the machine\n");
-    lib.print("poweroff      ACPI S5 power off\n");
-    lib.print("cd [dir]      change directory (default /)\n");
-    lib.print("[name] [args] spawn /name\n");
-    lib.print("a | b         pipe a stdout to b stdin\n");
-    lib.print("cmd < file    stdin from file\n");
-    lib.print("cmd > file    stdout to file\n");
-    lib.print("cmd >> file   append stdout to file\n");
-    lib.print("Ctrl-C        stop the running command\n");
+    lib.print(
+        \\help          commands
+        \\yield         yield the CPU
+        \\sleep [ms]    sleep (default 1000)
+        \\uptime        time since boot
+        \\exit [code]   exit the shell
+        \\reboot        reboot the machine
+        \\poweroff      ACPI S5 power off
+        \\cd [dir]      change directory (default /)
+        \\[name] [args] spawn /name
+        \\a | b         pipe a stdout to b stdin
+        \\cmd < file    stdin from file
+        \\cmd > file    stdout to file
+        \\cmd >> file   append stdout to file
+        \\Ctrl-C        stop the running command
+    );
 }
 
 fn optU64(arg: ?[]const u8, default: u64, usage: []const u8) ?u64 {
