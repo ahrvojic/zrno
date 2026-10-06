@@ -36,6 +36,7 @@ pub const nr_wake_word: u64 = 0x15; // rdi=addr; wake this process's waiters; re
 pub const nr_brk: u64 = 0x20; // rdi=0 query; else set program break, return it
 pub const nr_mmap: u64 = 0x21; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX, zero page on first touch
 pub const nr_munmap: u64 = 0x22; // rdi=addr, rsi=len; one whole mapping from mmap
+pub const nr_map_file: u64 = 0x23; // rdi=fd, rsi=len, rdx=prot; share the file's frames, NX
 // 0x30 file
 pub const nr_open: u64 = 0x30; // rdi/rsi=path, rdx=flags (0 = read)
 pub const nr_close: u64 = 0x31;
@@ -167,6 +168,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_brk => sys_brk(ctx),
         nr_mmap => sys_mmap(ctx),
         nr_munmap => sys_munmap(ctx),
+        nr_map_file => sys_map_file(ctx),
         nr_open => sys_open(ctx),
         nr_close => sys_close(ctx),
         nr_read => sys_read(ctx),
@@ -593,9 +595,8 @@ fn sys_mmap(ctx: *cpu.Context) u64 {
     const len: usize = @intCast(ctx.rsi);
     const prot = ctx.rdx;
     if (addr != 0) return errval(EINVAL);
-    if (prot & prot_exec != 0) return errval(EINVAL);
-    if (prot & (prot_read | prot_write) == 0) return errval(EINVAL);
-    return sched.mapAnon(len, prot & prot_write != 0) catch |err| mmErr(err);
+    const writable = protWritable(prot) orelse return errval(EINVAL);
+    return sched.mapAnon(len, writable) catch |err| mmErr(err);
 }
 
 fn sys_munmap(ctx: *cpu.Context) u64 {
@@ -603,6 +604,17 @@ fn sys_munmap(ctx: *cpu.Context) u64 {
     const len: usize = @intCast(ctx.rsi);
     sched.unmapAnon(addr, len) catch |err| return mmErr(err);
     return 0;
+}
+
+fn sys_map_file(ctx: *cpu.Context) u64 {
+    const f = fdFile(ctx.rdi) orelse return errval(EBADF);
+    const opened = switch (f.kind) {
+        .file => |open| open,
+        else => return errval(EINVAL),
+    };
+    const writable = protWritable(ctx.rdx) orelse return errval(EINVAL);
+    if (writable and !opened.can_write) return errval(EACCES);
+    return sched.mapFile(opened.node, @intCast(ctx.rsi), writable) catch |err| mmErr(err);
 }
 
 fn sys_getdents(ctx: *cpu.Context) u64 {
@@ -752,6 +764,12 @@ fn spawnErr(err: exec.SpawnError) u64 {
         error.BadElf => errval(ENOEXEC),
         error.BadFd => errval(EBADF),
     };
+}
+
+fn protWritable(prot: u64) ?bool {
+    if (prot & prot_exec != 0) return null;
+    if (prot & (prot_read | prot_write) == 0) return null;
+    return prot & prot_write != 0;
 }
 
 fn mmErr(err: error{ Invalid, OutOfMemory }) u64 {

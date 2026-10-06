@@ -20,6 +20,7 @@ pub const startUserThread = thread.startUserThread;
 pub const createUserThread = thread.createUserThread;
 pub const setBrk = aspace.setBrk;
 pub const mapAnon = aspace.mapAnon;
+pub const mapFile = aspace.mapFile;
 pub const unmapAnon = aspace.unmapAnon;
 pub const fillUserPage = aspace.fillUserPage;
 pub const isKernelStackGuard = kstack.isGuard;
@@ -382,6 +383,7 @@ fn dismantle(process: *proc.Process, exit_code: u8) void {
         node = n.next;
         thread.stop(t);
     }
+    aspace.releaseMappings(process);
     aspace.dropAddressSpace(&process.vmm);
 }
 

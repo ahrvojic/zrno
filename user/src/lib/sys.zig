@@ -20,6 +20,7 @@ pub const nr_wake_word: u64 = 0x15;
 pub const nr_brk: u64 = 0x20;
 pub const nr_mmap: u64 = 0x21;
 pub const nr_munmap: u64 = 0x22;
+pub const nr_map_file: u64 = 0x23;
 // 0x30 file
 pub const nr_open: u64 = 0x30;
 pub const nr_close: u64 = 0x31;
@@ -292,6 +293,12 @@ pub fn mmap(addr: usize, len: usize, prot: u64) i64 {
 
 pub fn munmap(addr: usize, len: usize) i64 {
     return syscall3(nr_munmap, addr, len, 0);
+}
+
+/// Map `len` bytes of an owned file into this process. The frames are shared
+/// with the file. `munmap` drops this mapping's references and leaves the file.
+pub fn mapFile(fd: usize, len: usize, prot: u64) i64 {
+    return syscall3(nr_map_file, fd, len, prot);
 }
 
 pub fn reboot() noreturn {

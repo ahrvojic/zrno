@@ -1,16 +1,18 @@
 const std = @import("std");
 
 const cpu = @import("../sys/cpu.zig");
+const frame = @import("../mm/frame.zig");
+const heap = @import("../mm/heap.zig");
 const maplist = @import("maplist.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
 const state = @import("state.zig");
+const vfs = @import("../fs/vfs.zig");
 const vmm = @import("../mm/vmm.zig");
 
 // Cap on `brk - brk_start`. Prevents a single call from allocating up to mmap.
 const max_heap: usize = 32 * 1024 * 1024;
 const max_mmap: usize = 32 * 1024 * 1024;
-const heap_flags = vmm.Flags{ .present = true, .writable = true, .user = true, .noexec = true };
 
 // Unique PML4 of a process that died while CR3 still pointed at it.
 // Freed on the next `schedule` that is no longer using that root.
@@ -56,7 +58,7 @@ pub fn setBrk(addr: usize) error{ Invalid, OutOfMemory }!usize {
     if (old_pg == new_pg) return addr;
 
     if (addr > old) {
-        mapPages(&process.vmm, old_pg, new_pg - old_pg, heap_flags) catch {
+        mapPages(&process.vmm, old_pg, new_pg - old_pg, userFlags(true)) catch {
             process.brk = old;
             return error.OutOfMemory;
         };
@@ -79,19 +81,69 @@ fn mapPages(space: *vmm.VMM, addr: usize, size: usize, flags: vmm.Flags) error{O
 }
 
 fn unmapPages(space: *vmm.VMM, addr: usize, size: usize) void {
-    unmapSpan(space, addr, size, false);
-}
-
-fn unmapSpan(space: *vmm.VMM, addr: usize, size: usize, holes: bool) void {
     var off: usize = 0;
     while (off < size) : (off += pmm.page_size) {
-        const phys = space.virtToPhys(addr + off) catch {
-            if (!holes) @panic("user page unmap");
-            continue;
-        };
+        const phys = space.virtToPhys(addr + off) catch @panic("user page unmap");
         space.unmap(addr + off, pmm.page_size) catch @panic("user page unmap");
         pmm.free(std.mem.alignBackward(usize, phys, pmm.page_size), 1);
     }
+}
+
+fn dropFrames(space: *vmm.VMM, map: maplist.Map) void {
+    for (map.pages, 0..) |slot, i| {
+        const fr = slot orelse continue;
+        space.unmap(map.base + i * pmm.page_size, pmm.page_size) catch @panic("user page unmap");
+        fr.release();
+    }
+    heap.kernel_heap.allocator().free(map.pages);
+}
+
+fn pageBytes(len: usize) error{Invalid}!usize {
+    if (len == 0 or len > std.math.maxInt(usize) - (pmm.page_size - 1)) return error.Invalid;
+    return std.mem.alignForward(usize, len, pmm.page_size);
+}
+
+fn reserve(process: *proc.Process, size: usize) error{OutOfMemory}!usize {
+    const old = process.mmap_next;
+    if (old < size) return error.OutOfMemory;
+    const base = old - size;
+    if (base < process.brk or state.user_mmap_top - base > max_mmap) return error.OutOfMemory;
+    return base;
+}
+
+fn userFlags(writable: bool) vmm.Flags {
+    return .{
+        .present = true,
+        .writable = writable,
+        .user = true,
+        .noexec = true,
+    };
+}
+
+fn frameSlots(n: usize) error{OutOfMemory}![]?*frame.Frame {
+    const slots = heap.kernel_heap.allocator().alloc(?*frame.Frame, n) catch return error.OutOfMemory;
+    @memset(slots, null);
+    return slots;
+}
+
+fn install(
+    process: *proc.Process,
+    size: usize,
+    writable: bool,
+    shared: bool,
+    pages: []?*frame.Frame,
+) error{OutOfMemory}!usize {
+    errdefer heap.kernel_heap.allocator().free(pages);
+    const base = try reserve(process, size);
+    process.maps.append(.{
+        .base = base,
+        .size = size,
+        .writable = writable,
+        .shared = shared,
+        .pages = pages,
+    }) catch return error.OutOfMemory;
+    process.mmap_next = base;
+    return base;
 }
 
 // Anonymous mmap. The kernel picks the address (`addr` hint must be 0).
@@ -102,38 +154,60 @@ pub fn mapAnon(len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
     const process = cpu.currentProcess();
     if (process.pid == state.kernel_pid) @panic("mmap kernel process");
 
-    // alignForward adds page_size-1 and panics on overflow in .safe.
-    if (len == 0 or len > std.math.maxInt(usize) - (pmm.page_size - 1)) return error.Invalid;
-    const size = std.mem.alignForward(usize, len, pmm.page_size);
+    const size = try pageBytes(len);
+    const pages = try frameSlots(size / pmm.page_size);
+    return install(process, size, writable, false, pages);
+}
 
-    const old = process.mmap_next;
-    if (old < size) return error.OutOfMemory;
-    const base = old - size;
-    if (base < process.brk or state.user_mmap_top - base > max_mmap) return error.OutOfMemory;
-    process.maps.append(.{ .base = base, .size = size, .writable = writable }) catch return error.OutOfMemory;
-    process.mmap_next = base;
+/// Map the owned file's frames into this process. The file keeps its
+/// references, so `munmap` leaves the bytes in place.
+pub fn mapFile(node: *vfs.Node, len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
+    state.expectInit();
+    const process = cpu.currentProcess();
+    if (process.pid == state.kernel_pid) @panic("mmap kernel process");
+
+    const size = try pageBytes(len);
+    const pages = try frameSlots(size / pmm.page_size);
+    const base = try install(process, size, writable, true, pages);
+
+    var done: usize = 0;
+    errdefer if (maplist.remove(&process.maps, &process.mmap_next, base, size)) |old| {
+        dropFrames(&process.vmm, old);
+    };
+    const flags = userFlags(writable);
+    while (done < size) : (done += pmm.page_size) {
+        const fr = node.retainPage(done) orelse return error.Invalid;
+        process.vmm.map(base + done, fr.phys, pmm.page_size, flags) catch {
+            fr.release();
+            return error.OutOfMemory;
+        };
+        pages[done / pmm.page_size] = fr;
+    }
     return base;
 }
 
+pub fn releaseMappings(process: *proc.Process) void {
+    for (process.maps.slice()) |m| dropFrames(&process.vmm, m);
+    process.maps.len = 0;
+}
+
 /// Allocate the zero page for an anonymous reservation. False when `addr`
-/// is outside one, the access writes a read-only reservation, or the
-/// allocator is empty. `pmm.alloc` supplies the zeros.
+/// is outside one, the page is a file mapping, the access writes a
+/// read-only reservation, or the allocator is empty. The frame is zeroed.
 pub fn fillUserPage(addr: usize, write: bool) bool {
     const process = cpu.currentProcess();
     const page = std.mem.alignBackward(usize, addr, pmm.page_size);
     const map = maplist.find(&process.maps, page) orelse return false;
-    if (write and !map.writable) return false;
+    if (map.shared or (write and !map.writable)) return false;
+    const slot = (page - map.base) / pmm.page_size;
+    if (map.pages[slot] != null) return false;
 
-    const phys = pmm.alloc(1) orelse return false;
-    process.vmm.map(page, phys, pmm.page_size, .{
-        .present = true,
-        .writable = map.writable,
-        .user = true,
-        .noexec = true,
-    }) catch {
-        pmm.free(phys, 1);
+    const fr = frame.alloc() orelse return false;
+    process.vmm.map(page, fr.phys, pmm.page_size, userFlags(map.writable)) catch {
+        fr.release();
         return false;
     };
+    map.pages[slot] = fr;
     return true;
 }
 
@@ -145,13 +219,11 @@ pub fn unmapAnon(addr: usize, len: usize) error{Invalid}!void {
     const process = cpu.currentProcess();
     if (process.pid == state.kernel_pid) @panic("munmap kernel process");
 
-    if (len == 0 or len > std.math.maxInt(usize) - (pmm.page_size - 1)) return error.Invalid;
     if (!std.mem.isAligned(addr, pmm.page_size)) return error.Invalid;
-    const size = std.mem.alignForward(usize, len, pmm.page_size);
+    const size = pageBytes(len) catch return error.Invalid;
 
-    if (!maplist.remove(&process.maps, &process.mmap_next, addr, size)) return error.Invalid;
-    // A hole is a page the program never touched.
-    unmapSpan(&process.vmm, addr, size, true);
+    const old = maplist.remove(&process.maps, &process.mmap_next, addr, size) orelse return error.Invalid;
+    dropFrames(&process.vmm, old);
 }
 
 pub fn dropAddressSpace(space: *vmm.VMM) void {

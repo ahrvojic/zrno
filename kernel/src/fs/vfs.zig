@@ -1,13 +1,18 @@
 //! One name tree. `/` is the initramfs: static nodes, bytes borrowed from the
 //! ustar image, mounted before the heap exists. `/tmp` is a ramfs whose
-//! directories and files come from the heap. A file's bytes are page-sized
-//! heap blocks.
+//! directories come from the heap. A file's bytes are page-sized blocks:
+//! refcounted frames in the kernel, heap pages in host tests.
 
 const std = @import("std");
 
+const builtin = @import("builtin");
+const frame = @import("../mm/frame.zig");
 const heap = @import("../mm/heap.zig");
 const mem = @import("../lib/mem.zig");
 const ustar = @import("ustar.zig");
+
+const freestanding = builtin.os.tag == .freestanding;
+const Block = if (freestanding) *frame.Frame else []u8;
 
 pub const max_files: usize = 32;
 pub const max_name: usize = ustar.max_name;
@@ -49,25 +54,30 @@ pub const Node = struct {
 
     const Owned = struct {
         heap: std.mem.Allocator,
-        blocks: [][]u8 = &.{},
+        blocks: []Block = &.{},
         len: usize = 0,
 
         fn clear(self: *Owned) void {
-            for (self.blocks) |page| self.heap.free(page);
+            for (self.blocks) |block| {
+                if (comptime freestanding) block.release() else self.heap.free(block);
+            }
             if (self.blocks.len != 0) self.heap.free(self.blocks);
             self.blocks = &.{};
             self.len = 0;
         }
 
         fn addBlock(self: *Owned) error{OutOfMemory}!void {
-            const page = try self.heap.alloc(u8, block_size);
-            const grown = self.heap.alloc([]u8, self.blocks.len + 1) catch |err| {
-                self.heap.free(page);
+            const block: Block = if (comptime freestanding)
+                frame.alloc() orelse return error.OutOfMemory
+            else
+                try self.heap.alloc(u8, block_size);
+            const grown = self.heap.alloc(Block, self.blocks.len + 1) catch |err| {
+                if (comptime freestanding) block.release() else self.heap.free(block);
                 return err;
             };
             @memcpy(grown[0..self.blocks.len], self.blocks);
             if (self.blocks.len != 0) self.heap.free(self.blocks);
-            grown[self.blocks.len] = page;
+            grown[self.blocks.len] = block;
             self.blocks = grown;
         }
 
@@ -80,7 +90,7 @@ pub const Node = struct {
             var done: usize = 0;
             while (done < buf.len) {
                 const at = off + done;
-                const page = self.blocks[at / block_size];
+                const page = blockBytes(self.blocks[at / block_size]);
                 const page_off = at % block_size;
                 const n = @min(buf.len - done, block_size - page_off);
                 const file_bytes = page[page_off..][0..n];
@@ -98,7 +108,30 @@ pub const Node = struct {
             if (end > self.len) self.len = end;
             return src.len;
         }
+
+        fn blockBytes(block: Block) []u8 {
+            if (comptime freestanding) return block.bytes();
+            return block;
+        }
     };
+
+    /// Take another reference to the file page that holds `off`. Null when
+    /// this node has no frame there (a directory, an initramfs file, or a
+    /// hole past the last block).
+    pub fn retainPage(self: *Node, off: usize) ?*frame.Frame {
+        if (comptime freestanding) {
+            const owned = switch (self.kind) {
+                .owned => |*o| o,
+                else => return null,
+            };
+            const at = off / block_size;
+            if (at >= owned.blocks.len) return null;
+            const page = owned.blocks[at];
+            page.retain();
+            return page;
+        }
+        return null;
+    }
 
     /// `dir` null is the static initramfs. A set allocator owns the node.
     const Kind = union(enum) {
