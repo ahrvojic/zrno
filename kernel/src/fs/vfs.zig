@@ -66,6 +66,18 @@ pub const Node = struct {
             self.len = 0;
         }
 
+        // Keep a frame another mapping still holds, and zero it.
+        fn truncate(self: *Owned) void {
+            if (comptime freestanding) {
+                for (self.blocks) |block| if (block.refs != 1) {
+                    self.len = 0;
+                    for (self.blocks) |kept| @memset(blockBytes(kept), 0);
+                    return;
+                };
+            }
+            self.clear();
+        }
+
         fn addBlock(self: *Owned) error{OutOfMemory}!void {
             const block: Block = if (comptime freestanding)
                 frame.alloc() orelse return error.OutOfMemory
@@ -220,7 +232,7 @@ pub const Node = struct {
 
     fn truncate(self: *Node) void {
         switch (self.kind) {
-            .owned => |*o| o.clear(),
+            .owned => |*o| o.truncate(),
             else => {},
         }
     }
@@ -324,14 +336,15 @@ pub const Tree = struct {
             start;
         var rest = path;
         while (nextComponent(&rest)) |part| {
+            if (!node.isDir()) return error.NotDir;
             if (std.mem.eql(u8, part, ".")) continue;
             if (std.mem.eql(u8, part, "..")) {
                 if (node.parent) |p| node = p;
                 continue;
             }
-            if (!node.isDir()) return error.NotDir;
             node = lookupChild(node, part) orelse return error.NoEnt;
         }
+        if (endsSlash(path) and !node.isDir()) return error.NotDir;
         return node;
     }
 
@@ -391,6 +404,7 @@ pub const Tree = struct {
             error.NotDir => return error.NotDir,
             error.NoEnt => {
                 if (!create) return error.NoEnt;
+                if (endsSlash(path)) return error.NotDir;
                 const node = try self.createAt(start, path);
                 return .{ .node = node, .can_write = true };
             },
@@ -405,6 +419,7 @@ pub const Tree = struct {
     pub fn unlinkPathFrom(self: *Tree, start: *Node, path: []const u8) Error!void {
         const at = try self.parentName(start, path);
         const child = lookupChild(at.parent, at.name) orelse return error.NoEnt;
+        if (endsSlash(path) and !child.isDir()) return error.NotDir;
         if (child.isDir()) return error.IsDir;
         if (!child.isWritableFile() or !at.parent.isWritableDir()) return error.ReadOnly;
         detach(at.parent, child);
@@ -448,6 +463,7 @@ pub const Tree = struct {
         const from = try self.parentName(start, old_path);
         const to = try self.parentName(start, new_path);
         const node = lookupChild(from.parent, from.name) orelse return error.NoEnt;
+        if ((endsSlash(old_path) or endsSlash(new_path)) and !node.isDir()) return error.NotDir;
         if (from.parent == to.parent and std.mem.eql(u8, from.name, to.name)) return;
         if (node.isDir() and isInside(node, to.parent)) return error.Invalid;
         if (!from.parent.isWritableDir() or !to.parent.isWritableDir()) return error.ReadOnly;
@@ -609,6 +625,10 @@ fn freeHeap(node: *Node) void {
     node.discard();
 }
 
+fn endsSlash(path: []const u8) bool {
+    return std.mem.endsWith(u8, path, "/");
+}
+
 fn nextComponent(path: *[]const u8) ?[]const u8 {
     var s = path.*;
     while (s.len > 0 and s[0] == '/') s = s[1..];
@@ -721,6 +741,12 @@ test "tmp ramfs creates, writes, and unlinks" {
     const created = try t.openPath("/tmp/a", .write, true);
     _ = try created.node.writeAt(0, "hello");
     try std.testing.expectEqualStrings("hello", textOf(try t.walk("/tmp/a"), &buf));
+    try std.testing.expectError(error.NotDir, t.openPath("/tmp/a/", .write, true));
+    try std.testing.expectEqualStrings("hello", textOf(created.node, &buf));
+    try std.testing.expectError(error.NotDir, t.openPath("/tmp/new/", .write, true));
+    try std.testing.expectError(error.NoEnt, t.walk("/tmp/new"));
+    try std.testing.expectError(error.NotDir, t.unlinkPath("/tmp/a/"));
+    try std.testing.expectError(error.NotDir, t.renamePath("/tmp/a", "/tmp/b/"));
 
     const again = try t.openPath("/tmp/a", .write, false);
     try std.testing.expectEqual(@as(usize, 0), again.node.size());
@@ -738,6 +764,7 @@ test "tmp ramfs creates, writes, and unlinks" {
     again.node.release();
 
     try std.testing.expectError(error.NotDir, t.walk("/init/x"));
+    try std.testing.expectError(error.NotDir, t.walk("/init/.."));
     try std.testing.expectEqualStrings("elf", (try t.walk("/tmp/../init")).bytes().?);
 }
 
