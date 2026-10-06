@@ -62,9 +62,10 @@ const Fail = error{
 
 fn spawnFail(err: Fail) SpawnError {
     return switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
+        // Page-table allocation reports PTENotFound.
+        error.OutOfMemory, error.PTENotFound => error.OutOfMemory,
         error.BadFd => error.BadFd,
-        error.BadElf, error.WritableExecutable, error.OutOfRange, error.AlreadyMapped, error.PTENotFound => error.BadElf,
+        error.BadElf, error.WritableExecutable, error.OutOfRange, error.AlreadyMapped => error.BadElf,
     };
 }
 
