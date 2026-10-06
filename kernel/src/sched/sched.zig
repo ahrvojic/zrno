@@ -217,6 +217,11 @@ pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
 
     dismantle(process, exit_code);
 
+    // The waiter dies with this process and will not clear `foreground`.
+    if (foreground) |child| {
+        if (child.parent == process.pid) foreground = null;
+    }
+
     var reparented = false;
     var pnode = state.processes.first;
     while (pnode) |n| {
@@ -394,6 +399,7 @@ fn reapZombie(process: *proc.Process) WaitResult {
 }
 
 fn reap(process: *proc.Process) void {
+    if (foreground == process) foreground = null;
     state.dequeueProcess(process);
     heap.kernel_heap.allocator().destroy(process);
 }
