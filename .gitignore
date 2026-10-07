@@ -3,6 +3,7 @@ esp/
 ovmf/
 *.iso
 *.hdd
+zrno.dsk
 boot/.zig-cache/
 boot/zig-cache/
 boot/zig-out/

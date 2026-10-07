@@ -6,6 +6,7 @@ const cpu = @import("cpu.zig");
 const dsdt = @import("../acpi/dsdt.zig");
 const fadt = @import("../acpi/fadt.zig");
 const port = @import("port.zig");
+const vfs = @import("../fs/vfs.zig");
 
 const ps2_cmd_port: u16 = 0x64;
 const status_in_full: u8 = 1 << 1;
@@ -16,6 +17,7 @@ const slp_en: u16 = 1 << 13;
 
 pub fn perform() noreturn {
     cpu.interruptsOff();
+    vfs.sync();
     logger.info("reboot", .{});
     tryAcpiReset();
     pulseKeyboardReset();
@@ -24,6 +26,7 @@ pub fn perform() noreturn {
 
 pub fn poweroff() noreturn {
     cpu.interruptsOff();
+    vfs.sync();
     logger.info("poweroff", .{});
     tryAcpiSleep();
     logger.warn("S5 did not power off", .{});

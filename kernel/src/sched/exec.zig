@@ -46,7 +46,7 @@ fn loadPath(vm: *vmm.VMM, cwd: *vfs.Node, path: []const u8) SpawnError!elf.Loade
     if (n == 0) return elf.load(&space, &.{}) catch |err| spawnFail(err);
     const image = heap.kernel_heap.allocator().alloc(u8, n) catch return error.OutOfMemory;
     defer heap.kernel_heap.allocator().free(image);
-    _ = node.readAt(0, image);
+    _ = node.readAt(0, image) catch return error.OutOfMemory;
     return elf.load(&space, image) catch |err| spawnFail(err);
 }
 

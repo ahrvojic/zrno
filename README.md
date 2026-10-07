@@ -15,7 +15,7 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 - 1 kHz local APIC timer, calibrated from HPET, ACPI PM timer, or PIT channel 2
 - Processes, threads, and a preemptive round-robin scheduler
 - XSAVE/XRSTOR on context switch; userspace SSE/AVX/AVX2
-- Userspace: SYSCALL/SYSRET, read-only ustar `/` and a writable ramfs at `/tmp`, spawn/wait, thread/thread_exit/gettid, brk/mmap/munmap, pointer+length strings, spawn takes stdin/stdout/stderr fds
+- Userspace: SYSCALL/SYSRET, read-only ustar `/`, a block filesystem at `/tmp` (virtio-blk, or a RAM image), spawn/wait, thread/thread_exit/gettid, brk/mmap/munmap, pointer+length strings, spawn takes stdin/stdout/stderr fds
 - ACPI S5 poweroff and ACPI/8042 reboot
 - Boot spawns `/init` as pid 1; `/init` reaps orphans and restarts `/shell` on exit
 
@@ -30,7 +30,7 @@ To build and run (`make run`):
 - [QEMU](https://www.qemu.org) (`qemu-system-x86_64`)
 - `curl` and `tar` (`curl` fetches OVMF; `tar` packs the initramfs)
 
-`make run` serves `esp/` to OVMF as a FAT disk and attaches COM1 to the terminal (`-serial stdio`). Kernel logs and panics go there (115200 8N1). After boot, `/shell` accepts `help`, `reboot`, and `poweroff` (S5; QEMU exits). Ctrl-C stops the command the shell is waiting on.
+`make run` serves `esp/` to OVMF as a FAT disk, attaches `zrno.dsk` as a legacy virtio-blk device (`/tmp` survives poweroff), and attaches COM1 to the terminal (`-serial stdio`). Kernel logs and panics go there (115200 8N1). After boot, `/shell` accepts `help`, `reboot`, and `poweroff` (S5; QEMU exits). Ctrl-C stops the command the shell is waiting on.
 
 ## References
 

@@ -22,6 +22,7 @@ const serial = @import("dev/serial.zig");
 const timer = @import("dev/timer.zig");
 const video = @import("dev/video.zig");
 const vfs = @import("fs/vfs.zig");
+const virtio_blk = @import("dev/virtio_blk.zig");
 const vmm = @import("mm/vmm.zig");
 
 pub const panic = std.debug.FullPanic(lib_panic.panicImpl);
@@ -81,8 +82,19 @@ pub fn main(info: *const bootinfo.BootInfo) !void {
     try pmm.init();
     try vmm.init();
     heap.init();
-    // /tmp is a heap ramfs. The initramfs was mounted before the heap existed.
-    try vfs.mountTmp();
+    // /tmp is the block disk. virtio-blk replaces the RAM image when the
+    // device is present. The initramfs was mounted before the heap existed.
+    if (virtio_blk.init()) |dev| {
+        if (vfs.mountVirtio(dev.blocks, dev, virtio_blk.read, virtio_blk.write)) {
+            logger.info("virtio-blk {d} blocks", .{dev.blocks});
+        } else |err| {
+            logger.warn("virtio-blk: {s}", .{@errorName(err)});
+            virtio_blk.shutdown(dev);
+            try vfs.mountTmp();
+        }
+    } else {
+        try vfs.mountTmp();
+    }
     try acpi.init();
 
     // Framebuffer fields were copied in boot.init. Pixels stay reserved

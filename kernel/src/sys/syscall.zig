@@ -127,6 +127,7 @@ const max_argv: usize = state.max_argv;
 const max_arg: usize = 128;
 
 const ENOENT: i64 = 2;
+const EIO: i64 = 5;
 const E2BIG: i64 = 7;
 const ENOEXEC: i64 = 8;
 const EBADF: i64 = 9;
@@ -200,7 +201,10 @@ fn sys_read(ctx: *cpu.Context) u64 {
         .tty => return readPeek(tty, addr, len),
         .file => |*open| {
             var tmp: [max_io]u8 = undefined;
-            const n = open.node.readAt(open.pos, tmp[0..@min(tmp.len, len)]);
+            const n = open.node.readAt(open.pos, tmp[0..@min(tmp.len, len)]) catch |err| return switch (err) {
+                error.Io => errval(EIO),
+                error.OutOfMemory => errval(ENOMEM),
+            };
             if (n == 0) return 0;
             userSpace().copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
             open.pos += n;
@@ -819,6 +823,7 @@ fn fsErr(err: vfs.Error) u64 {
         error.Invalid => EINVAL,
         error.TooBig => EINVAL,
         error.OutOfMemory => ENOMEM,
+        error.Io => EIO,
     });
 }
 

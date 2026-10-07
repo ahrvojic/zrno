@@ -57,6 +57,10 @@ while [ "$n" -lt 90 ]; do
 done
 [ "$n" -lt 90 ] || fail "timeout waiting for READY."
 
+if ! grep -Fq "virtio-blk " "$out"; then
+    fail "virtio-blk did not attach"
+fi
+
 printf 'poweroff\n' >&3
 exec 3>&-
 

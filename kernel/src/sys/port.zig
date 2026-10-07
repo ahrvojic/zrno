@@ -44,3 +44,13 @@ pub inline fn outw(port: u16, value: u16) void {
         : .{ .memory = true }
     );
 }
+
+pub inline fn outl(port: u16, value: u32) void {
+    asm volatile (
+        \\outl %[value], %[port]
+        :
+        : [value] "{eax}" (value),
+          [port] "N{dx}" (port),
+        : .{ .memory = true }
+    );
+}

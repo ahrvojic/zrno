@@ -20,17 +20,23 @@ QEMUFLAGS := -M q35 -m 2G -serial stdio -cpu Broadwell
 # FAT disk whose root is this directory.
 ESP := esp
 QEMU_DISK := -drive file=fat:rw:$(abspath $(ESP)),format=raw,media=disk
+# Writable filesystem. Legacy virtio-blk: one queue, an I/O BAR.
+DISK := zrno.dsk
+QEMU_VIRTIO := -drive file=$(DISK),if=none,format=raw,id=vd0 -device virtio-blk-pci,drive=vd0,disable-modern=on
 
 .PHONY: all
 all: $(ESP)/EFI/BOOT/BOOTX64.EFI
 
+$(DISK):
+	truncate -s 8M $(DISK)
+
 .PHONY: run
-run: ovmf $(ESP)/EFI/BOOT/BOOTX64.EFI
-	$(QEMU) $(QEMUFLAGS) -bios ovmf/OVMF.fd $(QEMU_DISK)
+run: ovmf $(DISK) $(ESP)/EFI/BOOT/BOOTX64.EFI
+	$(QEMU) $(QEMUFLAGS) -bios ovmf/OVMF.fd $(QEMU_DISK) $(QEMU_VIRTIO)
 
 .PHONY: test-qemu
-test-qemu: ovmf $(ESP)/EFI/BOOT/BOOTX64.EFI
-	sh scripts/test-qemu.sh $(QEMU) -bios ovmf/OVMF.fd $(QEMU_DISK) $(QEMUFLAGS)
+test-qemu: ovmf $(DISK) $(ESP)/EFI/BOOT/BOOTX64.EFI
+	sh scripts/test-qemu.sh $(QEMU) -bios ovmf/OVMF.fd $(QEMU_DISK) $(QEMUFLAGS) $(QEMU_VIRTIO)
 
 ovmf:
 	mkdir -p ovmf
@@ -71,7 +77,7 @@ $(ESP)/EFI/BOOT/BOOTX64.EFI: boot kernel user/initramfs.tar
 
 .PHONY: clean
 clean:
-	rm -rf iso_root $(ESP) $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
+	rm -rf iso_root $(ESP) $(IMAGE_NAME).iso $(IMAGE_NAME).hdd $(DISK)
 	rm -rf kernel/.zig-cache kernel/zig-cache kernel/zig-out
 	rm -rf user/.zig-cache user/zig-cache user/zig-out
 	rm -rf boot/.zig-cache boot/zig-cache boot/zig-out

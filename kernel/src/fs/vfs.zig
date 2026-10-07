@@ -1,18 +1,19 @@
 //! One name tree. `/` is the initramfs: static nodes, bytes borrowed from the
-//! ustar image, mounted before the heap exists. `/tmp` is a ramfs whose
-//! directories come from the heap. A file's bytes are page-sized blocks:
-//! refcounted frames in the kernel, heap pages in host tests.
+//! ustar image, mounted before the heap exists. `/tmp` is a directory on the
+//! block disk. The heap nodes are the live index (open files, the current
+//! directory); the bytes and the names are the disk format.
 
 const std = @import("std");
 
 const builtin = @import("builtin");
+const blk = @import("blk.zig");
 const frame = @import("../mm/frame.zig");
 const heap = @import("../mm/heap.zig");
 const mem = @import("../lib/mem.zig");
 const ustar = @import("ustar.zig");
+const zrfs = @import("zrfs.zig");
 
 const freestanding = builtin.os.tag == .freestanding;
-const Block = if (freestanding) *frame.Frame else []u8;
 
 pub const max_files: usize = 32;
 pub const max_name: usize = ustar.max_name;
@@ -33,6 +34,7 @@ pub const Error = error{
     Invalid,
     TooBig,
     OutOfMemory,
+    Io,
 };
 
 pub const Open = struct {
@@ -50,99 +52,26 @@ pub const Node = struct {
     parent: ?*Node = null,
     next: ?*Node = null,
     child: ?*Node = null,
+    /// Set for a node stored on the block disk. The root of that disk is `/tmp`.
+    disk: ?*blk.Disk = null,
+    ino: u32 = 0,
     kind: Kind,
 
     const Owned = struct {
         heap: std.mem.Allocator,
-        blocks: []Block = &.{},
         len: usize = 0,
-
-        fn clear(self: *Owned) void {
-            for (self.blocks) |block| {
-                if (comptime freestanding) block.release() else self.heap.free(block);
-            }
-            if (self.blocks.len != 0) self.heap.free(self.blocks);
-            self.blocks = &.{};
-            self.len = 0;
-        }
-
-        // Keep a frame another mapping still holds, and zero it.
-        fn truncate(self: *Owned) void {
-            if (comptime freestanding) {
-                for (self.blocks) |block| if (block.refs != 1) {
-                    self.len = 0;
-                    for (self.blocks) |kept| @memset(blockBytes(kept), 0);
-                    return;
-                };
-            }
-            self.clear();
-        }
-
-        fn addBlock(self: *Owned) error{OutOfMemory}!void {
-            const block: Block = if (comptime freestanding)
-                frame.alloc() orelse return error.OutOfMemory
-            else
-                try self.heap.alloc(u8, block_size);
-            const grown = self.heap.alloc(Block, self.blocks.len + 1) catch |err| {
-                if (comptime freestanding) block.release() else self.heap.free(block);
-                return err;
-            };
-            @memcpy(grown[0..self.blocks.len], self.blocks);
-            if (self.blocks.len != 0) self.heap.free(self.blocks);
-            grown[self.blocks.len] = block;
-            self.blocks = grown;
-        }
-
-        fn ensure(self: *Owned, end: usize) error{ TooBig, OutOfMemory }!void {
-            const need = std.math.divCeil(usize, end, block_size) catch return error.TooBig;
-            while (self.blocks.len < need) try self.addBlock();
-        }
-
-        fn transfer(self: *const Owned, off: usize, buf: []u8, comptime to_file: bool) void {
-            var done: usize = 0;
-            while (done < buf.len) {
-                const at = off + done;
-                const page = blockBytes(self.blocks[at / block_size]);
-                const page_off = at % block_size;
-                const n = @min(buf.len - done, block_size - page_off);
-                const file_bytes = page[page_off..][0..n];
-                const buf_bytes = buf[done..][0..n];
-                if (to_file) @memcpy(file_bytes, buf_bytes) else @memcpy(buf_bytes, file_bytes);
-                done += n;
-            }
-        }
-
-        fn write(self: *Owned, off: usize, src: []const u8) error{ TooBig, OutOfMemory }!usize {
-            const end = std.math.add(usize, off, src.len) catch return error.TooBig;
-            if (off > self.len) return error.TooBig;
-            if (end > self.len) try self.ensure(end);
-            self.transfer(off, @constCast(src), true);
-            if (end > self.len) self.len = end;
-            return src.len;
-        }
-
-        fn blockBytes(block: Block) []u8 {
-            if (comptime freestanding) return block.bytes();
-            return block;
-        }
     };
 
-    /// Take another reference to the file page that holds `off`. Null when
-    /// this node has no frame there (a directory, an initramfs file, or a
-    /// hole past the last block).
+    /// Take another reference to the cached frame for the file byte at `off`.
+    /// Null when this node has no block there (a directory, an initramfs file,
+    /// or a hole past the last block).
     pub fn retainPage(self: *Node, off: usize) ?*frame.Frame {
-        if (comptime freestanding) {
-            const owned = switch (self.kind) {
-                .owned => |*o| o,
-                else => return null,
-            };
-            const at = off / block_size;
-            if (at >= owned.blocks.len) return null;
-            const page = owned.blocks[at];
-            page.retain();
-            return page;
-        }
-        return null;
+        if (comptime !freestanding) return null;
+        if (self.kind != .owned) return null;
+        const disk = self.disk orelse return null;
+        const found = zrfs.dataBlock(disk, self.ino, off) catch return null;
+        const block = found orelse return null;
+        return disk.retainFrame(block) catch null;
     }
 
     /// `dir` null is the static initramfs. A set allocator owns the node.
@@ -176,14 +105,14 @@ pub const Node = struct {
         };
     }
 
-    pub fn readAt(self: *const Node, off: usize, dest: []u8) usize {
+    pub fn readAt(self: *const Node, off: usize, dest: []u8) error{ Io, OutOfMemory }!usize {
         const len = self.size();
         if (off >= len) return 0;
         const n = @min(dest.len, len - off);
         if (n == 0) return 0;
         switch (self.kind) {
             .borrowed => |b| @memcpy(dest[0..n], b[off..][0..n]),
-            .owned => |o| o.transfer(off, dest[0..n], false),
+            .owned => return zrfs.read(self.disk.?, self.ino, off, dest[0..n]),
             .dir => unreachable,
         }
         return n;
@@ -222,9 +151,14 @@ pub const Node = struct {
         }
     }
 
-    pub fn writeAt(self: *Node, off: usize, src: []const u8) error{ ReadOnly, IsDir, TooBig, OutOfMemory }!usize {
+    pub fn writeAt(self: *Node, off: usize, src: []const u8) error{ ReadOnly, IsDir, TooBig, OutOfMemory, Io }!usize {
         switch (self.kind) {
-            .owned => |*o| return o.write(off, src),
+            .owned => |*o| {
+                const n = try zrfs.write(self.disk.?, self.ino, off, src);
+                const end = off + n;
+                if (end > o.len) o.len = end;
+                return n;
+            },
             .borrowed => return error.ReadOnly,
             .dir => return error.IsDir,
         }
@@ -232,7 +166,10 @@ pub const Node = struct {
 
     fn truncate(self: *Node) void {
         switch (self.kind) {
-            .owned => |*o| o.truncate(),
+            .owned => |*o| {
+                zrfs.truncate(self.disk.?, self.ino) catch return;
+                o.len = 0;
+            },
             else => {},
         }
     }
@@ -254,13 +191,14 @@ pub const Node = struct {
 
     fn discard(self: *Node) void {
         switch (self.kind) {
-            .owned => |*o| {
-                o.clear();
+            .owned => |o| {
+                if (self.disk) |disk| zrfs.destroy(disk, self.ino) catch {};
                 o.heap.destroy(self);
             },
             .dir => |alloc| {
                 const owner = alloc orelse @panic("static vnode freed");
                 if (self.child != null) @panic("freeing directory with children");
+                if (self.disk) |disk| zrfs.destroy(disk, self.ino) catch {};
                 owner.destroy(self);
             },
             .borrowed => @panic("static vnode freed"),
@@ -278,6 +216,7 @@ pub const Tree = struct {
     nodes: [pool_len]Node = undefined,
     len: usize = 0,
     root: ?*Node = null,
+    disk: ?*blk.Disk = null,
 
     pub fn deinit(self: *Tree) void {
         if (self.root) |base| {
@@ -294,6 +233,10 @@ pub const Tree = struct {
         }
         self.root = null;
         self.len = 0;
+        if (self.disk) |disk| {
+            disk.deinit();
+            self.disk = null;
+        }
     }
 
     pub fn mount(self: *Tree, archive: []const u8) error{ BadTar, TooManyFiles }!void {
@@ -312,15 +255,49 @@ pub const Tree = struct {
         }
     }
 
-    pub fn mountTmp(self: *Tree, allocator: std.mem.Allocator) error{ NoEnt, Exists, OutOfMemory }!void {
+    pub fn mountTmp(self: *Tree, allocator: std.mem.Allocator) Error!void {
+        const disk = try blk.Disk.memory(allocator, blk.mem_blocks);
+        errdefer disk.deinit();
+        try zrfs.format(disk);
+        try self.attach(allocator, disk);
+    }
+
+    /// Takes ownership of `disk`, including on failure. A superblock with
+    /// this format is kept; anything else is formatted.
+    fn mountDisk(self: *Tree, allocator: std.mem.Allocator, disk: *blk.Disk) Error!void {
+        errdefer disk.deinit();
+        if (!try zrfs.probe(disk)) try zrfs.format(disk);
+        try self.attach(allocator, disk);
+    }
+
+    fn attach(self: *Tree, allocator: std.mem.Allocator, disk: *blk.Disk) Error!void {
         const base = self.root orelse return error.NoEnt;
         if (lookupChild(base, tmp_name) != null) return error.Exists;
         const node = try allocator.create(Node);
         node.* = .{
             .kind = .{ .dir = allocator },
+            .disk = disk,
+            .ino = zrfs.root_ino,
         };
         node.setName(tmp_name);
         addChild(base, node);
+        self.disk = disk;
+        loadDir(node) catch |err| {
+            detach(base, node);
+            self.disk = null;
+            dropIndex(node);
+            allocator.destroy(node);
+            return err;
+        };
+    }
+
+    /// Drop the heap index under `/tmp` and build it again from the disk.
+    fn reread(self: *Tree) Error!void {
+        const base = self.root orelse return error.NoEnt;
+        const tmp = lookupChild(base, tmp_name) orelse return error.NoEnt;
+        if (held(tmp)) return error.Invalid;
+        dropIndex(tmp);
+        try loadDir(tmp);
     }
 
     pub fn walk(self: *Tree, path: []const u8) error{ NoEnt, NotDir }!*Node {
@@ -422,6 +399,7 @@ pub const Tree = struct {
         if (endsSlash(path) and !child.isDir()) return error.NotDir;
         if (child.isDir()) return error.IsDir;
         if (!child.isWritableFile() or !at.parent.isWritableDir()) return error.ReadOnly;
+        try zrfs.unlinkName(child.disk.?, at.parent.ino, at.name);
         detach(at.parent, child);
         child.release();
     }
@@ -447,6 +425,7 @@ pub const Tree = struct {
         if (!child.isDir()) return error.NotDir;
         if (child.child != null) return error.NotEmpty;
         if (!child.isWritableDir() or !at.parent.isWritableDir()) return error.ReadOnly;
+        try zrfs.unlinkName(child.disk.?, at.parent.ino, at.name);
         detach(at.parent, child);
         child.release();
     }
@@ -468,6 +447,7 @@ pub const Tree = struct {
         if (node.isDir() and isInside(node, to.parent)) return error.Invalid;
         if (!from.parent.isWritableDir() or !to.parent.isWritableDir()) return error.ReadOnly;
         if (!node.isWritableDir() and !node.isWritableFile()) return error.ReadOnly;
+        const disk = node.disk orelse return error.ReadOnly;
         if (lookupChild(to.parent, to.name)) |dest| {
             if (dest.isDir() != node.isDir()) {
                 if (dest.isDir()) return error.IsDir;
@@ -477,8 +457,25 @@ pub const Tree = struct {
                 if (dest.child != null) return error.NotEmpty;
                 if (!dest.isWritableDir()) return error.ReadOnly;
             } else if (!dest.isWritableFile()) return error.ReadOnly;
+            try zrfs.unlinkName(disk, to.parent.ino, to.name);
+            linkNode(disk, to.parent, to.name, node) catch |err| {
+                relink(disk, to.parent, to.name, dest);
+                return err;
+            };
+            zrfs.unlinkName(disk, from.parent.ino, from.name) catch |err| {
+                _ = zrfs.unlinkName(disk, to.parent.ino, to.name) catch {};
+                relink(disk, from.parent, from.name, node);
+                relink(disk, to.parent, to.name, dest);
+                return err;
+            };
             detach(to.parent, dest);
             dest.release();
+        } else {
+            try linkNode(disk, to.parent, to.name, node);
+            zrfs.unlinkName(disk, from.parent.ino, from.name) catch |err| {
+                _ = zrfs.unlinkName(disk, to.parent.ino, to.name) catch {};
+                return err;
+            };
         }
         detach(from.parent, node);
         node.setName(to.name);
@@ -513,8 +510,17 @@ pub fn mount(archive: []const u8) error{ BadTar, TooManyFiles }!void {
     try tree.mount(archive);
 }
 
-pub fn mountTmp() error{ NoEnt, Exists, OutOfMemory }!void {
+pub fn mountTmp() Error!void {
     try tree.mountTmp(heap.kernel_heap.allocator());
+}
+
+pub fn mountVirtio(blocks: u32, dev: *anyopaque, read_fn: blk.ReadFn, write_fn: blk.WriteFn) Error!void {
+    const disk = try blk.Disk.wrap(heap.kernel_heap.allocator(), blocks, dev, read_fn, write_fn);
+    try tree.mountDisk(heap.kernel_heap.allocator(), disk);
+}
+
+pub fn sync() void {
+    if (tree.disk) |disk| disk.sync();
 }
 
 pub fn root() *Node {
@@ -556,16 +562,85 @@ fn createChild(parent: *Node, nam: []const u8, kind: enum { file, dir }) Error!*
         .dir => |owner| owner orelse return error.ReadOnly,
         else => return error.NotDir,
     };
+    const disk = parent.disk orelse return error.ReadOnly;
+    const zk: zrfs.Kind = if (kind == .file) .file else .dir;
+    const ino = try zrfs.create(disk, parent.ino, nam, zk);
+    const node = makeNode(alloc, disk, zk, ino, nam, 0) catch {
+        zrfs.unlinkName(disk, parent.ino, nam) catch {};
+        zrfs.destroy(disk, ino) catch {};
+        return error.OutOfMemory;
+    };
+    addChild(parent, node);
+    return node;
+}
+
+fn loadDir(dir: *Node) Error!void {
+    const disk = dir.disk orelse return;
+    var index: usize = 0;
+    while (true) : (index += 1) {
+        var name_buf: [max_name]u8 = undefined;
+        const ent = try zrfs.readEntry(disk, dir.ino, index, &name_buf) orelse break;
+        if (ent.ino == 0) continue;
+        const node = try spawnNode(dir, ent.kind, ent.ino, name_buf[0..ent.name_len]);
+        addChild(dir, node);
+        if (ent.kind == .dir) try loadDir(node);
+    }
+}
+
+fn spawnNode(parent: *Node, kind: zrfs.Kind, ino: u32, name: []const u8) Error!*Node {
+    const alloc = switch (parent.kind) {
+        .dir => |owner| owner orelse return error.ReadOnly,
+        else => return error.NotDir,
+    };
+    const disk = parent.disk orelse return error.ReadOnly;
+    const len = if (kind == .file) try zrfs.byteSize(disk, ino) else 0;
+    return makeNode(alloc, disk, kind, ino, name, len);
+}
+
+fn makeNode(alloc: std.mem.Allocator, disk: *blk.Disk, kind: zrfs.Kind, ino: u32, name: []const u8, len: usize) error{OutOfMemory}!*Node {
     const node = try alloc.create(Node);
     node.* = .{
         .kind = switch (kind) {
-            .file => .{ .owned = .{ .heap = alloc } },
+            .file => .{ .owned = .{ .heap = alloc, .len = len } },
             .dir => .{ .dir = alloc },
         },
+        .disk = disk,
+        .ino = ino,
     };
-    node.setName(nam);
-    addChild(parent, node);
+    node.setName(name);
     return node;
+}
+
+fn linkNode(disk: *blk.Disk, parent: *Node, name: []const u8, node: *Node) zrfs.Error!void {
+    const kind: zrfs.Kind = if (node.isDir()) .dir else .file;
+    try zrfs.link(disk, parent.ino, name, node.ino, kind);
+}
+
+fn relink(disk: *blk.Disk, parent: *Node, name: []const u8, node: *Node) void {
+    linkNode(disk, parent, name, node) catch {};
+}
+
+fn held(dir: *Node) bool {
+    var c = dir.child;
+    while (c) |n| {
+        if (n.refs != 1) return true;
+        if (n.isDir() and held(n)) return true;
+        c = n.next;
+    }
+    return false;
+}
+
+fn dropIndex(dir: *Node) void {
+    while (dir.child) |ch| {
+        detach(dir, ch);
+        if (ch.isDir()) dropIndex(ch);
+        const alloc = switch (ch.kind) {
+            .owned => |o| o.heap,
+            .dir => |owner| owner orelse unreachable,
+            .borrowed => unreachable,
+        };
+        alloc.destroy(ch);
+    }
 }
 
 fn lookupChild(node: *Node, nam: []const u8) ?*Node {
@@ -700,7 +775,8 @@ test "mount drops a partial table on BadTar" {
 }
 
 fn textOf(node: *Node, buf: []u8) []const u8 {
-    return buf[0..node.readAt(0, buf)];
+    const n = node.readAt(0, buf) catch unreachable;
+    return buf[0..n];
 }
 
 // Borrowed initramfs bytes point into `tar`, so it must outlive `t`.
@@ -710,23 +786,31 @@ fn mountFixture(t: *Tree, tar: *ustar.Fixture) !void {
     try t.mountTmp(std.testing.allocator);
 }
 
-test "an owned file grows by whole pages" {
+test "tmp bytes survive a reread, including a block boundary" {
     var tar: ustar.Fixture = .{};
     var t: Tree = .{};
     defer t.deinit();
     try mountFixture(&t, &tar);
 
+    try t.mkdirPath("/tmp/d");
     var page: [block_size]u8 = undefined;
     @memset(&page, 'a');
-    const f = try t.openPath("/tmp/big", .write, true);
-    _ = try f.node.writeAt(0, &page);
-    _ = try f.node.writeAt(block_size, "bbbb");
+    const created = try t.openPath("/tmp/d/a", .write, true);
+    _ = try created.node.writeAt(0, &page);
+    _ = try created.node.writeAt(block_size, "bbbb");
+    try t.reread();
 
     var across: [8]u8 = undefined;
-    try std.testing.expectEqualStrings("aaaabbbb", across[0..f.node.readAt(block_size - 4, &across)]);
+    const node = try t.walk("/tmp/d/a");
+    const n = node.readAt(block_size - 4, &across) catch unreachable;
+    try std.testing.expectEqualStrings("aaaabbbb", across[0..n]);
+    try t.unlinkPath("/tmp/d/a");
+    try t.reread();
+    try std.testing.expectError(error.NoEnt, t.walk("/tmp/d/a"));
+    try std.testing.expect((try t.walk("/tmp/d")).isDir());
 }
 
-test "tmp ramfs creates, writes, and unlinks" {
+test "tmp creates, writes, and unlinks" {
     var tar: ustar.Fixture = .{};
     var t: Tree = .{};
     defer t.deinit();
