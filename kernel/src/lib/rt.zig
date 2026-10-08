@@ -18,16 +18,34 @@ comptime {
 
 fn memcpy(noalias dest: [*]u8, noalias src: [*]const u8, n: usize) callconv(.c) [*]u8 {
     @disableIntrinsics();
-    var i: usize = 0;
-    while (i < n) : (i += 1) dest[i] = src[i];
+    var d = dest;
+    var s = src;
+    var count = n;
+    // `rep movsb` rather than a byte loop. DF is cleared here so a user
+    // `std` cannot reverse a copy if this runs before the entry `cld`.
+    asm volatile (
+        \\cld
+        \\rep movsb
+        : [d] "+{rdi}" (d),
+          [s] "+{rsi}" (s),
+          [count] "+{rcx}" (count),
+        :
+        : .{ .memory = true });
     return dest;
 }
 
 fn memset(dest: [*]u8, c: c_int, n: usize) callconv(.c) [*]u8 {
     @disableIntrinsics();
+    var d = dest;
+    var count = n;
     const byte: u8 = @truncate(@as(c_uint, @bitCast(c)));
-    var i: usize = 0;
-    while (i < n) : (i += 1) dest[i] = byte;
+    asm volatile (
+        \\cld
+        \\rep stosb
+        : [d] "+{rdi}" (d),
+          [count] "+{rcx}" (count),
+        : [byte] "{al}" (byte),
+        : .{ .memory = true });
     return dest;
 }
 
@@ -93,6 +111,20 @@ fn probeStack() callconv(.naked) void {
         \\        pop    %%rcx
         \\        ret
     );
+}
+
+test "memcpy and memset move the bytes" {
+    var page_src: [4096]u8 = undefined;
+    var page_dest: [4096]u8 = @splat(0x9);
+    for (&page_src, 0..) |*b, i| b.* = @truncate(i);
+    const nine: [4096]u8 = @splat(0x9);
+    try std.testing.expectEqual(@as([*]u8, &page_dest), memcpy(&page_dest, &page_src, 0));
+    try std.testing.expectEqualSlices(u8, &nine, &page_dest);
+    _ = memcpy(&page_dest, &page_src, page_src.len);
+    try std.testing.expectEqualSlices(u8, &page_src, &page_dest);
+    _ = memset(&page_dest, 0, page_dest.len);
+    const zeros: [4096]u8 = @splat(0);
+    try std.testing.expectEqualSlices(u8, &zeros, &page_dest);
 }
 
 test "udiv matches builtin division inside u64" {

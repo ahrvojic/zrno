@@ -121,7 +121,6 @@ comptime {
 
 const max_io: usize = pmm.page_size;
 const max_ps = max_io / @sizeOf(PsInfo);
-const io_chunk: usize = 256;
 const max_path: usize = 128;
 const max_argv: usize = state.max_argv;
 const max_arg: usize = 128;
@@ -222,7 +221,10 @@ fn sys_read(ctx: *cpu.Context) u64 {
 }
 
 fn readPeek(src: anytype, addr: usize, len: usize) u64 {
-    var tmp: [io_chunk]u8 = undefined;
+    // Safe mode stores 0xAA over an `undefined` array. A page of that on
+    // every read costs more than copying the bytes.
+    @setRuntimeSafety(false);
+    var tmp: [max_io]u8 = undefined;
     const n = src.peek(tmp[0..@min(tmp.len, len)]);
     userSpace().copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
     src.consume(n);
@@ -259,7 +261,9 @@ const TtySink = struct {
 };
 
 fn writeUser(addr: usize, len: usize, sink: anytype) u64 {
-    var tmp: [io_chunk]u8 = undefined;
+    // Same as `readPeek`: do not paint this page with 0xAA.
+    @setRuntimeSafety(false);
+    var tmp: [max_io]u8 = undefined;
     var copied: usize = 0;
     const space = userSpace();
     while (copied < len) {
@@ -792,7 +796,9 @@ fn checkIo(len: usize) ?u64 {
 }
 
 fn writeFile(open: *file.OpenFile, addr: usize, len: usize) u64 {
-    var tmp: [io_chunk]u8 = undefined;
+    // Same as `readPeek`: do not paint this page with 0xAA.
+    @setRuntimeSafety(false);
+    var tmp: [max_io]u8 = undefined;
     var copied: usize = 0;
     const space = userSpace();
     while (copied < len) {
