@@ -335,20 +335,24 @@ pub fn schedule(ctx: *cpu.Context) void {
         boot_stack = false;
         pmm.reclaimBootloader();
     }
-    var start: ?*std.DoublyLinkedList.Node = null;
-
-    if (this_cpu.thread) |curr_thread| {
-        curr_thread.ctx = ctx.*;
-        cpu.saveFpu(curr_thread.fpu);
-        if (curr_thread.status == .running) {
-            curr_thread.status = .ready;
-        }
-        start = curr_thread.sched_node.next orelse state.threads.first;
-    } else {
-        start = state.threads.first;
+    const curr = this_cpu.thread;
+    var start = state.threads.first;
+    if (curr) |t| {
+        if (t.status == .running) t.status = .ready;
+        start = t.sched_node.next orelse start;
     }
 
     const next = nextReadyThread(start) orelse state.idle_thread;
+    if (curr) |t| {
+        if (next == t) {
+            // The interrupt frame and the FPU registers are already this
+            // thread. `ctx` is copied only when a different thread resumes.
+            t.status = .running;
+            return;
+        }
+        t.ctx = ctx.*;
+        cpu.saveFpu(t.fpu);
+    }
     next.status = .running;
     this_cpu.thread = next;
     next.parent.vmm.switchTo();
