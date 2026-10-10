@@ -205,7 +205,7 @@ fn sys_read(ctx: *cpu.Context) u64 {
                 error.OutOfMemory => errval(ENOMEM),
             };
             if (n == 0) return 0;
-            userSpace().copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
+            copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
             open.pos += n;
             return n;
         },
@@ -226,7 +226,7 @@ fn readPeek(src: anytype, addr: usize, len: usize) u64 {
     @setRuntimeSafety(false);
     var tmp: [max_io]u8 = undefined;
     const n = src.peek(tmp[0..@min(tmp.len, len)]);
-    userSpace().copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
+    copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
     src.consume(n);
     return n;
 }
@@ -265,10 +265,9 @@ fn writeUser(addr: usize, len: usize, sink: anytype) u64 {
     @setRuntimeSafety(false);
     var tmp: [max_io]u8 = undefined;
     var copied: usize = 0;
-    const space = userSpace();
     while (copied < len) {
         const n = @min(tmp.len, len - copied);
-        space.copyFromUser(tmp[0..n], addr + copied) catch {
+        copyFromUser(tmp[0..n], addr + copied) catch {
             if (copied == 0) return errval(EFAULT);
             return copied;
         };
@@ -325,7 +324,7 @@ fn sys_yield() u64 {
 fn sys_wait_word(ctx: *cpu.Context) u64 {
     const addr = userWord(ctx.rdi) orelse return errval(EINVAL);
     var word: u64 = undefined;
-    userSpace().copyFromUser(std.mem.asBytes(&word), addr) catch return errval(EFAULT);
+    copyFromUser(std.mem.asBytes(&word), addr) catch return errval(EFAULT);
     // Mismatch returns without sleeping. The caller rechecks the word.
     if (word != ctx.rsi) return 0;
     sched.wait(@ptrFromInt(addr));
@@ -404,7 +403,7 @@ fn sys_getcwd(ctx: *cpu.Context) u64 {
     };
     // A path is at least `/`, so an empty buffer lands here too.
     if (n > ctx.rsi) return errval(ERANGE);
-    userSpace().copyToUser(ctx.rdi, buf[0..n]) catch return errval(EFAULT);
+    copyToUser(ctx.rdi, buf[0..n]) catch return errval(EFAULT);
     return n;
 }
 
@@ -418,7 +417,7 @@ fn sys_poll(ctx: *cpu.Context) u64 {
     var slots: [file.max_fds]PollFd = undefined;
     const set = slots[0..n];
     const bytes = std.mem.sliceAsBytes(set);
-    userSpace().copyFromUser(bytes, ctx.rdi) catch return errval(EFAULT);
+    copyFromUser(bytes, ctx.rdi) catch return errval(EFAULT);
 
     var chans: [file.max_fds]*const anyopaque = undefined;
     const current = cpu.currentThread();
@@ -432,7 +431,7 @@ fn sys_poll(ctx: *cpu.Context) u64 {
             } else if (slot.revents != 0) ready += 1;
         }
         if (ready != 0 or nchan == 0) {
-            userSpace().copyToUser(ctx.rdi, bytes) catch return errval(EFAULT);
+            copyToUser(ctx.rdi, bytes) catch return errval(EFAULT);
             return ready;
         }
         // Park on the fd table so close wakes this thread. A pipe or tty
@@ -527,7 +526,7 @@ fn sys_spawn(ctx: *cpu.Context) u64 {
     var storage: ArgvStorage = .{};
     const pa = copyPathArgv(ctx, &buf, &storage) catch |err| return argvErr(err);
     var stdio: [3]u64 = undefined;
-    userSpace().copyFromUser(std.mem.asBytes(&stdio), @intCast(ctx.r8)) catch return errval(EFAULT);
+    copyFromUser(std.mem.asBytes(&stdio), @intCast(ctx.r8)) catch return errval(EFAULT);
     return exec.spawnPathArgv(pa.path, pa.argv, stdio[0], stdio[1], stdio[2]) catch |err| return spawnErr(err);
 }
 
@@ -536,7 +535,7 @@ fn sys_wait(ctx: *cpu.Context) u64 {
     // Probe writable before reaping: userRange is not enough (RO/unmapped).
     if (status_addr != 0) {
         var zero: u64 = 0;
-        userSpace().copyToUser(status_addr, std.mem.asBytes(&zero)) catch return errval(EFAULT);
+        copyToUser(status_addr, std.mem.asBytes(&zero)) catch return errval(EFAULT);
     }
     const result = sched.waitProcess(ctx.rdi) catch |err| return switch (err) {
         error.NoChild => errval(ECHILD),
@@ -544,7 +543,7 @@ fn sys_wait(ctx: *cpu.Context) u64 {
     };
     if (status_addr != 0) {
         var code: u64 = result.code;
-        userSpace().copyToUser(status_addr, std.mem.asBytes(&code)) catch return result.pid;
+        copyToUser(status_addr, std.mem.asBytes(&code)) catch return result.pid;
     }
     return result.pid;
 }
@@ -585,7 +584,7 @@ fn sys_ps(ctx: *cpu.Context) u64 {
             .state = psState(s),
         };
     }
-    userSpace().copyToUser(addr, std.mem.sliceAsBytes(tmp[0..n])) catch return errval(EFAULT);
+    copyToUser(addr, std.mem.sliceAsBytes(tmp[0..n])) catch return errval(EFAULT);
     return n * @sizeOf(PsInfo);
 }
 
@@ -633,13 +632,12 @@ fn sys_getdents(ctx: *cpu.Context) u64 {
     if (checkIo(len)) |r| return r;
 
     var copied: usize = 0;
-    const space = userSpace();
     while (dir.node.childAt(dir.pos)) |e| {
         if (copied + @sizeOf(Dirent) > len) break;
         const n = @min(e.name().len, dirent_name_max);
         var de: Dirent = .{ .size = e.size(), .name_len = n, .name = @splat(0) };
         @memcpy(de.name[0..n], e.name()[0..n]);
-        space.copyToUser(addr + copied, std.mem.asBytes(&de)) catch {
+        copyToUser(addr + copied, std.mem.asBytes(&de)) catch {
             if (copied == 0) return errval(EFAULT);
             return copied;
         };
@@ -654,7 +652,7 @@ fn sys_pipe(ctx: *cpu.Context) u64 {
     const pair = twoFreeFds() orelse return errval(EMFILE);
     const rw = createPipePair() catch return errval(ENOMEM);
     var fds_out: [2]i64 = .{ @intCast(pair[0]), @intCast(pair[1]) };
-    userSpace().copyToUser(addr, std.mem.asBytes(&fds_out)) catch {
+    copyToUser(addr, std.mem.asBytes(&fds_out)) catch {
         rw[0].release();
         rw[1].release();
         return errval(EFAULT);
@@ -696,7 +694,7 @@ fn copyUserString(ptr: u64, len: u64, buf: []u8) error{ Fault, NameTooLong }![]c
     if (len > buf.len) return error.NameTooLong;
     const n: usize = @intCast(len);
     if (n == 0) return buf[0..0];
-    try userSpace().copyFromUser(buf[0..n], @intCast(ptr));
+    try copyFromUser(buf[0..n], @intCast(ptr));
     return buf[0..n];
 }
 
@@ -723,10 +721,9 @@ fn copyUserArgv(addr: u64, n: u64, storage: *ArgvStorage) error{ Fault, NameTooL
     if (n > max_argv) return error.TooMany;
     if (n == 0) return storage.slice();
     const base: usize = @intCast(addr);
-    const space = userSpace();
     for (0..@intCast(n)) |i| {
         var s: UserStr = undefined;
-        try space.copyFromUser(std.mem.asBytes(&s), base + i * @sizeOf(UserStr));
+        try copyFromUser(std.mem.asBytes(&s), base + i * @sizeOf(UserStr));
         const str = try copyUserString(s.ptr, s.len, &storage.bufs[storage.n]);
         storage.ptrs[storage.n] = str;
         storage.n += 1;
@@ -750,6 +747,36 @@ fn fdsChan() *const anyopaque {
 
 fn userSpace() *vmm.VMM {
     return &cpu.currentProcess().vmm;
+}
+
+fn copyToUser(addr: usize, src: []const u8) error{Fault}!void {
+    const space = userSpace();
+    space.copyToUser(addr, src) catch {
+        if (!fillAnon(addr, src.len, true)) return error.Fault;
+        return space.copyToUser(addr, src);
+    };
+}
+
+fn copyFromUser(dest: []u8, addr: usize) error{Fault}!void {
+    const space = userSpace();
+    space.copyFromUser(dest, addr) catch {
+        if (!fillAnon(addr, dest.len, false)) return error.Fault;
+        return space.copyFromUser(dest, addr);
+    };
+}
+
+/// Allocate zero pages for anonymous reservations in the range. A page
+/// that is already backed, shared, or not writable stays as it is.
+/// False when no page was filled, so the copy's fault stands.
+fn fillAnon(addr: usize, len: usize, write: bool) bool {
+    var off: usize = 0;
+    var filled = false;
+    while (off < len) {
+        if (sched.fillUserPage(addr + off, write)) filled = true;
+        const page_off = (addr + off) & (pmm.page_size - 1);
+        off += @min(len - off, pmm.page_size - page_off);
+    }
+    return filled;
 }
 
 fn pathErr(err: error{ Fault, NameTooLong }) u64 {
@@ -800,10 +827,9 @@ fn writeFile(open: *file.OpenFile, addr: usize, len: usize) u64 {
     @setRuntimeSafety(false);
     var tmp: [max_io]u8 = undefined;
     var copied: usize = 0;
-    const space = userSpace();
     while (copied < len) {
         const n = @min(tmp.len, len - copied);
-        space.copyFromUser(tmp[0..n], addr + copied) catch {
+        copyFromUser(tmp[0..n], addr + copied) catch {
             if (copied == 0) return errval(EFAULT);
             return copied;
         };
