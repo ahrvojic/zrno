@@ -1,8 +1,8 @@
 const lib = @import("lib");
 const sys = lib.sys;
 
-// uptime steps by 1 ms. The calibration window makes one tick a small
-// fraction of the result, and each timed batch has to clear several ticks.
+// uptime is nanoseconds when the TSC rate is known, and 1 ms ticks
+// otherwise. The windows stay well above one tick.
 const cal_ns: u64 = 100_000_000;
 const min_ns: u64 = 50_000_000;
 const max_spins: u64 = 100_000;

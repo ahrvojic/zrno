@@ -425,7 +425,7 @@ fn xsetbv(reg: u32, value: u64) void {
     );
 }
 
-fn rdtsc() u64 {
+pub fn rdtsc() u64 {
     var hi: u32 = undefined;
     var lo: u32 = undefined;
     asm volatile (
@@ -515,6 +515,13 @@ fn familyModel(eax: u32) struct { family: u32, model: u32 } {
     else
         model_id;
     return .{ .family = family, .model = model };
+}
+
+/// Store a measured rate. A leaf `0x15` rate is left alone.
+pub fn setTscHz(hz: u64) bool {
+    if (!tsc_ok or tsc_hz_value != 0 or hz == 0) return false;
+    tsc_hz_value = hz;
+    return true;
 }
 
 fn probeTscHz(max_leaf: u32) u64 {

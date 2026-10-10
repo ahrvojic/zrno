@@ -69,6 +69,7 @@ fn calibrateFreeRunning(
     const want = refTicksForCal(ref_hz) orelse return null;
     bsp.lapicTimerArm(0xffff_ffff);
     const r0 = read_ref();
+    const t0 = cpu.rdtsc();
     const c0 = bsp.lapicTimerCurrent();
     var spins: u32 = 0;
     while (@as(u64, delta_ref(read_ref(), r0)) < want) {
@@ -77,9 +78,12 @@ fn calibrateFreeRunning(
         if (spins >= cal_spin_limit or bsp.lapicTimerCurrent() == 0) return null;
     }
     const c1 = bsp.lapicTimerCurrent();
+    const t1 = cpu.rdtsc();
     const r1 = read_ref();
+    const ref_delta = delta_ref(r1, r0);
+    observeTsc(t0, t1, ref_delta, ref_hz);
     if (c1 >= c0) return null;
-    return initialCount(c0 - c1, delta_ref(r1, r0), ref_hz);
+    return initialCount(c0 - c1, ref_delta, ref_hz);
 }
 
 fn calibratePit(bsp: *cpu.CPU) ?u32 {
@@ -89,6 +93,7 @@ fn calibratePit(bsp: *cpu.CPU) ?u32 {
 
     bsp.lapicTimerArm(0xffff_ffff);
     pit.startChannel2(count);
+    const t0 = cpu.rdtsc();
     const c0 = bsp.lapicTimerCurrent();
     var spins: u32 = 0;
     while (!pit.channel2High()) {
@@ -100,7 +105,9 @@ fn calibratePit(bsp: *cpu.CPU) ?u32 {
         }
     }
     const c1 = bsp.lapicTimerCurrent();
+    const t1 = cpu.rdtsc();
     pit.stopChannel2();
+    observeTsc(t0, t1, count, pit.osc_freq_hz);
     if (c1 >= c0) return null;
     return initialCount(c0 - c1, count, pit.osc_freq_hz);
 }
@@ -110,6 +117,19 @@ fn refTicksForCal(ref_hz: u64) ?u64 {
     const want = ticks / 1000;
     if (want == 0) return null;
     return want;
+}
+
+fn observeTsc(t0: u64, t1: u64, ref_delta: u64, ref_hz: u64) void {
+    if (t1 <= t0) return;
+    const hz = tscHz(t1 - t0, ref_delta, ref_hz) orelse return;
+    if (cpu.setTscHz(hz)) logger.info("tsc {d} MHz", .{hz / 1_000_000});
+}
+
+fn tscHz(tsc_delta: u64, ref_delta: u64, ref_hz: u64) ?u64 {
+    if (tsc_delta == 0 or ref_delta == 0 or ref_hz == 0) return null;
+    const hz = std.math.cast(u64, @as(u128, tsc_delta) * ref_hz / ref_delta) orelse return null;
+    if (hz == 0) return null;
+    return hz;
 }
 
 fn initialCount(lapic_delta: u32, ref_delta: u64, ref_hz: u64) ?u32 {
@@ -123,6 +143,12 @@ fn initialCount(lapic_delta: u32, ref_delta: u64, ref_hz: u64) ?u32 {
 
 fn expectUninit() void {
     if (initialized) @panic("timer already initialized");
+}
+
+test "tscHz converts a reference window to a TSC frequency" {
+    // 24e6 counts in 10 ms of a 100 MHz reference is 2.4 GHz.
+    try std.testing.expectEqual(2_400_000_000, tscHz(24_000_000, 1_000_000, 100_000_000).?);
+    try std.testing.expect(tscHz(24_000_000, 0, 100_000_000) == null);
 }
 
 test "initialCount converts lapic and ref deltas to a 1 ms ICR" {
