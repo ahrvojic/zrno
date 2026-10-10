@@ -121,9 +121,10 @@ comptime {
 
 const max_io: usize = pmm.page_size;
 const max_ps = max_io / @sizeOf(PsInfo);
-const max_path: usize = 128;
+// A name is at most 100 bytes. This covers `/tmp/` and four of those.
+const max_path: usize = 512;
 const max_argv: usize = state.max_argv;
-const max_arg: usize = 128;
+const max_arg: usize = max_path;
 
 const ENOENT: i64 = 2;
 const EIO: i64 = 5;
@@ -194,23 +195,11 @@ fn dispatch(ctx: *cpu.Context) u64 {
 fn sys_read(ctx: *cpu.Context) u64 {
     const addr: usize = @intCast(ctx.rsi);
     const len: usize = @intCast(ctx.rdx);
-    if (checkIo(len)) |r| return r;
+    if (len == 0) return 0;
     const f = fdFile(ctx.rdi) orelse return errval(EBADF);
     switch (f.kind) {
         .tty => return readPeek(tty, addr, len),
-        .file => |*open| {
-            // Same as `readPeek`: do not paint this page with 0xAA.
-            @setRuntimeSafety(false);
-            var tmp: [max_io]u8 = undefined;
-            const n = open.node.readAt(open.pos, tmp[0..len]) catch |err| return switch (err) {
-                error.Io => errval(EIO),
-                error.OutOfMemory => errval(ENOMEM),
-            };
-            if (n == 0) return 0;
-            copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
-            open.pos += n;
-            return n;
-        },
+        .file => |*open| return readFile(open, addr, len),
         .dir => return errval(EISDIR),
         .pipe_write => return errval(EBADF),
         .pipe_read => |p| {
@@ -222,12 +211,41 @@ fn sys_read(ctx: *cpu.Context) u64 {
     }
 }
 
-fn readPeek(src: anytype, addr: usize, len: usize) u64 {
+fn readFile(open: *file.OpenFile, addr: usize, len: usize) u64 {
     // Safe mode stores 0xAA over an `undefined` array. A page of that on
     // every read costs more than copying the bytes.
     @setRuntimeSafety(false);
     var tmp: [max_io]u8 = undefined;
-    const n = src.peek(tmp[0..len]);
+    var done: usize = 0;
+    while (done < len) {
+        const n = @min(len - done, max_io);
+        const got = open.node.readAt(open.pos, tmp[0..n]) catch |err| {
+            if (done != 0) return done;
+            return switch (err) {
+                error.Io => errval(EIO),
+                error.OutOfMemory => errval(ENOMEM),
+            };
+        };
+        if (got == 0) return done;
+        copyToUser(addr + done, tmp[0..got]) catch {
+            if (done == 0) return errval(EFAULT);
+            return done;
+        };
+        open.pos += got;
+        done += got;
+        if (got < n) return done;
+    }
+    return done;
+}
+
+fn readPeek(src: anytype, addr: usize, len: usize) u64 {
+    // Safe mode stores 0xAA over an `undefined` array. A page of that on
+    // every read costs more than copying the bytes.
+    // A second peek sleeps for more input. One page holds the pipe and a
+    // cooked line, so a longer read returns a short count.
+    @setRuntimeSafety(false);
+    var tmp: [max_io]u8 = undefined;
+    const n = src.peek(tmp[0..@min(len, max_io)]);
     copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
     src.consume(n);
     return n;
@@ -236,7 +254,7 @@ fn readPeek(src: anytype, addr: usize, len: usize) u64 {
 fn sys_write(ctx: *cpu.Context) u64 {
     const addr: usize = @intCast(ctx.rsi);
     const len: usize = @intCast(ctx.rdx);
-    if (checkIo(len)) |r| return r;
+    if (len == 0) return 0;
     const f = fdFile(ctx.rdi) orelse return errval(EBADF);
     switch (f.kind) {
         .file => |*open| {
@@ -266,17 +284,24 @@ fn writeUser(addr: usize, len: usize, sink: anytype) u64 {
     // Same as `readPeek`: do not paint this page with 0xAA.
     @setRuntimeSafety(false);
     var tmp: [max_io]u8 = undefined;
-    // `checkIo` caps `len` at one page, so this is a single copy.
-    copyFromUser(tmp[0..len], addr) catch return errval(EFAULT);
-    var off: usize = 0;
-    while (off < len) {
-        const w = sink.write(tmp[off..len]) catch {
-            if (off == 0) return errval(EPIPE);
-            return off;
+    var done: usize = 0;
+    while (done < len) {
+        const n = @min(len - done, max_io);
+        copyFromUser(tmp[0..n], addr + done) catch {
+            if (done == 0) return errval(EFAULT);
+            return done;
         };
-        off += w;
+        var off: usize = 0;
+        while (off < n) {
+            const w = sink.write(tmp[off..n]) catch {
+                if (done + off == 0) return errval(EPIPE);
+                return done + off;
+            };
+            off += w;
+        }
+        done += n;
     }
-    return off;
+    return done;
 }
 
 fn sys_exit(ctx: *cpu.Context) u64 {
@@ -811,6 +836,7 @@ fn mmErr(err: error{ Invalid, OutOfMemory }) u64 {
     };
 }
 
+// `ps` and `getdents` stage one page. Read and write loop over `max_io`.
 fn checkIo(len: usize) ?u64 {
     if (len == 0) return 0;
     if (len > max_io) return errval(EINVAL);
@@ -821,11 +847,22 @@ fn writeFile(open: *file.OpenFile, addr: usize, len: usize) u64 {
     // Same as `readPeek`: do not paint this page with 0xAA.
     @setRuntimeSafety(false);
     var tmp: [max_io]u8 = undefined;
-    // `checkIo` caps `len` at one page, and `writeAt` takes the whole slice.
-    copyFromUser(tmp[0..len], addr) catch return errval(EFAULT);
-    const n = open.node.writeAt(open.pos, tmp[0..len]) catch |err| return fsErr(err);
-    open.pos += n;
-    return n;
+    var done: usize = 0;
+    while (done < len) {
+        const n = @min(len - done, max_io);
+        copyFromUser(tmp[0..n], addr + done) catch {
+            if (done == 0) return errval(EFAULT);
+            return done;
+        };
+        const got = open.node.writeAt(open.pos, tmp[0..n]) catch |err| {
+            if (done == 0) return fsErr(err);
+            return done;
+        };
+        open.pos += got;
+        done += got;
+        if (got < n) return done;
+    }
+    return done;
 }
 
 fn fsErr(err: vfs.Error) u64 {

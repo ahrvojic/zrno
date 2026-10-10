@@ -10,8 +10,6 @@ const state = @import("state.zig");
 const vfs = @import("../fs/vfs.zig");
 const vmm = @import("../mm/vmm.zig");
 
-// Cap on `brk - brk_start`. Prevents a single call from allocating up to mmap.
-const max_heap: usize = 32 * 1024 * 1024;
 const max_mmap: usize = 32 * 1024 * 1024;
 
 // Unique PML4 of a process that died while CR3 still pointed at it.
@@ -47,11 +45,7 @@ pub fn setBrk(addr: usize) error{ Invalid, OutOfMemory }!usize {
 
     const old = process.brk;
     if (process.brk_start == 0 or addr < process.brk_start) return error.Invalid;
-    if (addr > process.mmap_next or addr > process.user_stack_next or
-        addr - process.brk_start > max_heap)
-    {
-        return error.OutOfMemory;
-    }
+    if (addr > process.mmap_next or addr > process.user_stack_next) return error.OutOfMemory;
     const old_pg = std.mem.alignForward(usize, old, pmm.page_size);
     const new_pg = std.mem.alignForward(usize, addr, pmm.page_size);
     process.brk = addr;

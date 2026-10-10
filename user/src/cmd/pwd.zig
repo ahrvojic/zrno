@@ -1,11 +1,8 @@
 const lib = @import("lib");
 const sys = lib.sys;
 
-// Matches the kernel path cap.
-const max_path = 128;
-
 pub fn main() u64 {
-    var buf: [max_path]u8 = undefined;
+    var buf: [sys.max_path]u8 = undefined;
     const n = sys.getcwd(&buf);
     if (n < 0) {
         lib.printErr("pwd: err ", n);

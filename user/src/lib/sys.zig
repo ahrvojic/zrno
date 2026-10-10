@@ -103,6 +103,8 @@ comptime {
 }
 
 pub const max_argv: usize = 32;
+// Same cap as the kernel. A name is at most 100 bytes.
+pub const max_path: usize = 512;
 
 const UserStr = extern struct { ptr: u64, len: u64 };
 const e2big: i64 = -7;

@@ -1,9 +1,6 @@
 const lib = @import("lib");
 const sys = lib.sys;
 
-// Matches the kernel path cap. A command with no '/' is looked up from `/`.
-const max_path = 128;
-
 pub fn main() u64 {
     lib.print("type 'help'\n");
     var buf: [256]u8 = undefined;
@@ -171,7 +168,7 @@ fn parseCmd(path: []const u8, ps: *[]u8) ?Cmd {
 }
 
 // A token with no '/' is a command at the root (`ls` runs `/ls` after `cd /tmp`).
-fn rooted(tok: []const u8, buf: *[max_path]u8) ?[]const u8 {
+fn rooted(tok: []const u8, buf: *[sys.max_path]u8) ?[]const u8 {
     for (tok) |c| {
         if (c == '/') return tok;
     }
@@ -221,7 +218,7 @@ fn spawnCmd(cmd: *const Cmd, stdin0: u64, stdout0: u64) i64 {
             }
         }
     }
-    var path_buf: [max_path]u8 = undefined;
+    var path_buf: [sys.max_path]u8 = undefined;
     const exe = rooted(cmd.argv[0], &path_buf) orelse {
         lib.eprint("name too long\n");
         return -1;
