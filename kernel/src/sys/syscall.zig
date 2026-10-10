@@ -199,8 +199,10 @@ fn sys_read(ctx: *cpu.Context) u64 {
     switch (f.kind) {
         .tty => return readPeek(tty, addr, len),
         .file => |*open| {
+            // Same as `readPeek`: do not paint this page with 0xAA.
+            @setRuntimeSafety(false);
             var tmp: [max_io]u8 = undefined;
-            const n = open.node.readAt(open.pos, tmp[0..@min(tmp.len, len)]) catch |err| return switch (err) {
+            const n = open.node.readAt(open.pos, tmp[0..len]) catch |err| return switch (err) {
                 error.Io => errval(EIO),
                 error.OutOfMemory => errval(ENOMEM),
             };
@@ -225,7 +227,7 @@ fn readPeek(src: anytype, addr: usize, len: usize) u64 {
     // every read costs more than copying the bytes.
     @setRuntimeSafety(false);
     var tmp: [max_io]u8 = undefined;
-    const n = src.peek(tmp[0..@min(tmp.len, len)]);
+    const n = src.peek(tmp[0..len]);
     copyToUser(addr, tmp[0..n]) catch return errval(EFAULT);
     src.consume(n);
     return n;
@@ -264,24 +266,17 @@ fn writeUser(addr: usize, len: usize, sink: anytype) u64 {
     // Same as `readPeek`: do not paint this page with 0xAA.
     @setRuntimeSafety(false);
     var tmp: [max_io]u8 = undefined;
-    var copied: usize = 0;
-    while (copied < len) {
-        const n = @min(tmp.len, len - copied);
-        copyFromUser(tmp[0..n], addr + copied) catch {
-            if (copied == 0) return errval(EFAULT);
-            return copied;
+    // `checkIo` caps `len` at one page, so this is a single copy.
+    copyFromUser(tmp[0..len], addr) catch return errval(EFAULT);
+    var off: usize = 0;
+    while (off < len) {
+        const w = sink.write(tmp[off..len]) catch {
+            if (off == 0) return errval(EPIPE);
+            return off;
         };
-        var off: usize = 0;
-        while (off < n) {
-            const w = sink.write(tmp[off..n]) catch {
-                if (copied == 0) return errval(EPIPE);
-                return copied;
-            };
-            off += w;
-            copied += w;
-        }
+        off += w;
     }
-    return copied;
+    return off;
 }
 
 fn sys_exit(ctx: *cpu.Context) u64 {
@@ -826,21 +821,11 @@ fn writeFile(open: *file.OpenFile, addr: usize, len: usize) u64 {
     // Same as `readPeek`: do not paint this page with 0xAA.
     @setRuntimeSafety(false);
     var tmp: [max_io]u8 = undefined;
-    var copied: usize = 0;
-    while (copied < len) {
-        const n = @min(tmp.len, len - copied);
-        copyFromUser(tmp[0..n], addr + copied) catch {
-            if (copied == 0) return errval(EFAULT);
-            return copied;
-        };
-        const w = open.node.writeAt(open.pos, tmp[0..n]) catch |err| {
-            if (copied == 0) return fsErr(err);
-            return copied;
-        };
-        open.pos += w;
-        copied += w;
-    }
-    return copied;
+    // `checkIo` caps `len` at one page, and `writeAt` takes the whole slice.
+    copyFromUser(tmp[0..len], addr) catch return errval(EFAULT);
+    const n = open.node.writeAt(open.pos, tmp[0..len]) catch |err| return fsErr(err);
+    open.pos += n;
+    return n;
 }
 
 fn fsErr(err: vfs.Error) u64 {
