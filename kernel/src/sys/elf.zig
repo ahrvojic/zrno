@@ -62,7 +62,11 @@ pub const Image = struct {
 };
 
 pub fn parse(image: []const u8) error{ BadElf, WritableExecutable, OutOfRange, AlreadyMapped }!Image {
-    const ehdr = try peek(Ehdr, image, 0);
+    return parseAt(image.len, ImageSrc{ .bytes = image });
+}
+
+fn parseAt(file_len: usize, src: anytype) !Image {
+    const ehdr = try readValue(src, Ehdr, 0);
     try checkIdent(&ehdr.ident);
     if (ehdr.type != .EXEC) return error.BadElf;
     if (ehdr.machine != .X86_64) return error.BadElf;
@@ -75,14 +79,14 @@ pub fn parse(image: []const u8) error{ BadElf, WritableExecutable, OutOfRange, A
     const phnum: usize = ehdr.phnum;
     const ph_bytes = std.math.mul(usize, phnum, @sizeOf(Phdr)) catch return error.BadElf;
     _ = std.math.add(usize, phoff, ph_bytes) catch return error.BadElf;
-    if (phoff > image.len or image.len - phoff < ph_bytes) return error.BadElf;
+    if (phoff > file_len or file_len - phoff < ph_bytes) return error.BadElf;
 
     var result: Image = .{ .entry = std.math.cast(usize, ehdr.entry) orelse return error.BadElf };
     for (0..phnum) |i| {
-        const phdr = try peek(Phdr, image, phoff + i * @sizeOf(Phdr));
+        const phdr = try readValue(src, Phdr, phoff + i * @sizeOf(Phdr));
         if (phdr.type == .INTERP) return error.BadElf;
         if (phdr.type != .LOAD) continue;
-        try result.append(try parseLoad(image, phdr));
+        try result.append(try parseLoad(file_len, phdr));
     }
     if (result.loads.len == 0) return error.BadElf;
     try checkOverlaps(result.constSlice());
@@ -110,7 +114,12 @@ fn imageBrk(segs: []const Load) usize {
 ///   map(self, vaddr: usize, alloc: Alloc, flags: MapFlags) !void
 ///   unmap(self, vaddr: usize, size: usize) void
 pub fn load(space: anytype, image: []const u8) !Loaded {
-    const parsed = try parse(image);
+    return loadAt(space, image.len, ImageSrc{ .bytes = image });
+}
+
+/// `src.readAt(off, dest)` returns how many file bytes were copied.
+pub fn loadAt(space: anytype, file_len: usize, src: anytype) !Loaded {
+    const parsed = try parseAt(file_len, src);
     const segs = parsed.constSlice();
     const Alloc = @typeInfo(@TypeOf(space.alloc(1))).error_union.payload;
 
@@ -132,7 +141,7 @@ pub fn load(space: anytype, image: []const u8) !Loaded {
         @memset(mem.bytes, 0);
         const lead = seg.vaddr - seg.map_vaddr;
         if (seg.filesz != 0) {
-            @memcpy(mem.bytes[lead..][0..seg.filesz], image[seg.offset..][0..seg.filesz]);
+            try readExact(src, seg.offset, mem.bytes[lead..][0..seg.filesz]);
         }
         try space.map(seg.map_vaddr, mem, seg.flags);
         done[mapped] = .{ .vaddr = seg.map_vaddr, .size = seg.map_size, .alloc = mem };
@@ -149,7 +158,7 @@ fn Mapped(comptime Alloc: type) type {
     };
 }
 
-fn parseLoad(image: []const u8, phdr: Phdr) error{ BadElf, WritableExecutable, OutOfRange }!Load {
+fn parseLoad(file_len: usize, phdr: Phdr) error{ BadElf, WritableExecutable, OutOfRange }!Load {
     if (phdr.filesz > phdr.memsz) return error.BadElf;
     const vaddr: usize = std.math.cast(usize, phdr.vaddr) orelse return error.BadElf;
     const memsz: usize = std.math.cast(usize, phdr.memsz) orelse return error.BadElf;
@@ -164,7 +173,7 @@ fn parseLoad(image: []const u8, phdr: Phdr) error{ BadElf, WritableExecutable, O
     }
 
     const file_end = std.math.add(usize, offset, filesz) catch return error.BadElf;
-    if (file_end > image.len) return error.BadElf;
+    if (file_end > file_len) return error.BadElf;
 
     const vaddr_end = std.math.add(usize, vaddr, memsz) catch return error.BadElf;
     const map_vaddr = std.mem.alignBackward(usize, vaddr, page_size);
@@ -225,12 +234,25 @@ fn alignForward(addr: usize, alignment: usize) error{BadElf}!usize {
     return padded & ~add;
 }
 
-fn peek(comptime T: type, image: []const u8, offset: usize) error{BadElf}!T {
-    const size = @sizeOf(T);
-    if (offset > image.len or image.len - offset < size) return error.BadElf;
-    var value: T = undefined;
-    @memcpy(std.mem.asBytes(&value), image[offset..][0..size]);
-    return value;
+const ImageSrc = struct {
+    bytes: []const u8,
+
+    fn readAt(self: ImageSrc, off: usize, dest: []u8) error{BadElf}!usize {
+        if (off > self.bytes.len or dest.len > self.bytes.len - off) return error.BadElf;
+        @memcpy(dest, self.bytes[off..][0..dest.len]);
+        return dest.len;
+    }
+};
+
+fn readExact(src: anytype, off: usize, dest: []u8) !void {
+    const n = try src.readAt(off, dest);
+    if (n != dest.len) return error.BadElf;
+}
+
+fn readValue(src: anytype, comptime T: type, offset: usize) !T {
+    var buf: [@sizeOf(T)]u8 = undefined;
+    try readExact(src, offset, &buf);
+    return std.mem.bytesToValue(T, &buf);
 }
 
 const MockAlloc = struct { bytes: []u8 };
@@ -480,9 +502,20 @@ test "load copies filesz, zeros BSS, maps R/W/X" {
     f.addLoad(0x401000, rw(), &data, 12, page_size);
     const image = f.finish(.EXEC, .X86_64, 0x400000);
 
+    const Count = struct {
+        image: []const u8,
+        widest: usize = 0,
+
+        fn readAt(self: *@This(), off: usize, dest: []u8) error{BadElf}!usize {
+            self.widest = @max(self.widest, dest.len);
+            return (ImageSrc{ .bytes = self.image }).readAt(off, dest);
+        }
+    };
+    var src = Count{ .image = image };
     var backing: [page_size * 4]u8 = undefined;
     var space: MockSpace = .{ .backing = &backing };
-    const loaded = try load(&space, image);
+    const loaded = try loadAt(&space, image.len, &src);
+    try std.testing.expect(src.widest < image.len);
     try std.testing.expectEqual(0x400000, loaded.entry);
     try std.testing.expectEqual(0x402000, loaded.brk);
     try std.testing.expectEqual(2, space.nmaps);
