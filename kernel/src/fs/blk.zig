@@ -4,8 +4,9 @@
 //! read and write of one 4096-byte block. Cached blocks are refcounted
 //! frames on the kernel, and plain bytes in host tests.
 //!
-//! A slot stays until it is reused. A frame a mapping still holds is not
-//! reused: that page is the mapping's copy of the block.
+//! A slot stays until it is reused. Reuse walks forward from the last
+//! choice, so a full cache turns over. A frame a mapping still holds is
+//! not reused: that page is the mapping's copy of the block.
 
 const std = @import("std");
 
@@ -45,6 +46,8 @@ pub const Disk = struct {
     image: []u8 = &.{},
     scratch: []u8 = &.{},
     slots: [cache_slots]Slot = undefined,
+    /// Where the next search starts. Moves past the slot `victim` returns.
+    next_slot: usize = 0,
 
     pub fn memory(allocator: std.mem.Allocator, blocks: u32) error{OutOfMemory}!*Disk {
         if (blocks < 3 or blocks > max_blocks) return error.OutOfMemory;
@@ -201,14 +204,23 @@ pub const Disk = struct {
         }
     }
 
+    /// An empty slot on this pass, otherwise the first live slot at or
+    /// after `next_slot`. A held or pinned slot stays.
     fn victim(self: *Disk) ?*Slot {
-        var spare: ?*Slot = null;
-        for (&self.slots) |*slot| {
+        var spare: ?usize = null;
+        for (0..cache_slots) |i| {
+            const idx = (self.next_slot + i) % cache_slots;
+            const slot = &self.slots[idx];
             if (slot.holds != 0 or pinned(slot)) continue;
-            if (!slot.live) return slot;
-            if (spare == null) spare = slot;
+            if (!slot.live) {
+                spare = idx;
+                break;
+            }
+            if (spare == null) spare = idx;
         }
-        return spare;
+        const idx = spare orelse return null;
+        self.next_slot = (idx + 1) % cache_slots;
+        return &self.slots[idx];
     }
 
     fn initCache(self: *Disk) error{OutOfMemory}!void {
@@ -256,4 +268,38 @@ fn memWrite(dev: *anyopaque, block: u32, src: []const u8) error{Io}!void {
     const off = @as(usize, block) * block_size;
     if (src.len != block_size or off + block_size > disk.image.len) return error.Io;
     @memcpy(disk.image[off..][0..block_size], src);
+}
+
+fn cached(disk: *const Disk, block: u32) bool {
+    for (&disk.slots) |*slot| {
+        if (slot.live and slot.block == block) return true;
+    }
+    return false;
+}
+
+test "a full cache replaces the next slot, and a held slot stays" {
+    const a = std.testing.allocator;
+    const disk = try Disk.memory(a, cache_slots + 2);
+    defer disk.deinit();
+
+    for (0..cache_slots) |i| {
+        const slot = try disk.get(@intCast(i));
+        disk.put(slot);
+    }
+
+    const past = try disk.get(cache_slots);
+    disk.put(past);
+    const next = try disk.get(cache_slots + 1);
+    disk.put(next);
+    // First miss replaced block 0. Second must replace block 1 and
+    // leave that earlier miss cached.
+    try std.testing.expect(!cached(disk, 1));
+    try std.testing.expect(cached(disk, cache_slots));
+
+    const held = try disk.get(2);
+    defer disk.put(held);
+    const again = try disk.get(0);
+    disk.put(again);
+    try std.testing.expect(cached(disk, 2));
+    try std.testing.expect(!cached(disk, 3));
 }
