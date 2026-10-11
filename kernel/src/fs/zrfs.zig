@@ -86,25 +86,47 @@ pub fn probe(disk: *blk.Disk) IoMem!bool {
     return true;
 }
 
+/// Allocate an inode block and publish its kind. No directory record.
+pub fn allocInode(disk: *blk.Disk, kind: Kind) Error!u32 {
+    const ino = try allocBlock(disk);
+    const slot = try disk.get(ino);
+    writeU32(slot.data, 0, @backingInt(kind));
+    disk.commit(slot) catch |err| {
+        disk.put(slot);
+        freeBlock(disk, ino) catch {};
+        return err;
+    };
+    disk.put(slot);
+    return ino;
+}
+
 pub fn create(disk: *blk.Disk, parent: u32, name: []const u8, kind: Kind) Error!u32 {
     try checkName(name);
     if (try lookup(disk, parent, name) != null) return error.Exists;
-    const ino = try allocBlock(disk);
-    {
-        const slot = try disk.get(ino);
-        writeU32(slot.data, 0, @backingInt(kind));
-        disk.commit(slot) catch |err| {
-            disk.put(slot);
-            freeBlock(disk, ino) catch {};
-            return err;
-        };
-        disk.put(slot);
-    }
+    const ino = try allocInode(disk, kind);
     link(disk, parent, name, ino, kind) catch |err| {
         freeBlock(disk, ino) catch {};
         return err;
     };
     return ino;
+}
+
+/// Write one directory record at `index`. Callers pack live records from zero.
+pub fn putEntry(disk: *blk.Disk, dir: u32, index: usize, ino: u32, kind: Kind, name: []const u8) Error!void {
+    try checkName(name);
+    try writeRec(disk, dir, index, ino, kind, name);
+}
+
+/// Zero records from `from` through the last one. Inode 0 is already empty.
+pub fn clearTail(disk: *blk.Disk, dir: u32, from: usize) Error!void {
+    var i = from;
+    while (true) : (i += 1) {
+        var ignore: [name_cap]u8 = undefined;
+        const ent = try readEntry(disk, dir, i, &ignore) orelse return;
+        if (ent.ino == 0) continue;
+        var rec: [rec_size]u8 = @splat(0);
+        _ = try write(disk, dir, i * rec_size, &rec);
+    }
 }
 
 pub fn lookup(disk: *blk.Disk, dir: u32, name: []const u8) IoMem!?u32 {

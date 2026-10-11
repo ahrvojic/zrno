@@ -1,7 +1,7 @@
 //! One name tree. `/` is the initramfs: static nodes, bytes borrowed from the
-//! ustar image, mounted before the heap exists. `/tmp` is a directory on the
-//! block disk. The heap nodes are the live index (open files, the current
-//! directory); the bytes and the names are the disk format.
+//! ustar image, mounted before the heap exists. `/tmp` is one directory on
+//! the block disk: the sibling list. `sync` writes zrfs records from that
+//! list. File bytes stay in the on-disk inode format.
 
 const std = @import("std");
 
@@ -48,6 +48,8 @@ pub const Node = struct {
     parent: ?*Node = null,
     next: ?*Node = null,
     child: ?*Node = null,
+    /// Owning tree for a disk node. Null on the initramfs.
+    tree: ?*Tree = null,
     /// Set for a node stored on the block disk. The root of that disk is `/tmp`.
     disk: ?*blk.Disk = null,
     ino: u32 = 0,
@@ -173,20 +175,15 @@ pub const Node = struct {
         return self.isWritableDir() or self.isWritableFile();
     }
 
+    /// The node leaves the sibling list before this runs. A disk inode stays
+    /// allocated until `sync`, so a record from the previous snapshot still
+    /// names a live block.
     fn discard(self: *Node) void {
-        switch (self.kind) {
-            .owned => |o| {
-                if (self.disk) |disk| zrfs.destroy(disk, self.ino) catch {};
-                o.heap.destroy(self);
-            },
-            .dir => |alloc| {
-                const owner = alloc orelse @panic("static vnode freed");
-                if (self.child != null) @panic("freeing directory with children");
-                if (self.disk) |disk| zrfs.destroy(disk, self.ino) catch {};
-                owner.destroy(self);
-            },
-            .borrowed => @panic("static vnode freed"),
-        }
+        if (self.isDir() and self.child != null) @panic("freeing directory with children");
+        const fs = self.tree orelse @panic("static vnode freed");
+        self.parent = null;
+        self.next = fs.grave;
+        fs.grave = self;
     }
 
     fn setName(self: *Node, nam: []const u8) void {
@@ -201,6 +198,10 @@ pub const Tree = struct {
     len: usize = 0,
     root: ?*Node = null,
     disk: ?*blk.Disk = null,
+    /// Unlinked disk nodes. Their inodes stay until `sync`.
+    grave: ?*Node = null,
+    /// The sibling list has names that `sync` has not written.
+    names_dirty: bool = false,
 
     pub fn deinit(self: *Tree) void {
         if (self.root) |base| {
@@ -217,6 +218,8 @@ pub const Tree = struct {
         }
         self.root = null;
         self.len = 0;
+        self.names_dirty = false;
+        takeGraves(self, true);
         if (self.disk) |disk| {
             disk.deinit();
             self.disk = null;
@@ -262,6 +265,7 @@ pub const Tree = struct {
             .kind = .{ .dir = allocator },
             .disk = disk,
             .ino = zrfs.root_ino,
+            .tree = self,
         };
         node.setName(tmp_name);
         addChild(base, node);
@@ -275,13 +279,31 @@ pub const Tree = struct {
         };
     }
 
-    /// Drop the heap index under `/tmp` and build it again from the disk.
+    /// Drop the heap index under `/tmp` and build it again from the last
+    /// synced records. Names changed since that sync are gone.
     fn reread(self: *Tree) Error!void {
         const base = self.root orelse return error.NoEnt;
         const tmp = lookupChild(base, tmp_name) orelse return error.NoEnt;
         if (held(tmp)) return error.Invalid;
+        takeGraves(self, false);
         dropIndex(tmp);
+        self.names_dirty = false;
         try loadDir(tmp);
+    }
+
+    /// Write directory records from the sibling list, then free inodes that
+    /// no longer have a name. File bytes are already on the disk.
+    pub fn sync(self: *Tree) void {
+        const disk = self.disk orelse return;
+        if (self.names_dirty) {
+            checkpoint(self) catch {
+                disk.sync();
+                return;
+            };
+            self.names_dirty = false;
+        }
+        takeGraves(self, true);
+        disk.sync();
     }
 
     pub fn walk(self: *Tree, path: []const u8) error{ NoEnt, NotDir }!*Node {
@@ -383,9 +405,9 @@ pub const Tree = struct {
         if (endsSlash(path) and !child.isDir()) return error.NotDir;
         if (child.isDir()) return error.IsDir;
         if (!child.isWritableFile() or !at.parent.isWritableDir()) return error.ReadOnly;
-        try zrfs.unlinkName(child.disk.?, at.parent.ino, at.name);
         detach(at.parent, child);
         child.release();
+        self.names_dirty = true;
     }
 
     pub fn mkdirPath(self: *Tree, path: []const u8) Error!void {
@@ -410,14 +432,14 @@ pub const Tree = struct {
         if (child.child != null) return error.NotEmpty;
         if (!child.isWritableDir() or !at.parent.isWritableDir()) return error.ReadOnly;
         if (child.refs != 1) return error.Invalid;
-        try zrfs.unlinkName(child.disk.?, at.parent.ino, at.name);
         detach(at.parent, child);
         child.release();
+        self.names_dirty = true;
     }
 
     /// Moves a heap node. The same path is a no-op. An existing file, or an
     /// empty directory of the same kind, is replaced. A directory cannot be
-    /// moved under itself.
+    /// moved under itself. Directory records change at `sync`.
     pub fn renamePath(self: *Tree, old_path: []const u8, new_path: []const u8) Error!void {
         const start = self.root orelse return error.NoEnt;
         return self.renamePathFrom(start, old_path, new_path);
@@ -432,7 +454,6 @@ pub const Tree = struct {
         if (node.isDir() and isInside(node, to.parent)) return error.Invalid;
         if (!from.parent.isWritableDir() or !to.parent.isWritableDir()) return error.ReadOnly;
         if (!node.isWritableDir() and !node.isWritableFile()) return error.ReadOnly;
-        const disk = node.disk orelse return error.ReadOnly;
         if (lookupChild(to.parent, to.name)) |dest| {
             if (dest.isDir() != node.isDir()) {
                 if (dest.isDir()) return error.IsDir;
@@ -442,29 +463,13 @@ pub const Tree = struct {
                 if (dest.child != null) return error.NotEmpty;
                 if (!dest.isWritableDir()) return error.ReadOnly;
             } else if (!dest.isWritableFile()) return error.ReadOnly;
-            try zrfs.unlinkName(disk, to.parent.ino, to.name);
-            linkNode(disk, to.parent, to.name, node) catch |err| {
-                relink(disk, to.parent, to.name, dest);
-                return err;
-            };
-            zrfs.unlinkName(disk, from.parent.ino, from.name) catch |err| {
-                _ = zrfs.unlinkName(disk, to.parent.ino, to.name) catch {};
-                relink(disk, from.parent, from.name, node);
-                relink(disk, to.parent, to.name, dest);
-                return err;
-            };
             detach(to.parent, dest);
             dest.release();
-        } else {
-            try linkNode(disk, to.parent, to.name, node);
-            zrfs.unlinkName(disk, from.parent.ino, from.name) catch |err| {
-                _ = zrfs.unlinkName(disk, to.parent.ino, to.name) catch {};
-                return err;
-            };
         }
         detach(from.parent, node);
         node.setName(to.name);
         addChild(to.parent, node);
+        self.names_dirty = true;
     }
 
     fn parentName(self: *Tree, start: *Node, path: []const u8) Error!struct { parent: *Node, name: []const u8 } {
@@ -505,7 +510,7 @@ pub fn mountVirtio(blocks: u32, dev: *anyopaque, read_fn: blk.ReadFn, write_fn: 
 }
 
 pub fn sync() void {
-    if (tree.disk) |disk| disk.sync();
+    tree.sync();
 }
 
 pub fn root() *Node {
@@ -548,14 +553,15 @@ fn createChild(parent: *Node, nam: []const u8, kind: enum { file, dir }) Error!*
         else => return error.NotDir,
     };
     const disk = parent.disk orelse return error.ReadOnly;
+    const fs = parent.tree orelse return error.ReadOnly;
     const zk: zrfs.Kind = if (kind == .file) .file else .dir;
-    const ino = try zrfs.create(disk, parent.ino, nam, zk);
-    const node = makeNode(alloc, disk, zk, ino, nam, 0) catch {
-        zrfs.unlinkName(disk, parent.ino, nam) catch {};
+    const ino = try zrfs.allocInode(disk, zk);
+    const node = makeNode(alloc, fs, disk, zk, ino, nam, 0) catch {
         zrfs.destroy(disk, ino) catch {};
         return error.OutOfMemory;
     };
     addChild(parent, node);
+    fs.names_dirty = true;
     return node;
 }
 
@@ -578,11 +584,12 @@ fn spawnNode(parent: *Node, kind: zrfs.Kind, ino: u32, name: []const u8) Error!*
         else => return error.NotDir,
     };
     const disk = parent.disk orelse return error.ReadOnly;
+    const fs = parent.tree orelse return error.ReadOnly;
     const len = if (kind == .file) try zrfs.byteSize(disk, ino) else 0;
-    return makeNode(alloc, disk, kind, ino, name, len);
+    return makeNode(alloc, fs, disk, kind, ino, name, len);
 }
 
-fn makeNode(alloc: std.mem.Allocator, disk: *blk.Disk, kind: zrfs.Kind, ino: u32, name: []const u8, len: usize) error{OutOfMemory}!*Node {
+fn makeNode(alloc: std.mem.Allocator, fs: *Tree, disk: *blk.Disk, kind: zrfs.Kind, ino: u32, name: []const u8, len: usize) error{OutOfMemory}!*Node {
     const node = try alloc.create(Node);
     node.* = .{
         .kind = switch (kind) {
@@ -591,18 +598,49 @@ fn makeNode(alloc: std.mem.Allocator, disk: *blk.Disk, kind: zrfs.Kind, ino: u32
         },
         .disk = disk,
         .ino = ino,
+        .tree = fs,
     };
     node.setName(name);
     return node;
 }
 
-fn linkNode(disk: *blk.Disk, parent: *Node, name: []const u8, node: *Node) zrfs.Error!void {
-    const kind: zrfs.Kind = if (node.isDir()) .dir else .file;
-    try zrfs.link(disk, parent.ino, name, node.ino, kind);
+fn checkpoint(self: *Tree) Error!void {
+    const base = self.root orelse return;
+    const tmp = lookupChild(base, tmp_name) orelse return;
+    try writeDir(tmp);
 }
 
-fn relink(disk: *blk.Disk, parent: *Node, name: []const u8, node: *Node) void {
-    linkNode(disk, parent, name, node) catch {};
+fn writeDir(dir: *Node) Error!void {
+    const disk = dir.disk orelse return;
+    var i: usize = 0;
+    var c = dir.child;
+    while (c) |n| {
+        const kind: zrfs.Kind = if (n.isDir()) .dir else .file;
+        try zrfs.putEntry(disk, dir.ino, i, n.ino, kind, n.name());
+        if (n.isDir()) try writeDir(n);
+        i += 1;
+        c = n.next;
+    }
+    try zrfs.clearTail(disk, dir.ino, i);
+}
+
+/// `free_inodes` releases the blocks. A reread keeps them: the snapshot
+/// records still name those inodes.
+fn takeGraves(self: *Tree, free_inodes: bool) void {
+    var g = self.grave;
+    self.grave = null;
+    while (g) |n| {
+        const next = n.next;
+        if (free_inodes) {
+            if (n.disk) |disk| zrfs.destroy(disk, n.ino) catch {};
+        }
+        switch (n.kind) {
+            .owned => |o| o.heap.destroy(n),
+            .dir => |owner| (owner orelse unreachable).destroy(n),
+            .borrowed => unreachable,
+        }
+        g = next;
+    }
 }
 
 fn held(dir: *Node) bool {
@@ -783,13 +821,22 @@ test "tmp bytes survive a reread, including a block boundary" {
     const created = try t.openPath("/tmp/d/a", .write, true);
     _ = try created.node.writeAt(0, &page);
     _ = try created.node.writeAt(block_size, "bbbb");
+    t.sync();
     try t.reread();
 
     var across: [8]u8 = undefined;
     const node = try t.walk("/tmp/d/a");
     const n = node.readAt(block_size - 4, &across) catch unreachable;
     try std.testing.expectEqualStrings("aaaabbbb", across[0..n]);
+
+    // An unsynced unlink is still in the last snapshot.
     try t.unlinkPath("/tmp/d/a");
+    try std.testing.expectError(error.NoEnt, t.walk("/tmp/d/a"));
+    try t.reread();
+    const restored = try t.walk("/tmp/d/a");
+    try std.testing.expectEqualStrings("aaaabbbb", across[0..try restored.readAt(block_size - 4, &across)]);
+    try t.unlinkPath("/tmp/d/a");
+    t.sync();
     try t.reread();
     try std.testing.expectError(error.NoEnt, t.walk("/tmp/d/a"));
     try std.testing.expect((try t.walk("/tmp/d")).isDir());
@@ -924,6 +971,14 @@ test "rename moves a heap node and replaces a file or empty directory" {
     try std.testing.expectError(error.ReadOnly, t.renamePath("/tmp", "/other"));
     try std.testing.expectError(error.NoEnt, t.renamePath("/tmp/missing", "/tmp/x"));
     try std.testing.expectError(error.NotDir, t.renamePath("/init/x", "/tmp/x"));
+
+    t.sync();
+    try t.reread();
+    try std.testing.expectEqualStrings("hello", textOf(try t.walk("/tmp/empty/c"), &buf));
+    try t.renamePath("/tmp/empty/c", "/tmp/z");
+    try t.reread();
+    try std.testing.expectEqualStrings("hello", textOf(try t.walk("/tmp/empty/c"), &buf));
+    try std.testing.expectError(error.NoEnt, t.walk("/tmp/z"));
 }
 
 test "relative paths start at the given directory" {
