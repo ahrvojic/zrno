@@ -45,9 +45,9 @@ fn tryAcpiSleep() void {
         logger.warn("no PM1a_CNT", .{});
         return;
     }
-    const s5 = dsdt.s5() orelse blk: {
-        logger.warn("no \\_S5_; try SLP_TYP 0", .{});
-        break :blk dsdt.S5{ .slp_typa = 0, .slp_typb = 0 };
+    const s5 = dsdt.s5() orelse {
+        logger.warn("no \\_S5_", .{});
+        return;
     };
     writeSleep(a, fadt.pm1b(), s5.slp_typa, s5.slp_typb);
 }

@@ -133,7 +133,8 @@ pub const Disk = struct {
                 return slot;
             }
         }
-        const slot = self.victim() orelse return error.OutOfMemory;
+        // Every slot is held or pinned, so the block cannot be read.
+        const slot = self.victim() orelse return error.Io;
         if (slot.live and slot.dirty) try self.commit(slot);
         self.read_fn(self.dev, block, slot.data) catch |err| {
             slot.live = false;

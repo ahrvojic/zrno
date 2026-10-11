@@ -75,6 +75,8 @@ pub fn startProcess(enqueue: bool) !*proc.Process {
     };
     cwd.retain();
     errdefer cwd.release();
+    // After the VMM is stored. A kernel L3 allocated from here on is published.
+    process.vmm.adoptClone();
     errdefer process.vmm.destroy();
     if (cpu.current().thread) |t| {
         process.parent = t.parent.pid;
@@ -117,21 +119,12 @@ pub fn waitProcess(pid: u64) error{ NoChild, Invalid }!WaitResult {
     const waiter = cpu.currentProcess();
     if (pid == waiter.pid) return error.Invalid;
 
-    // Nested specific-pid waits leave the outer child armed.
-    var armed = false;
     while (true) {
-        const target = pickWaitTarget(pid, waiter.pid) orelse {
-            if (armed) foreground = null;
-            return error.NoChild;
-        };
-        if (target.zombie) {
-            if (armed) foreground = null;
-            return reapZombie(target);
-        }
-        if (pid != 0 and foreground == null) {
-            foreground = target;
-            armed = true;
-        }
+        const target = pickWaitTarget(pid, waiter.pid) orelse return error.NoChild;
+        if (target.zombie) return reapZombie(target);
+        // `reap` clears foreground when it frees this process. A waiter
+        // that lost the race must not clear a newer child.
+        if (pid != 0 and foreground == null) foreground = target;
         wait(if (pid == 0) waiter else target);
     }
 }
@@ -300,8 +293,8 @@ pub fn wakeWord(process: *proc.Process, addr: usize) usize {
     return wakeOn(@ptrFromInt(addr), process);
 }
 
-/// `process` null wakes every waiter on `chan`, including a poller whose
-/// interest list contains it. A process wakes only its own `wait` on `chan`.
+/// `process` null wakes every waiter on `chan`, and every thread in poll.
+/// A process wakes only its own `wait` on `chan`.
 fn wakeOn(chan: *const anyopaque, process: ?*proc.Process) usize {
     state.expectInit();
     var n: usize = 0;
@@ -310,6 +303,7 @@ fn wakeOn(chan: *const anyopaque, process: ?*proc.Process) usize {
         const t = threadFromSched(nd);
         if (t.status == .waiting and (process == null or t.parent == process) and waitingOn(t, chan, process == null)) {
             t.wait_chan = null;
+            t.polling = false;
             t.status = .ready;
             n += 1;
         }
@@ -318,12 +312,9 @@ fn wakeOn(chan: *const anyopaque, process: ?*proc.Process) usize {
     return n;
 }
 
-fn waitingOn(t: *const proc.Thread, chan: *const anyopaque, poll: bool) bool {
+fn waitingOn(t: *const proc.Thread, chan: *const anyopaque, broadcast: bool) bool {
     if (t.wait_chan == chan) return true;
-    if (!poll) return false;
-    const set = t.poll_chans orelse return false;
-    for (set) |c| if (c == chan) return true;
-    return false;
+    return broadcast and t.polling;
 }
 
 pub fn schedule(ctx: *cpu.Context) void {
@@ -338,8 +329,13 @@ pub fn schedule(ctx: *cpu.Context) void {
     const curr = this_cpu.thread;
     var start = state.threads.first;
     if (curr) |t| {
-        if (t.status == .running) t.status = .ready;
-        start = t.sched_node.next orelse start;
+        if (t.status == .running) {
+            // Idle is not on the sched list. Leaving it `.ready` makes ps
+            // show it runnable while a user thread runs. `.sleeping` is not
+            // promoted: wakeSleepers requires `on_runqueue`.
+            t.status = if (t.on_runqueue) .ready else .sleeping;
+        }
+        if (t.on_runqueue) start = t.sched_node.next orelse start;
     }
 
     const next = nextReadyThread(start) orelse state.idle_thread;
@@ -368,7 +364,7 @@ fn wakeSleepers() void {
     var node = state.threads.first;
     while (node) |n| {
         const t = threadFromSched(n);
-        if (t.status == .sleeping and ticks >= t.wake_tick) {
+        if (t.on_runqueue and t.status == .sleeping and ticks >= t.wake_tick) {
             t.status = .ready;
         }
         node = n.next;

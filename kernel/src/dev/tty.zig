@@ -40,6 +40,7 @@ pub fn consume(n: usize) void {
 // Ctrl-C stops the foreground child and is not cooked.
 pub fn enqueue(ch: u8) void {
     if (ch == 0x03) {
+        input.discardLine();
         if (sched.stopForeground()) writeBytes("^C\n");
         return;
     }

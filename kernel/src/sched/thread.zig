@@ -135,7 +135,7 @@ fn setupUserStack(
 
 pub fn stop(thread: *proc.Thread) void {
     thread.wait_chan = null;
-    thread.poll_chans = null;
+    thread.polling = false;
     state.dequeueThread(thread);
     thread.parent.threads.remove(&thread.proc_node);
 

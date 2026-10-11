@@ -24,10 +24,10 @@ comptime {
 // Access byte:
 // | P | DPL(2) | S | 1 | C | R | A |
 const kernel_code_access = 0b10011010;
-const user_code_access   = 0b11111010;
+const user_code_access = 0b11111010;
 // | P | DPL(2) | S | 0 | E | W | A |
 const kernel_data_access = 0b10010010;
-const user_data_access   = 0b11110010;
+const user_data_access = 0b11110010;
 
 // System access byte:
 // | P | DPL(2) | S | Type(4) |
@@ -125,8 +125,7 @@ pub const GDT = struct {
             \\lgdt (%[gdtr])
             :
             : [gdtr] "r" (&gdtr),
-            : .{ .memory = true }
-        );
+            : .{ .memory = true });
 
         reload();
 
@@ -150,8 +149,6 @@ noinline fn reload() void {
         \\movw %[kernel_data_sel], %ax
         \\movw %ax, %ds
         \\movw %ax, %es
-        \\movw %ax, %fs
-        \\movw %ax, %gs
         \\movw %ax, %ss
         :
         : [kernel_code_sel] "i" (kernel_code_sel),

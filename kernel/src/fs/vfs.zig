@@ -137,9 +137,9 @@ pub const Node = struct {
         if (self.refs == 0) @panic("vnode refcount underflow");
         self.refs -= 1;
         if (self.refs != 0) return;
-        // A cwd can outlive rmdir and still create children. Nothing else
-        // can name them, so the last reference frees that subtree. An open
-        // file keeps its own node.
+        // Last reference frees the node. A writable directory drops its
+        // children first. rmdir requires this entry to be the only reference.
+        // An open file keeps its node after unlink.
         if (self.isWritableDir()) self.dropChildren();
         self.discard();
     }
@@ -425,6 +425,7 @@ pub const Tree = struct {
         if (!child.isDir()) return error.NotDir;
         if (child.child != null) return error.NotEmpty;
         if (!child.isWritableDir() or !at.parent.isWritableDir()) return error.ReadOnly;
+        if (child.refs != 1) return error.Invalid;
         try zrfs.unlinkName(child.disk.?, at.parent.ino, at.name);
         detach(at.parent, child);
         child.release();
@@ -875,6 +876,14 @@ test "tmp directories nest, and rmdir refuses a non-empty dir" {
     try t.rmdirPath("/tmp/a");
     try std.testing.expectError(error.NoEnt, t.walk("/tmp/a"));
 
+    try t.mkdirPath("/tmp/held");
+    const pinned = try t.walk("/tmp/held");
+    pinned.retain();
+    try std.testing.expectError(error.Invalid, t.rmdirPath("/tmp/held"));
+    pinned.release();
+    try t.rmdirPath("/tmp/held");
+    try std.testing.expectError(error.NoEnt, t.walk("/tmp/held"));
+
     try std.testing.expectError(error.ReadOnly, t.mkdirPath("/nope"));
     try std.testing.expectError(error.NotDir, t.mkdirPath("/init/x"));
     try std.testing.expectError(error.Exists, t.mkdirPath("/tmp"));
@@ -956,17 +965,11 @@ test "relative paths start at the given directory" {
     try t.rmdirPath("/tmp/a/sub");
 
     dir.retain();
-    try t.rmdirPath("/tmp/a");
-    try std.testing.expect(try t.walkFrom(dir, "..") == dir);
-
-    try t.mkdirPathFrom(dir, "b");
-    const child = try t.openPathFrom(dir, "b/f", .write, true);
-    _ = try child.node.writeAt(0, "x");
-    child.node.retain();
+    try std.testing.expectError(error.Invalid, t.rmdirPath("/tmp/a"));
+    try std.testing.expect(try t.walkFrom(dir, "..") == try t.walk("/tmp"));
     dir.release();
-    try std.testing.expect(child.node.parent == null);
-    try std.testing.expectEqualStrings("x", textOf(child.node, &buf));
-    child.node.release();
+    try t.rmdirPath("/tmp/a");
+    try std.testing.expectError(error.NoEnt, t.walk("/tmp/a"));
 }
 
 test "pathOf rebuilds a path from parent links" {
@@ -985,7 +988,9 @@ test "pathOf rebuilds a path from parent links" {
     try std.testing.expectError(error.NameTooLong, t.pathOf(dir, buf[0..4]));
 
     dir.retain();
-    try t.rmdirPath("/tmp/a/b");
-    try std.testing.expectError(error.NoEnt, t.pathOf(dir, &buf));
+    try std.testing.expectError(error.Invalid, t.rmdirPath("/tmp/a/b"));
+    try std.testing.expectEqualStrings("/tmp/a/b", buf[0..try t.pathOf(dir, &buf)]);
     dir.release();
+    try t.rmdirPath("/tmp/a/b");
+    try std.testing.expectError(error.NoEnt, t.walk("/tmp/a/b"));
 }

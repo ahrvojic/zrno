@@ -47,13 +47,11 @@ pub fn init() void {
     bits_value = spec.bits;
     kind = spec.kind;
 
-    const a = readVerified();
+    const a = readVerified() orelse return absent("PM timer read failed");
     pauseLoop(tick_spins);
-    const b = readVerified();
+    const b = readVerified() orelse return absent("PM timer read failed");
     if (counterDelta(b, a, bits_value) == 0) {
-        logger.warn("PM timer is not ticking", .{});
-        kind = null;
-        mmio_base = 0;
+        absent("PM timer is not ticking");
         return;
     }
 
@@ -68,7 +66,7 @@ pub fn present() bool {
     return kind != null;
 }
 
-pub fn read() u32 {
+pub fn read() ?u32 {
     expectPresent();
     return readVerified();
 }
@@ -78,7 +76,7 @@ pub fn delta(now: u32, then: u32) u32 {
     return counterDelta(now, then, bits_value);
 }
 
-fn readVerified() u32 {
+fn readVerified() ?u32 {
     const mask = counterMask(bits_value);
     var spins: u32 = 0;
     while (true) {
@@ -87,8 +85,15 @@ fn readVerified() u32 {
         const v3 = readRaw() & mask;
         if (readsConsistent(v1, v2, v3)) return v2;
         spins += 1;
-        if (spins >= verify_spins) return v2;
+        // A 0 sample is a real counter value, so a torn read is absence.
+        if (spins >= verify_spins) return null;
     }
+}
+
+fn absent(msg: []const u8) void {
+    logger.warn("{s}", .{msg});
+    kind = null;
+    mmio_base = 0;
 }
 
 fn readRaw() u32 {

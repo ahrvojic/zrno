@@ -50,6 +50,11 @@ pub const Input = struct {
         self.in.drop(n);
     }
 
+    /// Drop the line being edited. A line already committed to the ring stays.
+    pub fn discardLine(self: *Input) void {
+        self.line_len = 0;
+    }
+
     fn commit(self: *Input) bool {
         if (self.line_len + 1 > self.in.room()) {
             self.line_len = 0;
@@ -97,6 +102,18 @@ test "copyOut can split a long line" {
     in.drop(3);
     try std.testing.expectEqual(3, in.copyOut(&out));
     try std.testing.expectEqualStrings("lo\n", &out);
+}
+
+test "discardLine drops the editor and keeps a committed line" {
+    var in: Input = .{};
+    _ = in.feed('h');
+    _ = in.feed('i');
+    _ = in.feed('\n');
+    _ = in.feed('x');
+    in.discardLine();
+    var out: [8]u8 = undefined;
+    try std.testing.expectEqual(3, in.copyOut(&out));
+    try std.testing.expectEqualStrings("hi\n", out[0..3]);
 }
 
 test "copyOut stops at newline" {

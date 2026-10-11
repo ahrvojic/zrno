@@ -52,12 +52,25 @@ pub fn init() !void {
     panic("No usable APIC timer calibration source (HPET, ACPI PM timer, PIT channel 2)");
 }
 
+fn readHpet() ?u64 {
+    return hpet.read();
+}
+
+fn readPm() ?u64 {
+    const sample = pmtimer.read() orelse return null;
+    return sample;
+}
+
+fn deltaPm(now: u64, then: u64) u64 {
+    return pmtimer.delta(@intCast(now), @intCast(then));
+}
+
 fn calibrateHpet(bsp: *cpu.CPU) ?u32 {
-    return calibrateFreeRunning(bsp, hpet.freqHz(), hpet.read, hpet.delta);
+    return calibrateFreeRunning(bsp, hpet.freqHz(), readHpet, hpet.delta);
 }
 
 fn calibratePm(bsp: *cpu.CPU) ?u32 {
-    return calibrateFreeRunning(bsp, pmtimer.freq_hz, pmtimer.read, pmtimer.delta);
+    return calibrateFreeRunning(bsp, pmtimer.freq_hz, readPm, deltaPm);
 }
 
 fn calibrateFreeRunning(
@@ -68,18 +81,20 @@ fn calibrateFreeRunning(
 ) ?u32 {
     const want = refTicksForCal(ref_hz) orelse return null;
     bsp.lapicTimerArm(0xffff_ffff);
-    const r0 = read_ref();
+    const r0 = read_ref() orelse return null;
     const t0 = cpu.rdtsc();
     const c0 = bsp.lapicTimerCurrent();
     var spins: u32 = 0;
-    while (@as(u64, delta_ref(read_ref(), r0)) < want) {
+    while (true) {
+        const now = read_ref() orelse return null;
+        if (delta_ref(now, r0) >= want) break;
         cpu.pause();
         spins += 1;
         if (spins >= cal_spin_limit or bsp.lapicTimerCurrent() == 0) return null;
     }
     const c1 = bsp.lapicTimerCurrent();
     const t1 = cpu.rdtsc();
-    const r1 = read_ref();
+    const r1 = read_ref() orelse return null;
     const ref_delta = delta_ref(r1, r0);
     observeTsc(t0, t1, ref_delta, ref_hz);
     if (c1 >= c0) return null;

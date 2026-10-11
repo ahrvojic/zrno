@@ -132,6 +132,8 @@ const nmi_stack_size = 2 * pmm.page_size;
 const df_stack_size = 2 * pmm.page_size;
 const pf_stack_size = 16 * pmm.page_size;
 
+pub const DoomedStack = struct { phys: usize, base: usize };
+
 pub const CPU = struct {
     gdt: gdt.GDT = .{},
     idt: idt.IDT = .{},
@@ -145,6 +147,10 @@ pub const CPU = struct {
     lapic_base: usize = 0,
     x2apic: bool = false,
     thread: ?*proc.Thread = null,
+    /// Kernel stack of a thread that exited while still running on it.
+    doomed_stack: ?DoomedStack = null,
+    /// PML4 of an address space that exited while CR3 still pointed at it.
+    doomed_pt: ?usize = null,
     initialized: bool = false,
     lapic_initialized: bool = false,
 

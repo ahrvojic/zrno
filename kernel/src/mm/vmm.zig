@@ -9,6 +9,7 @@ const pmm = @import("pmm.zig");
 const virt = @import("../lib/virt.zig");
 
 pub var kernel_vmm: VMM = .{};
+var kernel_clones: std.DoublyLinkedList = .{};
 
 const flags_mask: u64 = 0xfff0_0000_0000_0fff;
 
@@ -60,8 +61,8 @@ const PageTableEntry = extern struct {
 
 const page_table_entries = pmm.page_size / @sizeOf(PageTableEntry);
 const page_table_index_mask = page_table_entries - 1;
-// Canonical higher half: PML4 indices [256, 512). init preallocates these
-// L3s and cloneKernel shares them with every address space.
+// Canonical higher half: PML4 indices [256, 512). An L3 is allocated on
+// first use and published into every cloned PML4.
 const kernel_pml4_start = page_table_entries / 2;
 const kernel_half_start: usize = kernel_pml4_start << 39;
 
@@ -237,6 +238,12 @@ const PageTable = extern struct {
             // NX stays clear: NX on a PDPT/PD would make the whole subtree
             // non-executable, including user RX leaves.
             entry.setFlags(.{ .present = true, .writable = true, .user = user });
+            // A new kernel PML4 slot is shared. Lower tables hang off that
+            // L3. Host tests leave kernel_vmm uninitialized, so this does
+            // not load its page-table pointer.
+            if (kernel_vmm.initialized and self == kernel_vmm.pt and index >= kernel_pml4_start) {
+                publishKernelSlot(index);
+            }
             return virt.toHH(*PageTable, next_level);
         }
 
@@ -272,6 +279,8 @@ pub const VMM = struct {
     pt_addr_phys: usize = undefined,
     pt: *PageTable = undefined,
     initialized: bool = false,
+    cloned: bool = false,
+    clone_node: std.DoublyLinkedList.Node = .{},
 
     pub fn map(self: *VMM, virt_addr: usize, phys_addr: usize, size: usize, flags: Flags) !void {
         self.expectInit();
@@ -367,7 +376,8 @@ pub const VMM = struct {
         return readCR3() == self.pt_addr_phys;
     }
 
-    // Empty lower half; higher-half L3 pointers are shared with kernel_vmm.
+    // Empty lower half. Present kernel PML4 slots are shared. `adoptClone`
+    // registers the result so a kernel L3 allocated later is published.
     pub fn cloneKernel() !VMM {
         kernel_vmm.expectInit();
         const pt_addr_phys = pmm.alloc(1) orelse return error.OutOfMemory;
@@ -384,11 +394,28 @@ pub const VMM = struct {
         };
     }
 
+    /// Link this address space so a later kernel L3 is published into it.
+    /// Call after the VMM sits at its final address; the list node is intrusive.
+    pub fn adoptClone(self: *VMM) void {
+        self.expectInit();
+        if (self == &kernel_vmm) @panic("adopt kernel vmm");
+        if (self.cloned) @panic("address space already adopted");
+        kernel_clones.append(&self.clone_node);
+        self.cloned = true;
+    }
+
+    pub fn releaseClone(self: *VMM) void {
+        if (!self.cloned) return;
+        kernel_clones.remove(&self.clone_node);
+        self.cloned = false;
+    }
+
     // Free only the lower half and the unique PML4; never the cloned kernel L3s.
     pub fn destroy(self: *VMM) void {
         self.expectInit();
         if (self == &kernel_vmm) @panic("destroy kernel vmm");
         if (self.isCurrent()) @panic("destroy current address space");
+        self.releaseClone();
         const phys = self.pt_addr_phys;
         self.initialized = false;
         destroyPhys(phys);
@@ -402,6 +429,21 @@ pub const VMM = struct {
         if (self.initialized) @panic("vmm already initialized");
     }
 };
+
+fn vmmFromClone(n: *std.DoublyLinkedList.Node) *VMM {
+    return @fieldParentPtr("clone_node", n);
+}
+
+fn publishKernelSlot(index: usize) void {
+    const entry = kernel_vmm.pt.entries[index];
+    var node = kernel_clones.first;
+    while (node) |n| {
+        const clone = vmmFromClone(n);
+        const slot = &clone.pt.entries[index];
+        if (!slot.getFlags().present) slot.* = entry;
+        node = n.next;
+    }
+}
 
 // Walk a cloned PML4. Caller must not be executing on this root.
 pub fn destroyPhys(pt_addr_phys: usize) void {
@@ -417,12 +459,6 @@ pub fn init() !void {
     kernel_vmm.pt_addr_phys = pmm.alloc(1) orelse return error.OutOfMemory;
     kernel_vmm.pt = virt.toHH(*PageTable, kernel_vmm.pt_addr_phys);
     kernel_vmm.initialized = true;
-
-    // Pre-allocate higher half L3 tables to facilitate sharing kernel space
-    // across user spaces
-    for (kernel_pml4_start..page_table_entries) |i| {
-        _ = kernel_vmm.pt.getNextLevel(i, true, false) orelse return error.OutOfMemory;
-    }
 
     // Framebuffer pages are write-combining; every other direct-map entry stays write-back.
     var hhdm_bytes: usize = 0;

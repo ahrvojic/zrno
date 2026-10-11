@@ -70,7 +70,7 @@ pub fn format(disk: *blk.Disk) Error!void {
     const root = try disk.get(root_ino);
     defer disk.put(root);
     @memset(root.data, 0);
-    writeU32(root.data, 0, @intFromEnum(Kind.dir));
+    writeU32(root.data, 0, @backingInt(Kind.dir));
     try disk.commit(root);
 }
 
@@ -91,7 +91,7 @@ pub fn create(disk: *blk.Disk, parent: u32, name: []const u8, kind: Kind) Error!
     const ino = try allocBlock(disk);
     {
         const slot = try disk.get(ino);
-        writeU32(slot.data, 0, @intFromEnum(kind));
+        writeU32(slot.data, 0, @backingInt(kind));
         disk.commit(slot) catch |err| {
             disk.put(slot);
             freeBlock(disk, ino) catch {};
@@ -174,8 +174,8 @@ pub fn readEntry(disk: *blk.Disk, dir: u32, index: usize, name_out: []u8) IoMem!
     const ino = readU32(&rec, 0);
     if (ino == 0) return .{ .ino = 0, .kind = .file, .name_len = 0 };
     const kind: Kind = switch (readU32(&rec, 4)) {
-        @intFromEnum(Kind.file) => .file,
-        @intFromEnum(Kind.dir) => .dir,
+        @backingInt(Kind.file) => .file,
+        @backingInt(Kind.dir) => .dir,
         else => return error.Io,
     };
     const name_len = readU32(&rec, 8);
@@ -317,7 +317,7 @@ fn findName(disk: *blk.Disk, dir: u32, name: []const u8) IoMem!?Hit {
 fn writeRec(disk: *blk.Disk, dir: u32, index: usize, ino: u32, kind: Kind, name: []const u8) Error!void {
     var rec: [rec_size]u8 = @splat(0);
     writeU32(&rec, 0, ino);
-    writeU32(&rec, 4, @intFromEnum(kind));
+    writeU32(&rec, 4, @backingInt(kind));
     writeU32(&rec, 8, @intCast(name.len));
     @memcpy(rec[12..][0..name.len], name);
     _ = try write(disk, dir, index * rec_size, &rec);
@@ -334,7 +334,8 @@ fn allocBlock(disk: *blk.Disk) error{ Io, OutOfMemory }!u32 {
         try zeroBlock(disk, i);
         return i;
     }
-    return error.OutOfMemory;
+    // Every block is taken. That is a full disk, not a failed allocation.
+    return error.Io;
 }
 
 fn freeBlock(disk: *blk.Disk, block: u32) IoMem!void {

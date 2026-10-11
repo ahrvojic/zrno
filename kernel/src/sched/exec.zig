@@ -7,7 +7,7 @@ const sched = @import("sched.zig");
 const virt = @import("../lib/virt.zig");
 const vmm = @import("../mm/vmm.zig");
 
-pub const SpawnError = error{ NoEnt, OutOfMemory, BadElf, BadFd };
+pub const SpawnError = error{ NoEnt, OutOfMemory, BadElf, BadFd, Io };
 
 pub fn spawnPath(path: []const u8) SpawnError!u64 {
     const argv = [_][]const u8{path};
@@ -39,9 +39,8 @@ fn spawn(path: []const u8, argv: []const []const u8, stdio: ?[3]u64) SpawnError!
 const NodeSrc = struct {
     node: *vfs.Node,
 
-    /// Spawn reports a disk error as out of memory.
-    pub fn readAt(self: NodeSrc, off: usize, dest: []u8) error{OutOfMemory}!usize {
-        return self.node.readAt(off, dest) catch return error.OutOfMemory;
+    pub fn readAt(self: NodeSrc, off: usize, dest: []u8) error{ Io, OutOfMemory }!usize {
+        return self.node.readAt(off, dest);
     }
 };
 
@@ -64,6 +63,7 @@ const Fail = error{
     OutOfRange,
     AlreadyMapped,
     PTENotFound,
+    Io,
 };
 
 fn spawnFail(err: Fail) SpawnError {
@@ -71,6 +71,7 @@ fn spawnFail(err: Fail) SpawnError {
         // Page-table allocation reports PTENotFound.
         error.OutOfMemory, error.PTENotFound => error.OutOfMemory,
         error.BadFd => error.BadFd,
+        error.Io => error.Io,
         error.BadElf, error.WritableExecutable, error.OutOfRange, error.AlreadyMapped => error.BadElf,
     };
 }

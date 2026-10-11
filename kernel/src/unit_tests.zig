@@ -7,6 +7,7 @@ test {
     _ = @import("mm/heap_core.zig");
     _ = @import("mm/vmm.zig");
     _ = @import("sys/gdt.zig");
+    _ = @import("sys/syscall.zig");
     _ = @import("sys/idt.zig");
     _ = @import("sys/fpu.zig");
     _ = @import("sys/elf.zig");

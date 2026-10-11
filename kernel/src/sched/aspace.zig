@@ -12,10 +12,6 @@ const vmm = @import("../mm/vmm.zig");
 
 const max_mmap: usize = 32 * 1024 * 1024;
 
-// Unique PML4 of a process that died while CR3 still pointed at it.
-// Freed on the next `schedule` that is no longer using that root.
-var doomed_pt_phys: ?usize = null;
-
 pub fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
     if (parent.user_stack_next < state.user_stack_slot) return error.OutOfMemory;
     const slot_lo = parent.user_stack_next - state.user_stack_slot;
@@ -221,6 +217,9 @@ pub fn unmapAnon(addr: usize, len: usize) error{Invalid}!void {
 }
 
 pub fn dropAddressSpace(space: *vmm.VMM) void {
+    // Unlink before the process object is destroyed. A deferred PML4 free
+    // no longer has the VMM.
+    space.releaseClone();
     if (space.isCurrent()) {
         deferPtFree(space.pt_addr_phys);
     } else {
@@ -229,17 +228,19 @@ pub fn dropAddressSpace(space: *vmm.VMM) void {
 }
 
 pub fn reapDoomedPt() void {
-    const phys = doomed_pt_phys orelse return;
+    const cur = cpu.current();
+    const phys = cur.doomed_pt orelse return;
     if (vmm.readCR3() == phys) return;
-    doomed_pt_phys = null;
+    cur.doomed_pt = null;
     vmm.destroyPhys(phys);
 }
 
 fn deferPtFree(pt_phys: usize) void {
-    if (doomed_pt_phys) |old| {
+    const cur = cpu.current();
+    if (cur.doomed_pt) |old| {
         vmm.destroyPhys(old);
     }
-    doomed_pt_phys = pt_phys;
+    cur.doomed_pt = pt_phys;
 }
 
 /// True when `addr` is the unmapped guard under a mapped user stack of

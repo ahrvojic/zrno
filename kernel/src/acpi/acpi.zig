@@ -75,14 +75,21 @@ const ACPI = struct {
 
         const oem = std.mem.trimEnd(u8, &rsdp.oem_id, " \x00");
         if (rsdp.revision >= 2) {
-            logger.info("XSDT rev={d} oem={s}", .{ rsdp.revision, oem });
             const xsdp: *align(1) const XSDP = @ptrCast(rsdp);
-            self.rsdt = try mapSdt(@intCast(xsdp.xsdt_addr), "XSDT");
-            self.use_xsdt = true;
-        } else {
-            logger.info("RSDT rev={d} oem={s}", .{ rsdp.revision, oem });
-            self.rsdt = try mapSdt(@intCast(rsdp.rsdt_addr), "RSDT");
+            if (xsdp.xsdt_addr != 0) {
+                if (mapSdt(@intCast(xsdp.xsdt_addr), "XSDT")) |xsdt| {
+                    logger.info("XSDT rev={d} oem={s}", .{ rsdp.revision, oem });
+                    self.rsdt = xsdt;
+                    self.use_xsdt = true;
+                    return;
+                } else |err| {
+                    logger.warn("XSDT unusable: {s}", .{@errorName(err)});
+                }
+            }
         }
+        if (rsdp.rsdt_addr == 0) return error.InvalidAcpiTable;
+        logger.info("RSDT rev={d} oem={s}", .{ rsdp.revision, oem });
+        self.rsdt = try mapSdt(@intCast(rsdp.rsdt_addr), "RSDT");
     }
 
     pub fn findSDT(self: *const ACPI, signature: *const [4]u8, index: usize) !*align(1) const SDT {

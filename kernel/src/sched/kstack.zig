@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const cpu = @import("../sys/cpu.zig");
 const pmm = @import("../mm/pmm.zig");
 const state = @import("state.zig");
 const vmm = @import("../mm/vmm.zig");
@@ -18,10 +19,6 @@ comptime {
     std.debug.assert(kstack_region_end <= 0xffff_ffff_8000_0000);
 }
 
-// Kernel stack of a thread that died while running on it. Unmapped and
-// freed on the next `schedule` that is no longer executing on that stack.
-const DoomedStack = struct { phys: usize, base: usize };
-var doomed_stack: ?DoomedStack = null;
 var kstack_next: usize = kstack_region_base;
 // Free slots below the high-water mark. The top slot rewinds instead of being marked.
 const max_slots = (kstack_region_end - kstack_region_base) / kstack_slot;
@@ -49,16 +46,18 @@ pub fn free(phys: usize, base: usize) void {
 }
 
 pub fn deferFree(stack_phys: usize, stack_base: usize) void {
-    if (doomed_stack) |old| {
+    const cur = cpu.current();
+    if (cur.doomed_stack) |old| {
         free(old.phys, old.base);
     }
-    doomed_stack = .{ .phys = stack_phys, .base = stack_base };
+    cur.doomed_stack = .{ .phys = stack_phys, .base = stack_base };
 }
 
 pub fn reapDoomed() void {
-    const doomed = doomed_stack orelse return;
+    const cur = cpu.current();
+    const doomed = cur.doomed_stack orelse return;
     if (rspInStack(doomed.base)) return;
-    doomed_stack = null;
+    cur.doomed_stack = null;
     free(doomed.phys, doomed.base);
 }
 

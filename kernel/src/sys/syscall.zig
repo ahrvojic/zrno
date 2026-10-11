@@ -384,12 +384,13 @@ fn sys_open(ctx: *cpu.Context) u64 {
     const want_keep = flags & open_keep != 0;
     if (want_keep and !want_write) return errval(EINVAL);
     const mode: vfs.Mode = if (!want_write) .read else if (want_keep) .keep else .write;
+    // Reserve the slot before create or truncate. EMFILE must leave the file alone.
+    const fd = firstFreeFd(0) orelse return errval(EMFILE);
     const opened = vfs.openPathFrom(cpu.currentProcess().cwd, path, mode, want_create) catch |err| return fsErr(err);
     const kind: file.File.Kind = if (opened.node.isDir())
         .{ .dir = .{ .node = opened.node, .pos = 0 } }
     else
         .{ .file = .{ .node = opened.node, .pos = 0, .can_write = opened.can_write } };
-    const fd = firstFreeFd(0) orelse return errval(EMFILE);
     cpu.currentProcess().fds[fd] = file.File.create(kind) catch return errval(ENOMEM);
     return fd;
 }
@@ -439,67 +440,76 @@ fn sys_poll(ctx: *cpu.Context) u64 {
     const bytes = std.mem.sliceAsBytes(set);
     copyFromUser(bytes, ctx.rdi) catch return errval(EFAULT);
 
-    var chans: [file.max_fds]*const anyopaque = undefined;
     const current = cpu.currentThread();
     while (true) {
-        var nchan: usize = 0;
+        var waiting: usize = 0;
         var ready: u64 = 0;
         for (set) |*slot| {
-            if (pollWait(slot)) |chan| {
-                chans[nchan] = chan;
-                nchan += 1;
+            if (pollBlocks(slot)) {
+                waiting += 1;
             } else if (slot.revents != 0) ready += 1;
         }
-        if (ready != 0 or nchan == 0) {
+        if (ready != 0 or waiting == 0) {
             copyToUser(ctx.rdi, bytes) catch return errval(EFAULT);
             return ready;
         }
-        // Park on the fd table so close wakes this thread. A pipe or tty
-        // wakeup matches poll_chans instead.
-        current.poll_chans = chans[0..nchan];
+        // Park on the fd table. close wakes that channel. A pipe or tty
+        // wakeup wakes every polling thread; this loop rechecks.
+        current.polling = true;
         sched.wait(fdsChan());
-        current.poll_chans = null;
+        current.polling = false;
     }
 }
 
-/// Channel to sleep on, or null when `slot.revents` is already the answer.
-fn pollWait(slot: *PollFd) ?*const anyopaque {
+/// True when this slot should sleep. `revents` is set when it should not.
+fn pollBlocks(slot: *PollFd) bool {
     slot.revents = 0;
-    if (slot.events == 0) return null;
+    if (slot.events == 0) return false;
     const f = fdFile(slot.fd) orelse {
         slot.revents = poll_nval;
-        return null;
+        return false;
     };
+    // A direction this end can never satisfy (POLLOUT on a read end, and
+    // the reverse) would otherwise return 0 and spin. Ask for both and
+    // only the possible half is waited on.
+    const asked = slot.events & (poll_in | poll_out);
+    const supported: u64 = switch (f.kind) {
+        .pipe_read => poll_in,
+        .pipe_write => poll_out,
+        .tty, .file, .dir => poll_in | poll_out,
+    };
+    if (asked & supported == 0) {
+        slot.revents = poll_nval;
+        return false;
+    }
     const want_in = slot.events & poll_in != 0;
     const want_out = slot.events & poll_out != 0;
     switch (f.kind) {
         .file, .dir => {
             if (want_in) slot.revents |= poll_in;
             if (want_out) slot.revents |= poll_out;
-            return null;
+            return false;
         },
         .tty => {
             if (want_out) slot.revents |= poll_out;
-            if (!want_in) return null;
-            const chan = tty.readWait() orelse {
+            if (!want_in) return false;
+            if (tty.readWait() == null) {
                 slot.revents |= poll_in;
-                return null;
-            };
-            return if (slot.revents == 0) chan else null;
+                return false;
+            }
+            return slot.revents == 0;
         },
         .pipe_read => |p| {
             const hangup = p.writers == 0;
             if (hangup) slot.revents |= poll_hup;
             if (want_in and (hangup or !p.ring.empty())) slot.revents |= poll_in;
-            if (want_in and slot.revents == 0) return &p.ring.buf;
-            return null;
+            return want_in and slot.revents == 0;
         },
         .pipe_write => |p| {
             const hangup = p.readers == 0;
             if (hangup) slot.revents |= poll_hup;
             if (want_out and (hangup or p.ring.room() > 0)) slot.revents |= poll_out;
-            if (want_out and slot.revents == 0) return &p.ring.head;
-            return null;
+            return want_out and slot.revents == 0;
         },
     }
 }
@@ -553,9 +563,11 @@ fn sys_spawn(ctx: *cpu.Context) u64 {
 fn sys_wait(ctx: *cpu.Context) u64 {
     const status_addr: usize = @intCast(ctx.rsi);
     // Probe writable before reaping: userRange is not enough (RO/unmapped).
+    // Readable and writable, without publishing a zero the child has not exited with.
     if (status_addr != 0) {
-        var zero: u64 = 0;
-        copyToUser(status_addr, std.mem.asBytes(&zero)) catch return errval(EFAULT);
+        var word: [8]u8 = undefined;
+        copyFromUser(&word, status_addr) catch return errval(EFAULT);
+        copyToUser(status_addr, &word) catch return errval(EFAULT);
     }
     const result = sched.waitProcess(ctx.rdi) catch |err| return switch (err) {
         error.NoChild => errval(ECHILD),
@@ -770,33 +782,60 @@ fn userSpace() *vmm.VMM {
 }
 
 fn copyToUser(addr: usize, src: []const u8) error{Fault}!void {
+    if (!vmm.userRange(addr, src.len)) return error.Fault;
     const space = userSpace();
-    space.copyToUser(addr, src) catch {
-        if (!fillAnon(addr, src.len, true)) return error.Fault;
-        return space.copyToUser(addr, src);
-    };
+    var left = copyTries(addr, src.len);
+    while (left > 0) : (left -= 1) {
+        space.copyToUser(addr, src) catch {
+            if (!fillFirst(addr, src.len, true)) return error.Fault;
+            continue;
+        };
+        return;
+    }
+    return error.Fault;
 }
 
 fn copyFromUser(dest: []u8, addr: usize) error{Fault}!void {
+    if (!vmm.userRange(addr, dest.len)) return error.Fault;
     const space = userSpace();
-    space.copyFromUser(dest, addr) catch {
-        if (!fillAnon(addr, dest.len, false)) return error.Fault;
-        return space.copyFromUser(dest, addr);
-    };
+    var left = copyTries(addr, dest.len);
+    while (left > 0) : (left -= 1) {
+        space.copyFromUser(dest, addr) catch {
+            if (!fillFirst(addr, dest.len, false)) return error.Fault;
+            continue;
+        };
+        return;
+    }
+    return error.Fault;
 }
 
-/// Allocate zero pages for anonymous reservations in the range. A page
-/// that is already backed, shared, or not writable stays as it is.
-/// False when no page was filled, so the copy's fault stands.
-fn fillAnon(addr: usize, len: usize, write: bool) bool {
+/// Pages the range spans, plus the copy after the last fill. An unaligned
+/// range covers one more page than `len / page_size`.
+fn copyTries(addr: usize, len: usize) usize {
+    const page_off = addr & (pmm.page_size - 1);
+    return (page_off + len + pmm.page_size - 1) / pmm.page_size + 1;
+}
+
+test "copyTries covers an unaligned span plus the final copy" {
+    const page = pmm.page_size;
+    try std.testing.expectEqual(2, copyTries(page, page));
+    try std.testing.expectEqual(3, copyTries(page - 1, 2));
+    try std.testing.expectEqual(4, copyTries(page - 1, page + 2));
+    try std.testing.expectEqual(1, copyTries(page, 0));
+}
+
+/// Fill the first anonymous hole in the range and stop. Later holes wait
+/// for the next fault, so a bad page does not allocate its neighbors.
+fn fillFirst(addr: usize, len: usize, write: bool) bool {
     var off: usize = 0;
-    var filled = false;
     while (off < len) {
-        if (sched.fillUserPage(addr + off, write)) filled = true;
+        if (sched.fillUserPage(addr + off, write)) return true;
         const page_off = (addr + off) & (pmm.page_size - 1);
-        off += @min(len - off, pmm.page_size - page_off);
+        const step = pmm.page_size - page_off;
+        if (step > len - off) return false;
+        off += step;
     }
-    return filled;
+    return false;
 }
 
 fn pathErr(err: error{ Fault, NameTooLong }) u64 {
@@ -818,6 +857,7 @@ fn spawnErr(err: exec.SpawnError) u64 {
     return switch (err) {
         error.NoEnt => errval(ENOENT),
         error.OutOfMemory => errval(ENOMEM),
+        error.Io => errval(EIO),
         error.BadElf => errval(ENOEXEC),
         error.BadFd => errval(EBADF),
     };
