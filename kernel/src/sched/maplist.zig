@@ -1,6 +1,5 @@
 const std = @import("std");
 
-const frame = @import("../mm/frame.zig");
 const BoundedArray = @import("../lib/bounded_array.zig").BoundedArray;
 
 pub const max_maps = 32;
@@ -9,11 +8,6 @@ pub const Map = struct {
     base: usize,
     size: usize,
     writable: bool = false,
-    // File frames, already installed. Anonymous pages are filled on fault.
-    shared: bool = false,
-    // One slot per page. Null until that page is faulted in, or until
-    // `map_file` installs the file's frame.
-    pages: []?*frame.Frame = &.{},
 };
 
 pub const List = BoundedArray(Map, max_maps);

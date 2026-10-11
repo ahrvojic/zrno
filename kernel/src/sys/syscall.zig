@@ -36,7 +36,7 @@ pub const nr_wake_word: u64 = 0x15; // rdi=addr; wake this process's waiters; re
 pub const nr_brk: u64 = 0x20; // rdi=0 query; else set program break, return it
 pub const nr_mmap: u64 = 0x21; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX, zero page on first touch
 pub const nr_munmap: u64 = 0x22; // rdi=addr, rsi=len; one whole mapping from mmap
-pub const nr_map_file: u64 = 0x23; // rdi=fd, rsi=len, rdx=prot; share the file's frames, NX
+pub const nr_map_file: u64 = 0x23; // rdi=fd, rsi=len, rdx=prot; private copy, NX
 // 0x30 file
 pub const nr_open: u64 = 0x30; // rdi/rsi=path, rdx=flags (0 = read)
 pub const nr_close: u64 = 0x31;
@@ -203,9 +203,10 @@ fn sys_read(ctx: *cpu.Context) u64 {
         .dir => return errval(EISDIR),
         .pipe_write => return errval(EBADF),
         .pipe_read => |p| {
-            // Keep this end alive across wait. The pipe is freed when both ends hit zero.
-            f.retain();
-            defer f.release();
+            // Kept on the thread: a kill runs `stop`, not this defer.
+            const t = cpu.currentThread();
+            t.holdFile(f);
+            defer t.releaseHeld();
             return readPeek(p, addr, len);
         },
     }
@@ -264,9 +265,10 @@ fn sys_write(ctx: *cpu.Context) u64 {
         .dir => return errval(EISDIR),
         .pipe_read => return errval(EBADF),
         .pipe_write => |p| {
-            // Keep this end alive across wait. The pipe is freed when both ends hit zero.
-            f.retain();
-            defer f.release();
+            // Kept on the thread: a kill runs `stop`, not this defer.
+            const t = cpu.currentThread();
+            t.holdFile(f);
+            defer t.releaseHeld();
             return writeUser(addr, len, p);
         },
         .tty => return writeUser(addr, len, TtySink{}),
@@ -869,10 +871,11 @@ fn protWritable(prot: u64) ?bool {
     return prot & prot_write != 0;
 }
 
-fn mmErr(err: error{ Invalid, OutOfMemory }) u64 {
+fn mmErr(err: error{ Invalid, OutOfMemory, Io }) u64 {
     return switch (err) {
         error.Invalid => errval(EINVAL),
         error.OutOfMemory => errval(ENOMEM),
+        error.Io => errval(EIO),
     };
 }
 

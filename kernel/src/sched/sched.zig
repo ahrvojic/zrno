@@ -62,7 +62,6 @@ pub fn startProcess(enqueue: bool) !*proc.Process {
         .parent = 0,
         .zombie = false,
         .vmm = try vmm.VMM.cloneKernel(),
-        .threads = .{},
         .node = .{},
         .on_proctable = false,
         .exit_code = 0,
@@ -94,10 +93,6 @@ fn processFromNode(n: *std.DoublyLinkedList.Node) *proc.Process {
 
 fn threadFromSched(n: *std.DoublyLinkedList.Node) *proc.Thread {
     return @fieldParentPtr("sched_node", n);
-}
-
-fn threadFromProc(n: *std.DoublyLinkedList.Node) *proc.Thread {
-    return @fieldParentPtr("proc_node", n);
 }
 
 fn findProcess(pid: u64) ?*proc.Process {
@@ -189,9 +184,10 @@ pub fn exitThread(exit_code: u8) noreturn {
 }
 
 fn hasSibling(process: *proc.Process, self: *proc.Thread) bool {
-    var node = process.threads.first;
+    var node = state.threads.first;
     while (node) |n| {
-        if (threadFromProc(n) != self) return true;
+        const t = threadFromSched(n);
+        if (t.parent == process and t != self) return true;
         node = n.next;
     }
     return false;
@@ -382,10 +378,11 @@ fn idleThread() callconv(.naked) noreturn {
 fn dismantle(process: *proc.Process, exit_code: u8) void {
     process.exit_code = exit_code;
     process.zombie = true;
-    var node = process.threads.first;
+    var node = state.threads.first;
     while (node) |n| {
-        const t = threadFromProc(n);
+        const t = threadFromSched(n);
         node = n.next;
+        if (t.parent != process) continue;
         thread.stop(t);
     }
     aspace.releaseMappings(process);
@@ -424,8 +421,8 @@ pub const PsSnap = struct {
 };
 
 // One row per thread, in process-table order. A zombie is one row with
-// no status. The idle thread is not on the run queue, but it is on the
-// kernel process, so it is included.
+// no status. Idle is not on `state.threads`; it is reported with the
+// kernel process.
 pub fn snapshotPs(out: []PsSnap) usize {
     state.expectInit();
     var n: usize = 0;
@@ -437,10 +434,12 @@ pub fn snapshotPs(out: []PsSnap) usize {
             out[n] = .{ .tid = 0, .pid = p.pid, .ppid = p.parent, .status = null };
             n += 1;
         } else {
-            var tnode = p.threads.first;
+            var tnode = state.threads.first;
             while (tnode) |tn| {
                 if (n == out.len) return n;
-                const t = threadFromProc(tn);
+                const t = threadFromSched(tn);
+                tnode = tn.next;
+                if (t.parent != p) continue;
                 out[n] = .{
                     .tid = t.tid,
                     .pid = p.pid,
@@ -448,7 +447,17 @@ pub fn snapshotPs(out: []PsSnap) usize {
                     .status = t.status,
                 };
                 n += 1;
-                tnode = tn.next;
+            }
+            if (p == state.idle_thread.parent) {
+                if (n == out.len) return n;
+                const t = state.idle_thread;
+                out[n] = .{
+                    .tid = t.tid,
+                    .pid = p.pid,
+                    .ppid = p.parent,
+                    .status = t.status,
+                };
+                n += 1;
             }
         }
         node = nd.next;

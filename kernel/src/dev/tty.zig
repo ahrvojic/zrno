@@ -7,8 +7,6 @@ var row: usize = 0;
 var col: usize = 0;
 // Cursor is on the glyph that filled this row. The next glyph opens a row.
 var pending: bool = false;
-// Continuation rows opened by a wrap. Backspace at column 0 climbs back.
-var wraps: usize = 0;
 var cursor_on: bool = false;
 var input: tty_input.Input = .{};
 var serial_saw_cr = false;
@@ -107,30 +105,19 @@ fn putVideo(ch: u8) void {
     switch (ch) {
         '\n' => {
             pending = false;
-            wraps = 0;
             advanceRow();
         },
         '\r' => {
             pending = false;
-            wraps = 0;
             col = 0;
         },
-        '\x08' => {
-            if (pending) {
-                pending = false;
-            } else if (col > 0) {
-                col -= 1;
-            } else if (wraps > 0 and row > 0) {
-                wraps -= 1;
-                row -= 1;
-                col = video.maxCol() - 1;
-            } else return;
-            video.plotChar(' ', row, col);
-        },
+        // Cooked text is `input.line_buf`. Serial erases on backspace.
+        // The framebuffer cursor stays put: it is the output cursor, and
+        // another write between keystrokes would make a saved wrap wrong.
+        '\x08' => {},
         else => {
             if (pending) {
                 pending = false;
-                wraps += 1;
                 advanceRow();
             }
             video.plotChar(ch, row, col);

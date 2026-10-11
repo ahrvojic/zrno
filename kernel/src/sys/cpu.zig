@@ -84,6 +84,21 @@ comptime {
 
 var bsp_value: CPU = .{};
 
+comptime {
+    // `CPU` has no fixed layout, so the fields cannot be exported. Entry
+    // addresses them through these names. The symbol is Zig's name for
+    // `bsp_value`.
+    asm (std.fmt.comptimePrint(
+            \\.globl bsp_syscall_user_rsp
+            \\.globl bsp_syscall_kernel_rsp
+            \\bsp_syscall_user_rsp = sys.cpu.bsp_value + {d}
+            \\bsp_syscall_kernel_rsp = sys.cpu.bsp_value + {d}
+        , .{
+            @offsetOf(CPU, "syscall_user_rsp"),
+            @offsetOf(CPU, "syscall_kernel_rsp"),
+        }));
+}
+
 var vendor: [12]u8 = undefined;
 var display_family: u32 = 0;
 var display_model: u32 = 0;
@@ -135,6 +150,11 @@ const pf_stack_size = 16 * pmm.page_size;
 pub const DoomedStack = struct { phys: usize, base: usize };
 
 pub const CPU = struct {
+    /// User RSP saved by `syscallEntry`, and the kernel stack it switches to.
+    /// Entry addresses these fields of `bsp_value`. `kernel_rsp` matches
+    /// `tss.rsp[0]`. A GS load is the SMP patch.
+    syscall_user_rsp: u64 = 0,
+    syscall_kernel_rsp: u64 = 0,
     gdt: gdt.GDT = .{},
     idt: idt.IDT = .{},
     tss: gdt.TSS = .{},
@@ -183,7 +203,7 @@ pub const CPU = struct {
     /// switch stacks).
     pub fn setIrqStack(self: *CPU, top: u64) void {
         self.tss.rsp[0] = top;
-        ivt.syscall_kernel_rsp = top;
+        self.syscall_kernel_rsp = top;
     }
 
     pub fn initLapic(self: *CPU) !void {

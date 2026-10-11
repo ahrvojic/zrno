@@ -133,11 +133,9 @@ export fn interruptStub() callconv(.naked) void {
     );
 }
 
-// SYSCALL does not switch stacks. Entry stashes user RSP here, then loads
-// `syscall_kernel_rsp` (kept equal to TSS.rsp[0]). Single-CPU; FMASK holds
-// IF off so this is not re-entered. An NMI in that window uses `ist_nmi`.
-pub export var syscall_user_rsp: u64 = 0;
-pub export var syscall_kernel_rsp: u64 = 0;
+// SYSCALL does not switch stacks. Entry stashes user RSP on the BSP, then
+// loads `syscall_kernel_rsp` (kept equal to TSS.rsp[0]). FMASK holds IF off
+// so this is not re-entered. An NMI in that window uses `ist_nmi`.
 
 // Same `cpu.Context` layout as `interruptStub` (vector/error slots unused),
 // then SYSRET when the iret frame is a clean 64-bit user context.
@@ -164,11 +162,11 @@ pub export fn syscallEntry() callconv(.naked) void {
     const tf_rf: u64 = (1 << 8) | (1 << 16);
 
     asm volatile (
-        \\movq %%rsp, syscall_user_rsp(%%rip)
-        \\movq syscall_kernel_rsp(%%rip), %%rsp
+        \\movq %%rsp, bsp_syscall_user_rsp(%%rip)
+        \\movq bsp_syscall_kernel_rsp(%%rip), %%rsp
         \\
         \\pushq %[user_ss]
-        \\pushq syscall_user_rsp(%%rip)
+        \\pushq bsp_syscall_user_rsp(%%rip)
         \\pushq %%r11
         \\pushq %[user_cs]
         \\pushq %%rcx

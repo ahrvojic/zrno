@@ -1,12 +1,11 @@
 //! A block device and a cache of its blocks.
 //!
 //! The device is either a RAM image or virtio-blk. Callers see the same
-//! read and write of one 4096-byte block. Cached blocks are refcounted
-//! frames on the kernel, and plain bytes in host tests.
+//! read and write of one 4096-byte block. Cached blocks are physical
+//! pages on the kernel, and plain bytes in host tests.
 //!
 //! A slot stays until it is reused. Reuse walks forward from the last
-//! choice, so a full cache turns over. A frame a mapping still holds is
-//! not reused: that page is the mapping's copy of the block.
+//! choice, so a full cache turns over. A slot with a holder is not reused.
 
 const std = @import("std");
 
@@ -133,7 +132,7 @@ pub const Disk = struct {
                 return slot;
             }
         }
-        // Every slot is held or pinned, so the block cannot be read.
+        // Every slot is held, so the block cannot be read.
         const slot = self.victim() orelse return error.Io;
         if (slot.live and slot.dirty) try self.commit(slot);
         self.read_fn(self.dev, block, slot.data) catch |err| {
@@ -159,10 +158,11 @@ pub const Disk = struct {
 
     pub fn commit(self: *Disk, slot: *Slot) error{Io}!void {
         try self.write_fn(self.dev, slot.block, slot.data);
-        if (!pinned(slot)) slot.dirty = false;
+        slot.dirty = false;
     }
 
-    /// Write back blocks a user mapping may have stored into.
+    /// Write back slots that are still dirty. Mappings do not store into
+    /// cache pages, so a clean slot is the common case.
     pub fn sync(self: *Disk) void {
         for (&self.slots) |*slot| {
             if (!slot.live or !slot.dirty) continue;
@@ -170,35 +170,12 @@ pub const Disk = struct {
         }
     }
 
-    /// Another owner of the cached frame. The page stays in the cache, and
-    /// `sync` writes it back because the mapping can store into it.
-    pub fn retainFrame(self: *Disk, block: u32) error{ Io, OutOfMemory }!*frame.Frame {
-        if (comptime !freestanding) unreachable;
-        const slot = try self.get(block);
-        defer self.put(slot);
-        slot.dirty = true;
-        const fr = slot.frame orelse unreachable;
-        fr.retain();
-        return fr;
-    }
-
-    pub fn shared(self: *const Disk, block: u32) bool {
-        if (comptime !freestanding) return false;
-        for (&self.slots) |*slot| {
-            if (!slot.live or slot.block != block) continue;
-            const fr = slot.frame orelse return false;
-            return fr.refs > 1;
-        }
-        return false;
-    }
-
-    /// Drop a cached block that is about to be freed. A mapping keeps its
-    /// frame; the slot gets a new page so the next block does not overwrite it.
+    /// Drop a cached block that is about to be freed. The page stays with
+    /// the slot for the next block.
     pub fn forget(self: *Disk, block: u32) void {
         for (&self.slots) |*slot| {
             if (!slot.live or slot.block != block) continue;
             if (slot.holds != 0) @panic("freeing a held block");
-            detach(slot);
             slot.live = false;
             slot.dirty = false;
             return;
@@ -206,13 +183,13 @@ pub const Disk = struct {
     }
 
     /// An empty slot on this pass, otherwise the first live slot at or
-    /// after `next_slot`. A held or pinned slot stays.
+    /// after `next_slot`. A held slot stays.
     fn victim(self: *Disk) ?*Slot {
         var spare: ?usize = null;
         for (0..cache_slots) |i| {
             const idx = (self.next_slot + i) % cache_slots;
             const slot = &self.slots[idx];
-            if (slot.holds != 0 or pinned(slot)) continue;
+            if (slot.holds != 0) continue;
             if (!slot.live) {
                 spare = idx;
                 break;
@@ -241,21 +218,6 @@ pub const Disk = struct {
         }
     }
 };
-
-fn detach(slot: *Slot) void {
-    if (comptime !freestanding) return;
-    const fr = slot.frame orelse return;
-    if (fr.refs == 1) return;
-    fr.release();
-    slot.frame = frame.alloc();
-    slot.data = if (slot.frame) |fresh| fresh.bytes() else &.{};
-}
-
-fn pinned(slot: *const Slot) bool {
-    if (comptime !freestanding) return false;
-    const fr = slot.frame orelse return true;
-    return fr.refs > 1 or slot.data.len != block_size;
-}
 
 fn memRead(dev: *anyopaque, block: u32, dest: []u8) error{Io}!void {
     const disk: *Disk = @ptrCast(@alignCast(dev));

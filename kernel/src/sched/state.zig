@@ -31,7 +31,9 @@ comptime {
 }
 
 // Processes including zombies until `waitProcess`; not a runqueue.
-// `schedule` walks `threads`.
+// `threads` is every live thread except idle. Schedule and wakeup walk it.
+// A process does not keep its own list: filter on `parent`. Idle stays
+// unlinked so it is only the fallback when nobody is ready.
 //
 // No lock. Syscalls run with the interrupt flag off (`FMASK`), and every
 // interrupt gate clears it, so this data is touched by one context at a

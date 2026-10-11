@@ -35,7 +35,7 @@ pub fn startKernelThread(parent: *proc.Process, pc: usize, arg: usize, enqueue: 
     thread.ctx.rdi = @intCast(arg);
     thread.ctx.rsp = @intCast(thread.stack_base + state.stack_size - @sizeOf(u64));
 
-    publishThread(parent, thread, enqueue);
+    publishThread(thread, enqueue);
     return thread;
 }
 
@@ -65,7 +65,7 @@ fn startUser(parent: *proc.Process, pc: usize, enqueue: bool, entry: UserEntry) 
     try setupUserStack(&parent.vmm, user_stack_base, pc, entry, &thread.ctx);
     thread.user_stack = user_stack_base;
 
-    publishThread(parent, thread, enqueue);
+    publishThread(thread, enqueue);
     return thread;
 }
 
@@ -85,7 +85,6 @@ fn allocKthread(parent: *proc.Process) !*proc.Thread {
         .fpu = fpu_state,
         .stack_phys = stack.phys,
         .stack_base = stack.base,
-        .proc_node = .{},
         .sched_node = .{},
         .on_runqueue = false,
     };
@@ -98,10 +97,9 @@ fn abandonKthread(thread: *proc.Thread) void {
     heap.kernel_heap.allocator().destroy(thread);
 }
 
-fn publishThread(parent: *proc.Process, thread: *proc.Thread, enqueue: bool) void {
+fn publishThread(thread: *proc.Thread, enqueue: bool) void {
     thread.tid = state.tid_next;
     state.tid_next += 1;
-    parent.threads.append(&thread.proc_node);
     if (enqueue) state.enqueueThread(thread);
 }
 
@@ -136,8 +134,9 @@ fn setupUserStack(
 pub fn stop(thread: *proc.Thread) void {
     thread.wait_chan = null;
     thread.polling = false;
+    // Before dequeue. Releasing the pipe wakes the other end.
+    thread.releaseHeld();
     state.dequeueThread(thread);
-    thread.parent.threads.remove(&thread.proc_node);
 
     const stack_phys = thread.stack_phys;
     const stack_base = thread.stack_base;
@@ -214,10 +213,6 @@ fn setupUserArgv(mem: []u8, stack_va: usize, argv: []const []const u8) error{Out
 
 fn writeU64(mem: []u8, off: usize, value: usize) void {
     std.mem.writeInt(u64, mem[off..][0..8], @intCast(value), .little);
-}
-
-fn threadFromProc(n: *std.DoublyLinkedList.Node) *proc.Thread {
-    return @fieldParentPtr("proc_node", n);
 }
 
 fn kernelThreadReturned() callconv(.c) noreturn {

@@ -1,13 +1,12 @@
 const std = @import("std");
 
 const cpu = @import("../sys/cpu.zig");
-const frame = @import("../mm/frame.zig");
-const heap = @import("../mm/heap.zig");
 const maplist = @import("maplist.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
 const state = @import("state.zig");
 const vfs = @import("../fs/vfs.zig");
+const virt = @import("../lib/virt.zig");
 const vmm = @import("../mm/vmm.zig");
 
 const max_mmap: usize = 32 * 1024 * 1024;
@@ -79,13 +78,13 @@ fn unmapPages(space: *vmm.VMM, addr: usize, size: usize) void {
     }
 }
 
-fn dropFrames(space: *vmm.VMM, map: maplist.Map) void {
-    for (map.pages, 0..) |slot, i| {
-        const fr = slot orelse continue;
-        space.unmap(map.base + i * pmm.page_size, pmm.page_size) catch @panic("user page unmap");
-        fr.release();
+fn dropMap(space: *vmm.VMM, map: maplist.Map) void {
+    var off: usize = 0;
+    while (off < map.size) : (off += pmm.page_size) {
+        const phys = space.virtToPhys(map.base + off) catch continue;
+        space.unmap(map.base + off, pmm.page_size) catch @panic("user page unmap");
+        pmm.free(std.mem.alignBackward(usize, phys, pmm.page_size), 1);
     }
-    heap.kernel_heap.allocator().free(map.pages);
 }
 
 fn pageBytes(len: usize) error{Invalid}!usize {
@@ -110,27 +109,12 @@ fn userFlags(writable: bool) vmm.Flags {
     };
 }
 
-fn frameSlots(n: usize) error{OutOfMemory}![]?*frame.Frame {
-    const slots = heap.kernel_heap.allocator().alloc(?*frame.Frame, n) catch return error.OutOfMemory;
-    @memset(slots, null);
-    return slots;
-}
-
-fn install(
-    process: *proc.Process,
-    size: usize,
-    writable: bool,
-    shared: bool,
-    pages: []?*frame.Frame,
-) error{OutOfMemory}!usize {
-    errdefer heap.kernel_heap.allocator().free(pages);
+fn install(process: *proc.Process, size: usize, writable: bool) error{OutOfMemory}!usize {
     const base = try reserve(process, size);
     process.maps.append(.{
         .base = base,
         .size = size,
         .writable = writable,
-        .shared = shared,
-        .pages = pages,
     }) catch return error.OutOfMemory;
     process.mmap_next = base;
     return base;
@@ -145,59 +129,60 @@ pub fn mapAnon(len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
     if (process.pid == state.kernel_pid) @panic("mmap kernel process");
 
     const size = try pageBytes(len);
-    const pages = try frameSlots(size / pmm.page_size);
-    return install(process, size, writable, false, pages);
+    return install(process, size, writable);
 }
 
-/// Map the owned file's frames into this process. The file keeps its
-/// references, so `munmap` leaves the bytes in place.
-pub fn mapFile(node: *vfs.Node, len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
+/// Copy an owned file into private pages. Bytes past the end stay zero.
+/// A later write to the file does not change this mapping.
+pub fn mapFile(node: *vfs.Node, len: usize, writable: bool) error{ Invalid, OutOfMemory, Io }!usize {
     state.expectInit();
     const process = cpu.currentProcess();
     if (process.pid == state.kernel_pid) @panic("mmap kernel process");
+    if (node.bytes() != null or node.isDir()) return error.Invalid;
 
     const size = try pageBytes(len);
-    const pages = try frameSlots(size / pmm.page_size);
-    const base = try install(process, size, writable, true, pages);
-
-    var done: usize = 0;
+    const base = try install(process, size, writable);
     errdefer if (maplist.remove(&process.maps, &process.mmap_next, base, size)) |old| {
-        dropFrames(&process.vmm, old);
+        dropMap(&process.vmm, old);
     };
+
     const flags = userFlags(writable);
+    var done: usize = 0;
     while (done < size) : (done += pmm.page_size) {
-        const fr = node.retainPage(done) orelse return error.Invalid;
-        process.vmm.map(base + done, fr.phys, pmm.page_size, flags) catch {
-            fr.release();
+        const phys = pmm.alloc(1) orelse return error.OutOfMemory;
+        const bytes = virt.toHH([*]u8, phys)[0..pmm.page_size];
+        _ = node.readAt(done, bytes) catch |err| {
+            pmm.free(phys, 1);
+            return err;
+        };
+        process.vmm.map(base + done, phys, pmm.page_size, flags) catch {
+            pmm.free(phys, 1);
             return error.OutOfMemory;
         };
-        pages[done / pmm.page_size] = fr;
     }
     return base;
 }
 
 pub fn releaseMappings(process: *proc.Process) void {
-    for (process.maps.slice()) |m| dropFrames(&process.vmm, m);
+    for (process.maps.slice()) |m| dropMap(&process.vmm, m);
     process.maps.len = 0;
 }
 
-/// Allocate the zero page for an anonymous reservation. False when `addr`
-/// is outside one, the page is a file mapping, the access writes a
-/// read-only reservation, or the allocator is empty. The frame is zeroed.
+/// Allocate the zero page for a reservation. False when `addr` is outside
+/// one, the access writes a read-only reservation, the page is already
+/// present, or the allocator is empty.
 pub fn fillUserPage(addr: usize, write: bool) bool {
     const process = cpu.currentProcess();
     const page = std.mem.alignBackward(usize, addr, pmm.page_size);
     const map = maplist.find(&process.maps, page) orelse return false;
-    if (map.shared or (write and !map.writable)) return false;
-    const slot = (page - map.base) / pmm.page_size;
-    if (map.pages[slot] != null) return false;
+    if (write and !map.writable) return false;
+    if (process.vmm.virtToPhys(page)) |_| return false else |_| {}
 
-    const fr = frame.alloc() orelse return false;
-    process.vmm.map(page, fr.phys, pmm.page_size, userFlags(map.writable)) catch {
-        fr.release();
+    const phys = pmm.alloc(1) orelse return false;
+    process.vmm.map(page, phys, pmm.page_size, userFlags(map.writable)) catch {
+        pmm.free(phys, 1);
         return false;
     };
-    map.pages[slot] = fr;
     return true;
 }
 
@@ -213,7 +198,7 @@ pub fn unmapAnon(addr: usize, len: usize) error{Invalid}!void {
     const size = pageBytes(len) catch return error.Invalid;
 
     const old = maplist.remove(&process.maps, &process.mmap_next, addr, size) orelse return error.Invalid;
-    dropFrames(&process.vmm, old);
+    dropMap(&process.vmm, old);
 }
 
 pub fn dropAddressSpace(space: *vmm.VMM) void {

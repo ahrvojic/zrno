@@ -5,15 +5,11 @@
 
 const std = @import("std");
 
-const builtin = @import("builtin");
 const blk = @import("blk.zig");
-const frame = @import("../mm/frame.zig");
 const heap = @import("../mm/heap.zig");
 const mem = @import("../lib/mem.zig");
 const ustar = @import("ustar.zig");
 const zrfs = @import("zrfs.zig");
-
-const freestanding = builtin.os.tag == .freestanding;
 
 pub const max_files: usize = 32;
 pub const max_name: usize = ustar.max_name;
@@ -61,18 +57,6 @@ pub const Node = struct {
         heap: std.mem.Allocator,
         len: usize = 0,
     };
-
-    /// Take another reference to the cached frame for the file byte at `off`.
-    /// Null when this node has no block there (a directory, an initramfs file,
-    /// or a hole past the last block).
-    pub fn retainPage(self: *Node, off: usize) ?*frame.Frame {
-        if (comptime !freestanding) return null;
-        if (self.kind != .owned) return null;
-        const disk = self.disk orelse return null;
-        const found = zrfs.dataBlock(disk, self.ino, off) catch return null;
-        const block = found orelse return null;
-        return disk.retainFrame(block) catch null;
-    }
 
     /// `dir` null is the static initramfs. A set allocator owns the node.
     const Kind = union(enum) {
@@ -164,10 +148,10 @@ pub const Node = struct {
         }
     }
 
-    fn truncate(self: *Node) void {
+    fn truncate(self: *Node) error{ Io, OutOfMemory }!void {
         switch (self.kind) {
             .owned => |*o| {
-                zrfs.truncate(self.disk.?, self.ino) catch return;
+                try zrfs.truncate(self.disk.?, self.ino);
                 o.len = 0;
             },
             else => {},
@@ -373,7 +357,7 @@ pub const Tree = struct {
             }
             if (write_access) {
                 if (!node.isWritableFile()) return error.ReadOnly;
-                if (mode == .write) node.truncate();
+                if (mode == .write) try node.truncate();
                 return .{ .node = node, .can_write = true };
             }
             return .{ .node = node, .can_write = false };

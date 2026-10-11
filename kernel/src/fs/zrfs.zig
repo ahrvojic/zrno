@@ -10,9 +10,10 @@
 //! blocks (128 MiB). Block 2 is the root directory inode.
 //!
 //! An inode is one block. `kind` is 1 for a file and 2 for a directory,
-//! then a pad `u32`, then the byte size, then up to 1020 direct block
-//! numbers. A zero number ends the list. Block 0 is the superblock, so it
-//! is never a data block.
+//! then the number of direct blocks, then the byte size, then up to 1020
+//! direct block numbers. A count of zero and a non-zero first pointer is
+//! an older list ended by a zero number. New writes store the count.
+//! Block 0 is the superblock, so it is never a data block.
 //!
 //! A directory's bytes are 128-byte records: inode, kind, name length, and
 //! 100 name bytes. Inode 0 is a free slot. Records do not cross a block.
@@ -138,14 +139,7 @@ pub fn destroy(disk: *blk.Disk, ino: u32) IoMem!void {
     {
         const slot = try disk.get(ino);
         defer disk.put(slot);
-        const n = ptrCount(slot.data);
-        var i: usize = 0;
-        while (i < n) : (i += 1) {
-            const b = ptrAt(slot.data, i);
-            setPtr(slot.data, i, 0);
-            try disk.commit(slot);
-            try freeBlock(disk, b);
-        }
+        try clearBlocks(disk, slot);
     }
     try freeBlock(disk, ino);
 }
@@ -154,16 +148,6 @@ pub fn byteSize(disk: *blk.Disk, ino: u32) IoMem!usize {
     const slot = try disk.get(ino);
     defer disk.put(slot);
     return readSize(slot.data);
-}
-
-pub fn dataBlock(disk: *blk.Disk, ino: u32, off: usize) IoMem!?u32 {
-    const slot = try disk.get(ino);
-    defer disk.put(slot);
-    const index = off / blk.block_size;
-    if (index >= max_ptrs) return null;
-    const b = ptrAt(slot.data, index);
-    if (b == 0) return null;
-    return b;
 }
 
 pub fn readEntry(disk: *blk.Disk, dir: u32, index: usize, name_out: []u8) IoMem!?Ent {
@@ -216,22 +200,26 @@ pub fn write(disk: *blk.Disk, ino: u32, off: usize, src: []const u8) error{ Io, 
     if (off > sz) return error.TooBig;
 
     const need = blocksFor(end);
-    const have = ptrCount(slot.data);
+    const have = try blockCount(slot.data);
+    const stored = readCount(slot.data);
     var i: usize = have;
     while (i < need) : (i += 1) {
         const b = allocBlock(disk) catch |err| {
-            var j: usize = have;
-            while (j < i) : (j += 1) {
-                const old = ptrAt(slot.data, j);
-                setPtr(slot.data, j, 0);
-                freeBlock(disk, old) catch {};
-            }
-            disk.commit(slot) catch {};
+            freeNew(disk, slot, have, i);
             return err;
         };
         setPtr(slot.data, i, b);
     }
-    try disk.commit(slot);
+    // `need` is only this write. The count is the file's block span.
+    const live = @max(have, blocksFor(@max(end, sz)));
+    if (live != @as(usize, stored)) {
+        writeCount(slot.data, @intCast(live));
+        disk.commit(slot) catch |err| {
+            writeCount(slot.data, stored);
+            freeNew(disk, slot, have, i);
+            return err;
+        };
+    }
 
     var done: usize = 0;
     while (done < src.len) {
@@ -260,44 +248,13 @@ pub fn write(disk: *blk.Disk, ino: u32, off: usize, src: []const u8) error{ Io, 
     return src.len;
 }
 
-/// Size becomes 0. A frame a mapping still holds is zeroed and kept so the
-/// mapping does not change which page it has. Otherwise the blocks are freed.
+/// Size becomes 0. One commit publishes the empty inode, then the blocks
+/// are freed from the high index down. A failed commit leaves the file as
+/// it was. A failed free can leak a bitmap bit; the size is already zero.
 pub fn truncate(disk: *blk.Disk, ino: u32) IoMem!void {
     const slot = try disk.get(ino);
     defer disk.put(slot);
-    const n = ptrCount(slot.data);
-    var shared = false;
-    var i: usize = 0;
-    while (i < n) : (i += 1) {
-        if (disk.shared(ptrAt(slot.data, i))) {
-            shared = true;
-            break;
-        }
-    }
-    if (shared) {
-        i = 0;
-        while (i < n) : (i += 1) {
-            const data = try disk.get(ptrAt(slot.data, i));
-            @memset(data.data, 0);
-            disk.commit(data) catch |err| {
-                disk.put(data);
-                return err;
-            };
-            disk.put(data);
-        }
-        writeU64(slot.data, 8, 0);
-        try disk.commit(slot);
-        return;
-    }
-    i = 0;
-    while (i < n) : (i += 1) {
-        const b = ptrAt(slot.data, i);
-        setPtr(slot.data, i, 0);
-        try disk.commit(slot);
-        try freeBlock(disk, b);
-    }
-    writeU64(slot.data, 8, 0);
-    try disk.commit(slot);
+    try clearBlocks(disk, slot);
 }
 
 const Hit = struct { index: usize, ino: u32 };
@@ -367,10 +324,59 @@ fn readSize(data: []const u8) usize {
     return @intCast(readU64(data, 8));
 }
 
-fn ptrCount(data: []const u8) usize {
+fn readCount(data: []const u8) u32 {
+    return readU32(data, 4);
+}
+
+fn writeCount(data: []u8, n: u32) void {
+    writeU32(data, 4, n);
+}
+
+/// Direct blocks. A zero count with a live pointer is the old terminator.
+fn blockCount(data: []const u8) error{Io}!usize {
+    const n = readCount(data);
+    if (n > max_ptrs) return error.Io;
+    if (n != 0) return n;
     var i: usize = 0;
     while (i < max_ptrs and ptrAt(data, i) != 0) i += 1;
     return i;
+}
+
+fn freeNew(disk: *blk.Disk, slot: *blk.Slot, have: usize, end: usize) void {
+    if (end == have) return;
+    var j = have;
+    while (j < end) : (j += 1) {
+        const old = ptrAt(slot.data, j);
+        setPtr(slot.data, j, 0);
+        freeBlock(disk, old) catch {};
+    }
+    disk.commit(slot) catch {};
+}
+
+/// Publish an empty block list, then free the old blocks high to low.
+fn clearBlocks(disk: *blk.Disk, slot: *blk.Slot) IoMem!void {
+    const n = try blockCount(slot.data);
+    var blocks: [max_ptrs]u32 = undefined;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        blocks[i] = ptrAt(slot.data, i);
+        setPtr(slot.data, i, 0);
+    }
+    const old_count = readCount(slot.data);
+    const old_size = readSize(slot.data);
+    writeCount(slot.data, 0);
+    writeU64(slot.data, 8, 0);
+    disk.commit(slot) catch |err| {
+        i = 0;
+        while (i < n) : (i += 1) setPtr(slot.data, i, blocks[i]);
+        writeCount(slot.data, old_count);
+        writeU64(slot.data, 8, old_size);
+        return err;
+    };
+    while (i > 0) {
+        i -= 1;
+        freeBlock(disk, blocks[i]) catch {};
+    }
 }
 
 fn ptrAt(data: []const u8, index: usize) u32 {
@@ -435,4 +441,96 @@ test "a directory written to the disk reads back from a copy of the blocks" {
     var buf: [8]u8 = undefined;
     const n = try read(copy, file, 0, &buf);
     try std.testing.expectEqualStrings("hello", buf[0..n]);
+}
+
+test "an old pointer list with a zero count still reads" {
+    const a = std.testing.allocator;
+    const disk = try blk.Disk.memory(a, 8);
+    defer disk.deinit();
+    try format(disk);
+    const file = try create(disk, root_ino, "a", .file);
+    try std.testing.expectEqual(@as(usize, 5), try write(disk, file, 0, "hello"));
+    {
+        const slot = try disk.get(file);
+        defer disk.put(slot);
+        writeU32(slot.data, 4, 0);
+        try disk.commit(slot);
+    }
+    var buf: [8]u8 = undefined;
+    const n = try read(disk, file, 0, &buf);
+    try std.testing.expectEqualStrings("hello", buf[0..n]);
+    try std.testing.expectEqual(@as(usize, 1), try write(disk, file, 5, "!"));
+    {
+        const slot = try disk.get(file);
+        defer disk.put(slot);
+        try std.testing.expectEqual(@as(u32, 1), readCount(slot.data));
+    }
+    const n2 = try read(disk, file, 0, &buf);
+    try std.testing.expectEqualStrings("hello!", buf[0..n2]);
+}
+
+test "a short write keeps the tail blocks" {
+    const a = std.testing.allocator;
+    const disk = try blk.Disk.memory(a, 8);
+    defer disk.deinit();
+    try format(disk);
+    const file = try create(disk, root_ino, "a", .file);
+    var page: [blk.block_size]u8 = @splat('x');
+    try std.testing.expectEqual(page.len, try write(disk, file, 0, &page));
+    @memset(&page, 'y');
+    try std.testing.expectEqual(page.len, try write(disk, file, page.len, &page));
+    try std.testing.expectEqual(@as(usize, 1), try write(disk, file, 0, "z"));
+    {
+        const slot = try disk.get(file);
+        defer disk.put(slot);
+        try std.testing.expectEqual(@as(u32, 2), readCount(slot.data));
+        try std.testing.expect(ptrAt(slot.data, 1) != 0);
+    }
+    var buf: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 1), try read(disk, file, 0, &buf));
+    try std.testing.expectEqual(@as(u8, 'z'), buf[0]);
+    try std.testing.expectEqual(@as(usize, 1), try read(disk, file, blk.block_size, &buf));
+    try std.testing.expectEqual(@as(u8, 'y'), buf[0]);
+    {
+        const slot = try disk.get(file);
+        defer disk.put(slot);
+        writeCount(slot.data, 0);
+        try disk.commit(slot);
+    }
+    try std.testing.expectEqual(@as(usize, 1), try write(disk, file, 1, "q"));
+    {
+        const slot = try disk.get(file);
+        defer disk.put(slot);
+        try std.testing.expectEqual(@as(u32, 2), readCount(slot.data));
+    }
+    try std.testing.expectEqual(@as(usize, 1), try read(disk, file, blk.block_size, &buf));
+    try std.testing.expectEqual(@as(u8, 'y'), buf[0]);
+    try truncate(disk, file);
+    const again = try create(disk, root_ino, "b", .file);
+    try std.testing.expectEqual(page.len, try write(disk, again, 0, &page));
+    try std.testing.expectEqual(page.len, try write(disk, again, page.len, &page));
+}
+
+test "truncate publishes a zero size and frees the blocks" {
+    const a = std.testing.allocator;
+    const disk = try blk.Disk.memory(a, 8);
+    defer disk.deinit();
+    try format(disk);
+    const file = try create(disk, root_ino, "a", .file);
+    var page: [blk.block_size]u8 = @splat('x');
+    try std.testing.expectEqual(page.len, try write(disk, file, 0, &page));
+    try std.testing.expectEqual(page.len, try write(disk, file, page.len, &page));
+    try truncate(disk, file);
+    try std.testing.expectEqual(@as(usize, 0), try byteSize(disk, file));
+    var buf: [4]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), try read(disk, file, 0, &buf));
+    {
+        const slot = try disk.get(file);
+        defer disk.put(slot);
+        try std.testing.expectEqual(@as(u32, 0), readCount(slot.data));
+        try std.testing.expectEqual(@as(u32, 0), ptrAt(slot.data, 0));
+    }
+    const again = try create(disk, root_ino, "b", .file);
+    try std.testing.expectEqual(page.len, try write(disk, again, 0, &page));
+    try std.testing.expectEqual(page.len, try write(disk, again, page.len, &page));
 }

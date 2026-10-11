@@ -12,7 +12,6 @@ pub const Process = struct {
     // Exited; stays on the table until wait/reap.
     zombie: bool,
     vmm: vmm.VMM,
-    threads: std.DoublyLinkedList,
     node: std.DoublyLinkedList.Node,
     on_proctable: bool,
     exit_code: u8,
@@ -61,7 +60,21 @@ pub const Thread = struct {
     // User stack VA. 0 for a kernel thread. Process exit drops it with the
     // address space; `thread_exit` unmaps it while siblings remain.
     user_stack: usize = 0,
-    proc_node: std.DoublyLinkedList.Node,
+    // Extra file ref across a pipe read or write. `stop` releases it: the
+    // syscall `defer` does not run when the waiter is killed.
+    held_file: ?*file.File = null,
     sched_node: std.DoublyLinkedList.Node,
     on_runqueue: bool,
+
+    pub fn holdFile(self: *Thread, f: *file.File) void {
+        if (self.held_file != null) @panic("file already held");
+        f.retain();
+        self.held_file = f;
+    }
+
+    pub fn releaseHeld(self: *Thread) void {
+        const held = self.held_file orelse return;
+        self.held_file = null;
+        held.release();
+    }
 };

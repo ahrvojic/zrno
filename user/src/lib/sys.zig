@@ -298,8 +298,8 @@ pub fn munmap(addr: usize, len: usize) i64 {
     return syscall3(nr_munmap, addr, len, 0);
 }
 
-/// Map `len` bytes of an owned file into this process. The frames are shared
-/// with the file. `munmap` drops this mapping's references and leaves the file.
+/// Map `len` bytes of an owned file. The pages are a private copy. Bytes
+/// past the end of the file are zero. `munmap` drops the copy.
 pub fn mapFile(fd: usize, len: usize, prot: u64) i64 {
     return syscall3(nr_map_file, fd, len, prot);
 }
