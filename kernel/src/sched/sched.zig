@@ -46,12 +46,26 @@ pub fn init() !void {
     state.expectUninit();
     const kernel_process = try startProcess(true);
     // Fallback only; never linked into `threads`.
-    state.idle_thread = try thread.startKernelThread(kernel_process, @intFromPtr(&idleThread), 0, false);
-    // Bit 1 is reserved. IF stays clear: the iret into `idleThread` must
-    // keep the kernel lock. The loop drops the lock around `hlt`.
-    state.idle_thread.ctx.rflags = 0x2;
+    state.idle_thread = try makeIdle(kernel_process);
+    cpu.bsp().idle = state.idle_thread;
     state.initialized = true;
     logger.info("kernel pid={d} idle tid={d}", .{ kernel_process.pid, state.idle_thread.tid });
+}
+
+/// Another core's idle thread, also unlinked. Same kernel process.
+pub fn addIdle(core: *cpu.CPU) !*proc.Thread {
+    state.expectInit();
+    const idle = try makeIdle(state.idle_thread.parent);
+    core.idle = idle;
+    return idle;
+}
+
+fn makeIdle(parent: *proc.Process) !*proc.Thread {
+    const idle = try thread.startKernelThread(parent, @intFromPtr(&idleThread), 0, false);
+    // Bit 1 is reserved. IF stays clear: the iret into `idleThread` must
+    // keep the kernel lock. The loop drops the lock around `hlt`.
+    idle.ctx.rflags = 0x2;
+    return idle;
 }
 
 pub fn startProcess(enqueue: bool) !*proc.Process {
@@ -337,7 +351,8 @@ pub fn schedule(ctx: *cpu.Context) void {
         if (t.on_runqueue) start = t.sched_node.next orelse start;
     }
 
-    const next = nextReadyThread(start) orelse state.idle_thread;
+    const idle = this_cpu.idle orelse @panic("no idle thread");
+    const next = nextReadyThread(start) orelse idle;
     if (curr) |t| {
         if (next == t) {
             // The interrupt frame and the FPU registers are already this
@@ -466,15 +481,20 @@ pub fn snapshotPs(out: []PsSnap) usize {
                 n += 1;
             }
             if (p == state.idle_thread.parent) {
-                if (n == out.len) return n;
-                const t = state.idle_thread;
-                out[n] = .{
-                    .tid = t.tid,
-                    .pid = p.pid,
-                    .ppid = p.parent,
-                    .status = t.status,
-                };
-                n += 1;
+                var core = cpu.firstCpu();
+                while (core) |c| {
+                    if (n == out.len) return n;
+                    if (c.idle) |t| {
+                        out[n] = .{
+                            .tid = t.tid,
+                            .pid = p.pid,
+                            .ppid = p.parent,
+                            .status = t.status,
+                        };
+                        n += 1;
+                    }
+                    core = cpu.nextCpu(c);
+                }
             }
         }
         node = nd.next;

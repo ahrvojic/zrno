@@ -34,9 +34,21 @@ $(DISK):
 run: ovmf $(DISK) $(ESP)/EFI/BOOT/BOOTX64.EFI
 	$(QEMU) $(QEMUFLAGS) -bios ovmf/OVMF.fd $(QEMU_DISK) $(QEMU_VIRTIO)
 
+# Interactive second core. TCG for the same reason as `test-qemu-smp`:
+# the hypervisor accelerator does not run SMP. `run` stays one core.
+.PHONY: run-smp
+run-smp: ovmf $(DISK) $(ESP)/EFI/BOOT/BOOTX64.EFI
+	$(QEMU) -accel tcg $(QEMUFLAGS) -smp 2 -bios ovmf/OVMF.fd $(QEMU_DISK) $(QEMU_VIRTIO)
+
 .PHONY: test-qemu
 test-qemu: ovmf $(DISK) $(ESP)/EFI/BOOT/BOOTX64.EFI
 	sh scripts/test-qemu.sh $(QEMU) -bios ovmf/OVMF.fd $(QEMU_DISK) $(QEMUFLAGS) $(QEMU_VIRTIO)
+
+# Second core. This machine's hypervisor accelerator does not run SMP, so
+# the target forces TCG. `test-qemu` stays one core.
+.PHONY: test-qemu-smp
+test-qemu-smp: ovmf $(DISK) $(ESP)/EFI/BOOT/BOOTX64.EFI
+	ZRNO_EXPECT='ap online' sh scripts/test-qemu.sh $(QEMU) -accel tcg -bios ovmf/OVMF.fd $(QEMU_DISK) $(QEMUFLAGS) -smp 2 $(QEMU_VIRTIO)
 
 ovmf:
 	mkdir -p ovmf

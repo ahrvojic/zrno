@@ -32,8 +32,9 @@ comptime {
 
 // Processes including zombies until `waitProcess`; not a runqueue.
 // `threads` is every live thread except idle. Schedule and wakeup walk it.
-// A process does not keep its own list: filter on `parent`. Idle stays
-// unlinked so it is only the fallback when nobody is ready.
+// A process does not keep its own list: filter on `parent`. Each core has
+// its own idle thread. Idles stay unlinked so one is only the fallback
+// when that core finds nobody ready. `idle_thread` is the bootstrap core's.
 //
 // The kernel lock (`sys/lock.zig`) is the exclusion across cores. Syscalls
 // run with the interrupt flag off (`FMASK`), and every interrupt gate clears

@@ -71,6 +71,9 @@ const lapic_reg_icr_high = 0x310;
 const icr_delivery_status: u32 = 1 << 12;
 // Fixed delivery ignores the trigger bit. Level must be assert.
 const icr_level_assert: u32 = 1 << 14;
+const icr_trigger_level: u32 = 1 << 15;
+const icr_dm_init: u32 = 5 << 8;
+const icr_dm_startup: u32 = 6 << 8;
 const lapic_reg_lvt_timer = 0x320;
 const lapic_reg_lvt_lint0 = 0x350;
 const lapic_reg_lvt_lint1 = 0x360;
@@ -96,6 +99,9 @@ comptime {
 }
 
 var cpus: std.DoublyLinkedList = .{};
+/// Initial count `timer.init` programmed on the bootstrap processor.
+/// Application processors use the same value once the scheduler is live.
+var lapic_icr_value: u32 = 0;
 
 var bsp_value: CPU = .{};
 
@@ -203,6 +209,12 @@ pub const CPU = struct {
     /// lock, after the CR3 store.
     loaded_pt: usize = 0,
     node: std.DoublyLinkedList.Node = .{},
+    /// This core's idle thread. Not on the run queue.
+    idle: ?*proc.Thread = null,
+    /// Local-APIC id the bootstrap processor targeted. Checked at entry.
+    expected_apic_id: u32 = 0,
+    /// 1 once this core's local APIC is up and it is waiting for the scheduler.
+    online: std.atomic.Value(u8) = .init(0),
     initialized: bool = false,
     lapic_initialized: bool = false,
 
@@ -232,7 +244,15 @@ pub const CPU = struct {
         enableFpu();
         self.initialized = true;
         cpus.append(&self.node);
-        logger.info("bsp gdt idt tss gs syscall wp smep smap xsave", .{});
+        if (bootLogging()) logger.info("bsp gdt idt tss gs syscall wp smep smap xsave", .{});
+    }
+
+    /// GDT, IDT, and this core's local APIC. No heap, and no serial: the
+    /// bootstrap processor still holds the kernel lock. The xAPIC window is
+    /// already mapped. The timer stays masked.
+    pub fn bootApplication(self: *CPU) void {
+        self.init();
+        self.finishApic();
     }
 
     /// Publish `self` as the GS base. Clears the selector first: a non-null
@@ -321,6 +341,40 @@ pub const CPU = struct {
         }
     }
 
+    /// Local APIC for a core the bootstrap processor already mapped.
+    /// Does not call `mapMmio` and does not log.
+    fn finishApic(self: *CPU) void {
+        self.expectInit();
+        self.expectLapicUninit();
+        self.adoptApicBase();
+        self.enableLapic();
+        self.lapicWrite(lapic_reg_lvt_timer, lapic_lvt_masked);
+        const id = self.decodeLapicId(self.lapicRead(lapic_reg_id));
+        if (id != self.expected_apic_id) @panic("ap apic id mismatch");
+        const entry = madt.find(id, self.x2apic) orelse @panic("ap not in madt");
+        self.programLintNmis(entry.processor_id);
+        self.lapic_initialized = true;
+    }
+
+    fn adoptApicBase(self: *CPU) void {
+        self.x2apic = bsp_value.x2apic;
+        self.lapic_base = bsp_value.lapic_base;
+        const base = readMSR(msr_lapic);
+        if (bsp_value.x2apic) {
+            if (base & apic_base_x2apic == 0) {
+                const enabled = (base & ~apic_base_addr_mask) | apic_base_enable;
+                writeMSR(msr_lapic, enabled);
+                writeMSR(msr_lapic, enabled | apic_base_x2apic);
+            } else if (base & apic_base_enable == 0) {
+                writeMSR(msr_lapic, base | apic_base_enable);
+            }
+            return;
+        }
+        if (base & apic_base_x2apic != 0) @panic("ap x2apic while bsp is xapic");
+        const phys: u64 = @intCast(madt.lapicAddress());
+        writeMSR(msr_lapic, (base & ~apic_base_addr_mask) | phys | apic_base_enable);
+    }
+
     pub fn eoi(self: *const CPU) void {
         self.expectLapicInit();
         self.lapicWrite(lapic_reg_eoi, 0);
@@ -329,8 +383,26 @@ pub const CPU = struct {
     /// Fixed IPI to `dest` (physical local-APIC id). ICR high is the xAPIC
     /// destination; x2APIC packs it into the high half of MSR 0x830.
     fn sendIpi(self: *const CPU, dest: u32, vector: u8) void {
+        self.sendIcr(dest, @as(u32, vector) | icr_level_assert);
+    }
+
+    /// INIT, then on xAPIC an INIT deassert, then two SIPIs of `vector`
+    /// (trampoline page number). x2APIC has no INIT deassert.
+    pub fn startupIpi(self: *const CPU, dest: u32, vector: u8) void {
+        self.sendIcr(dest, icr_dm_init | icr_level_assert | icr_trigger_level);
+        delayUs(10_000);
+        if (!self.x2apic) {
+            self.sendIcr(dest, icr_dm_init | icr_trigger_level);
+            delayUs(200);
+        }
+        const sipi: u32 = @as(u32, vector) | icr_dm_startup | icr_level_assert;
+        self.sendIcr(dest, sipi);
+        delayUs(200);
+        self.sendIcr(dest, sipi);
+    }
+
+    fn sendIcr(self: *const CPU, dest: u32, command: u32) void {
         self.expectLapicInit();
-        const command: u32 = @as(u32, vector) | icr_level_assert;
         if (self.x2apic) {
             writeMSR(x2apic_msr_base + (lapic_reg_icr_low >> 4), (@as(u64, dest) << 32) | command);
             return;
@@ -356,6 +428,7 @@ pub const CPU = struct {
     }
 
     pub fn lapicTimerPeriodic(self: *const CPU, initial: u32) void {
+        lapic_icr_value = initial;
         self.programTimer(lapic_lvt_periodic, initial);
     }
 
@@ -385,7 +458,7 @@ pub const CPU = struct {
 
         for (madt.lapicNmis()) |nmi| {
             if (nmi.lint > 1) {
-                logger.warn("nmi lint={d} ignored", .{nmi.lint});
+                if (bootLogging()) logger.warn("nmi lint={d} ignored", .{nmi.lint});
                 continue;
             }
             if (!nmi.appliesTo(acpi_id)) continue;
@@ -393,7 +466,7 @@ pub const CPU = struct {
             // MPS INTI: bit 1 active-low (LVT 13), bit 3 level (LVT 15). Same packing as I/O APIC.
             const value = lapic_lvt_nmi | (@as(u32, nmi.flags & 0b1010) << 12);
             self.lapicWrite(reg, value);
-            logger.info("nmi lint={d} flags=0x{x}", .{ nmi.lint, nmi.flags });
+            if (bootLogging()) logger.info("nmi lint={d} flags=0x{x}", .{ nmi.lint, nmi.flags });
         }
     }
 
@@ -446,7 +519,7 @@ fn enableSyscall() void {
     writeMSR(msr_star, (@as(u64, gdt.star_user) << 48) | (@as(u64, gdt.kernel_code_sel) << 32));
     writeMSR(msr_lstar, @intFromPtr(&ivt.syscallEntry));
     writeMSR(msr_fmask, syscall_fmask);
-    logger.info("syscall lstar=0x{x} star_user=0x{x}", .{ @intFromPtr(&ivt.syscallEntry), gdt.star_user });
+    if (bootLogging()) logger.info("syscall lstar=0x{x} star_user=0x{x}", .{ @intFromPtr(&ivt.syscallEntry), gdt.star_user });
 }
 
 fn enableProtections() void {
@@ -458,7 +531,7 @@ fn enableProtections() void {
     writeCr0(readCr0() | cr0_wp);
     // `wrgsbase` stays disabled. Entry uses `%gs:disp`, not `swapgs`.
     writeCr4((readCr4() | cr4_smep | cr4_smap) & ~cr4_fsgsbase);
-    logger.info("wp smep smap", .{});
+    if (bootLogging()) logger.info("wp smep smap", .{});
 }
 
 fn enableFpu() void {
@@ -487,7 +560,7 @@ fn enableFpu() void {
         :
         : [ptr] "r" (&mxcsr),
         : .{ .memory = true });
-    logger.info("mp ne osfxsr osxmmexcpt osxsave xcr0=0x{x} xsave={d}", .{ fpu.xcr0_mask, xsave_bytes });
+    if (bootLogging()) logger.info("mp ne osfxsr osxmmexcpt osxsave xcr0=0x{x} xsave={d}", .{ fpu.xcr0_mask, xsave_bytes });
 }
 
 pub const FpuState = fpu.State;
@@ -531,6 +604,24 @@ fn xsetbv(reg: u32, value: u64) void {
           [_] "{eax}" (@as(u32, @truncate(value))),
           [_] "{edx}" (@as(u32, @truncate(value >> 32))),
     );
+}
+
+pub fn tscHz() u64 {
+    return tsc_hz_value;
+}
+
+pub fn lapicIcr() u32 {
+    return lapic_icr_value;
+}
+
+/// Spin for `us` microseconds. The TSC rate is known after `timer.init`.
+pub fn delayUs(us: u64) void {
+    const hz = tsc_hz_value;
+    if (hz == 0) @panic("tsc rate unknown");
+    const start = rdtsc();
+    const need = us * hz / 1_000_000;
+    if (need == 0) return;
+    while (rdtsc() -% start < need) pause();
 }
 
 pub fn rdtsc() u64 {
@@ -651,6 +742,20 @@ fn probeCpuBaseMhz(max_leaf: u32) u32 {
 
 pub fn bsp() *CPU {
     return &bsp_value;
+}
+
+fn bootLogging() bool {
+    return current() == &bsp_value;
+}
+
+pub fn firstCpu() ?*CPU {
+    const n = cpus.first orelse return null;
+    return cpuFromNode(n);
+}
+
+pub fn nextCpu(self: *CPU) ?*CPU {
+    const n = self.node.next orelse return null;
+    return cpuFromNode(n);
 }
 
 /// Other cores drop translations for [virt_addr, virt_addr+len). This core has already

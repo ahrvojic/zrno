@@ -57,6 +57,12 @@ while [ "$n" -lt 90 ]; do
 done
 [ "$n" -lt 90 ] || fail "timeout waiting for READY."
 
+if [ -n "${ZRNO_EXPECT:-}" ]; then
+    if ! grep -Fq "$ZRNO_EXPECT" "$out"; then
+        fail "missing: $ZRNO_EXPECT"
+    fi
+fi
+
 if ! grep -Fq "virtio-blk " "$out"; then
     fail "virtio-blk did not attach"
 fi

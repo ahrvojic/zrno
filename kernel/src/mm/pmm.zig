@@ -30,6 +30,8 @@ var bitmap: Bitmap = undefined;
 var initialized = false;
 var bootloader_reclaimed = false;
 var reclaim_ranges: BoundedArray(ReclaimRange, max_reclaim_ranges) = .{};
+// Taken at init, before the direct map consumes the low frames.
+var trampoline_page: ?usize = null;
 
 fn expectInit() void {
     if (!initialized) @panic("pmm used before init");
@@ -128,6 +130,9 @@ pub fn init() !void {
         bitmap.setBit(bitmap_page + i);
     }
     initialized = true;
+    // Later allocs start at frame 0 and would otherwise spend the only
+    // pages a real-mode trampoline can use.
+    trampoline_page = claimLow();
 
     logger.info("{d} MiB usable, {d} MiB reserved, {d} bad pages; bitmap {d} KiB", .{
         pagesToMiB(usable_pages),
@@ -174,6 +179,26 @@ pub fn reclaimBootloader() void {
         pages * 4,
         pagesToMiB(usable_pages),
     });
+}
+
+pub fn trampolinePage() ?usize {
+    expectInit();
+    return trampoline_page;
+}
+
+/// One free frame in the first 256, not page 0. Stays allocated. The
+/// application-processor trampoline has to live below 1 MiB, and `alloc`
+/// has no low-memory constraint.
+fn claimLow() ?usize {
+    expectInit();
+    const limit = @min(@as(usize, 256), highest_page_index);
+    var i: usize = 1;
+    while (i < limit) : (i += 1) {
+        if (bitmap.testBit(i)) continue;
+        bitmap.setBit(i);
+        return i * page_size;
+    }
+    return null;
 }
 
 pub fn alloc(pages: usize) ?usize {

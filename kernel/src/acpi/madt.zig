@@ -129,6 +129,31 @@ pub fn find(apic_id: u32, x2apic: bool) ?Lapic {
     return findEnabled(lapics(), apic_id, x2apic);
 }
 
+/// Enabled processors in the bootstrap processor's mode, excluding `bsp_id`
+/// and a second record for an id already stored. Firmware often lists both
+/// a type 0 and a type 9 entry.
+pub fn applicationIds(bsp_id: u32, x2apic: bool, out: []u32) usize {
+    return collectApplicationIds(lapics(), bsp_id, x2apic, out);
+}
+
+fn collectApplicationIds(entries: []const Lapic, bsp_id: u32, x2apic: bool, out: []u32) usize {
+    var n: usize = 0;
+    for (entries) |entry| {
+        if (!entry.enabled()) continue;
+        if (entry.x2apic != x2apic) continue;
+        if (entry.apic_id == bsp_id) continue;
+        var seen = false;
+        for (out[0..n]) |id| {
+            if (id == entry.apic_id) seen = true;
+        }
+        if (seen) continue;
+        if (n == out.len) @panic("too many cpus");
+        out[n] = entry.apic_id;
+        n += 1;
+    }
+    return n;
+}
+
 fn findEnabled(entries: []const Lapic, apic_id: u32, x2apic: bool) ?Lapic {
     var fallback: ?Lapic = null;
     for (entries) |entry| {
@@ -239,6 +264,22 @@ fn expectInit() void {
 
 fn expectUninit() void {
     if (initialized) @panic("madt already initialized");
+}
+
+test "collectApplicationIds skips bsp, disabled, other mode, and duplicate ids" {
+    const entries = [_]Lapic{
+        .{ .processor_id = 0, .apic_id = 0, .flags = 1, .x2apic = false },
+        .{ .processor_id = 1, .apic_id = 1, .flags = 0, .x2apic = false },
+        .{ .processor_id = 2, .apic_id = 2, .flags = 1, .x2apic = true },
+        .{ .processor_id = 3, .apic_id = 3, .flags = 1, .x2apic = false },
+        .{ .processor_id = 4, .apic_id = 3, .flags = 1, .x2apic = false },
+        .{ .processor_id = 5, .apic_id = 4, .flags = 1, .x2apic = false },
+    };
+    var out: [8]u32 = undefined;
+    const n = collectApplicationIds(&entries, 0, false, &out);
+    try std.testing.expectEqual(2, n);
+    try std.testing.expectEqual(@as(u32, 3), out[0]);
+    try std.testing.expectEqual(@as(u32, 4), out[1]);
 }
 
 test "findEnabled skips disabled and prefers matching mode" {

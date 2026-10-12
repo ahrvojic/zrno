@@ -6,7 +6,7 @@ Let's learn kernel dev, x86_64, and Zig all at the same time, shall we? 😅
 
 ## Kernel features
 
-- Single CPU. User threads are preempted; a syscall runs to completion
+- Multiple CPUs. `make run` stays one core. User threads are preempted; a syscall runs to completion
 - GDT, IDT, exceptions, and local APIC
 - Bitmap physical allocator, virtual memory, and a power-of-two slab heap
 - ACPI FADT, MADT, HPET, and DSDT
@@ -30,7 +30,7 @@ To build and run (`make run`):
 - [QEMU](https://www.qemu.org) (`qemu-system-x86_64`)
 - `curl` and `tar` (`curl` fetches OVMF; `tar` packs the initramfs)
 
-`make run` serves `esp/` to OVMF as a FAT disk, attaches `zrno.dsk` as a legacy virtio-blk device (`/tmp` survives poweroff), and attaches COM1 to the terminal (`-serial stdio`). Kernel logs and panics go there (115200 8N1). After boot, `/shell` accepts `help`, `reboot`, and `poweroff` (S5; QEMU exits). Ctrl-C stops the command the shell is waiting on.
+`make run` serves `esp/` to OVMF as a FAT disk, attaches `zrno.dsk` as a legacy virtio-blk device (`/tmp` survives poweroff), and attaches COM1 to the terminal (`-serial stdio`). `make run-smp` is that boot with two cores. Kernel logs and panics go there (115200 8N1). After boot, `/shell` accepts `help`, `reboot`, and `poweroff` (S5; QEMU exits). Ctrl-C stops the command the shell is waiting on.
 
 ## References
 
