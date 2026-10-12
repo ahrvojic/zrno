@@ -168,6 +168,8 @@ fn pickWaitTarget(pid: u64, parent_pid: u64) ?*proc.Process {
     return live;
 }
 
+/// Bootstrap timer. Other cores schedule from their own interrupt and do
+/// not count ticks, so two cores do not wake sleepers twice per millisecond.
 pub fn tick(ctx: *cpu.Context) void {
     state.expectInit();
     ticks +%= 1;

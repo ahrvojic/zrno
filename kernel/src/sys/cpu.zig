@@ -72,6 +72,7 @@ const icr_delivery_status: u32 = 1 << 12;
 // Fixed delivery ignores the trigger bit. Level must be assert.
 const icr_level_assert: u32 = 1 << 14;
 const icr_trigger_level: u32 = 1 << 15;
+const icr_dm_nmi: u32 = 4 << 8;
 const icr_dm_init: u32 = 5 << 8;
 const icr_dm_startup: u32 = 6 << 8;
 const lapic_reg_lvt_timer = 0x320;
@@ -213,6 +214,8 @@ pub const CPU = struct {
     idle: ?*proc.Thread = null,
     /// Local-APIC id the bootstrap processor targeted. Checked at entry.
     expected_apic_id: u32 = 0,
+    /// Id read on this core. The local APIC register is not reachable from another core.
+    apic_id: u32 = 0,
     /// 1 once this core's local APIC is up and it is waiting for the scheduler.
     online: std.atomic.Value(u8) = .init(0),
     initialized: bool = false,
@@ -317,6 +320,7 @@ pub const CPU = struct {
         self.enableLapic();
 
         const id = self.decodeLapicId(self.lapicRead(lapic_reg_id));
+        self.apic_id = id;
         if (id > 0xff) {
             logger.err("apic_id={d} not routable via I/O APIC", .{id});
             return error.LapicIdNotRoutable;
@@ -350,6 +354,7 @@ pub const CPU = struct {
         self.enableLapic();
         self.lapicWrite(lapic_reg_lvt_timer, lapic_lvt_masked);
         const id = self.decodeLapicId(self.lapicRead(lapic_reg_id));
+        self.apic_id = id;
         if (id != self.expected_apic_id) @panic("ap apic id mismatch");
         const entry = madt.find(id, self.x2apic) orelse @panic("ap not in madt");
         self.programLintNmis(entry.processor_id);
@@ -776,8 +781,23 @@ pub fn shootdown(virt_addr: usize, len: usize) void {
         if (other == me or !other.lapic_initialized) continue;
         while (other.tlb_req.load(.acquire) != 0) pause();
         other.tlb_req.store(req, .release);
-        me.sendIpi(other.lapicId(), @intCast(ivt.vec_tlb));
+        me.sendIpi(other.apic_id, @intCast(ivt.vec_tlb));
         while (other.tlb_req.load(.acquire) != 0) pause();
+    }
+}
+
+/// NMI every other core whose local APIC is up. A core still waiting for
+/// SIPI is left alone. The handler halts when a panic is already in progress.
+pub fn nmiOthers() void {
+    if (!bsp_value.initialized) return;
+    const me = current();
+    if (!me.lapic_initialized) return;
+    var node = cpus.first;
+    while (node) |n| {
+        const other = cpuFromNode(n);
+        node = n.next;
+        if (other == me or !other.lapic_initialized) continue;
+        me.sendIcr(other.apic_id, icr_dm_nmi | icr_level_assert);
     }
 }
 

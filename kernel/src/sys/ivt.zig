@@ -4,6 +4,7 @@ const std = @import("std");
 
 const cpu = @import("cpu.zig");
 const debug = @import("../lib/debug.zig");
+const panic = @import("../lib/panic.zig");
 const gdt = @import("gdt.zig");
 const lock = @import("lock.zig");
 const ps2 = @import("../dev/ps2.zig");
@@ -47,6 +48,8 @@ comptime {
 }
 
 export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
+    // A panic NMI must not take the lock: the panicking core may hold it.
+    if (ctx.vector == vec_nmi and panic.isPanicking()) cpu.halt();
     // IF set: user mode or the idle halt, and this core does not hold the
     // lock. IF clear: already inside the kernel (`int 0x90`, a fault during
     // a syscall, a kernel page fault) and the lock stays with this core.
@@ -71,9 +74,16 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
             }
         },
         vec_timer => {
-            tty.pollSerial();
-            sched.tick(ctx);
-            cpu.current().eoi();
+            // Only the bootstrap processor advances the clock and drains
+            // serial. Every core still schedules from its own timer.
+            const this_cpu = cpu.current();
+            if (this_cpu == cpu.bsp()) {
+                tty.pollSerial();
+                sched.tick(ctx);
+            } else {
+                sched.schedule(ctx);
+            }
+            this_cpu.eoi();
         },
         vec_keyboard => {
             if (ps2.handleInterrupt()) {
