@@ -25,4 +25,5 @@ test {
     _ = @import("fs/pipe.zig");
     _ = @import("sched/maplist.zig");
     _ = @import("dev/tty_input.zig");
+    _ = @import("dev/tty_screen.zig");
 }

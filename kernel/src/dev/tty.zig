@@ -1,12 +1,10 @@
 const sched = @import("../sched/sched.zig");
 const serial = @import("serial.zig");
 const tty_input = @import("tty_input.zig");
+const tty_screen = @import("tty_screen.zig");
 const video = @import("video.zig");
 
-var row: usize = 0;
-var col: usize = 0;
-// Cursor is on the glyph that filled this row. The next glyph opens a row.
-var pending: bool = false;
+var screen: tty_screen.Screen = .{};
 var cursor_on: bool = false;
 var input: tty_input.Input = .{};
 var serial_saw_cr = false;
@@ -78,23 +76,14 @@ fn putSerial(ch: u8) void {
 
 fn hideCursor() void {
     if (!cursor_on) return;
-    video.invertCell(row, col);
+    video.invertCell(screen.row, screen.col);
     cursor_on = false;
 }
 
 fn showCursor() void {
     if (cursor_on or !video.isReady()) return;
-    video.invertCell(row, col);
+    video.invertCell(screen.row, screen.col);
     cursor_on = true;
-}
-
-fn advanceRow() void {
-    row += 1;
-    col = 0;
-    if (row == video.maxRow()) {
-        video.scroll();
-        row -= 1;
-    }
 }
 
 fn putVideo(ch: u8) void {
@@ -102,27 +91,7 @@ fn putVideo(ch: u8) void {
     hideCursor();
     defer showCursor();
 
-    switch (ch) {
-        '\n' => {
-            pending = false;
-            advanceRow();
-        },
-        '\r' => {
-            pending = false;
-            col = 0;
-        },
-        // Cooked text is `input.line_buf`. Serial erases on backspace.
-        // The framebuffer cursor stays put: it is the output cursor, and
-        // another write between keystrokes would make a saved wrap wrong.
-        '\x08' => {},
-        else => {
-            if (pending) {
-                pending = false;
-                advanceRow();
-            }
-            video.plotChar(ch, row, col);
-            pending = col + 1 == video.maxCol();
-            if (!pending) col += 1;
-        },
-    }
+    const paint = screen.put(ch, video.maxRow(), video.maxCol());
+    if (paint.scroll) video.scroll();
+    if (paint.cell) |cell| video.plotChar(cell.ch, cell.row, cell.col);
 }
