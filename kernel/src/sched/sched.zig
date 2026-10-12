@@ -47,6 +47,9 @@ pub fn init() !void {
     const kernel_process = try startProcess(true);
     // Fallback only; never linked into `threads`.
     state.idle_thread = try thread.startKernelThread(kernel_process, @intFromPtr(&idleThread), 0, false);
+    // Bit 1 is reserved. IF stays clear: the iret into `idleThread` must
+    // keep the kernel lock. The loop drops the lock around `hlt`.
+    state.idle_thread.ctx.rflags = 0x2;
     state.initialized = true;
     logger.info("kernel pid={d} idle tid={d}", .{ kernel_process.pid, state.idle_thread.tid });
 }
@@ -269,9 +272,9 @@ pub fn sleep(ms: u64) void {
 }
 
 // Park as `.waiting` on `chan`. Recheck the condition after return; wakeup
-// is a broadcast. The caller's check and this status store both run with
-// interrupts off, so a timer or keypress cannot land between them and lose
-// the wakeup.
+// is a broadcast. The caller's check and this status store both run under
+// the kernel lock, which is not dropped here. Another core's wakeup cannot
+// land between them.
 pub fn wait(chan: *const anyopaque) void {
     state.expectInit();
     const t = cpu.currentThread();
@@ -367,11 +370,22 @@ fn wakeSleepers() void {
     }
 }
 
+// Entered with the kernel lock held and IF clear. `sti; hlt` is one
+// instruction boundary, so the interrupt is taken after `hlt`. The `int`
+// returns here only when this thread is still current; otherwise `iret`
+// resumes at `cli` or at the instruction after the `int`.
 fn idleThread() callconv(.naked) noreturn {
     asm volatile (
         \\1:
+        \\call lockRelease
+        \\sti
         \\hlt
+        \\cli
+        \\call lockAcquire
+        \\int %[yield]
         \\jmp 1b
+        :
+        : [yield] "i" (ivt.vec_yield),
     );
 }
 

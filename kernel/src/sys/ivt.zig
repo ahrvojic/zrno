@@ -5,6 +5,7 @@ const std = @import("std");
 const cpu = @import("cpu.zig");
 const debug = @import("../lib/debug.zig");
 const gdt = @import("gdt.zig");
+const lock = @import("lock.zig");
 const ps2 = @import("../dev/ps2.zig");
 const sched = @import("../sched/sched.zig");
 const tty = @import("../dev/tty.zig");
@@ -24,6 +25,10 @@ pub const vec_timer = 32; // local APIC timer, not ISA IRQ 0
 pub const vec_keyboard = 33;
 // Software only: must not overlap IOAPIC GSIs (32 + pin) or APIC spurious.
 pub const vec_yield = 0x90;
+// Fixed IPI. Wakes a core in user mode or `hlt` so it flushes. The handler
+// does not take the kernel lock. A core spinning for the lock has IF clear
+// and services `CPU.tlb_req` itself.
+pub const vec_tlb = 0xf0;
 pub const vec_apic_spurious = 255;
 
 // IDT IST index (1-7). TSS.ist[index - 1] is the stack pointer.
@@ -42,6 +47,11 @@ comptime {
 }
 
 export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
+    // IF set: user mode or the idle halt, and this core does not hold the
+    // lock. IF clear: already inside the kernel (`int 0x90`, a fault during
+    // a syscall, a kernel page fault) and the lock stays with this core.
+    // A kernel page fault is fatal or a demand fill and must not lock again.
+    if (ctx.irqOn()) lock.acquire();
     switch (ctx.vector) {
         vec_nmi => fatalException(ctx, "NMI"),
         vec_double_fault => fatalException(ctx, "Double fault"),
@@ -87,6 +97,44 @@ export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
             }
         },
     }
+    // `schedule` may have replaced the frame. Drop the lock only when the
+    // context we are about to run has interrupts on.
+    if (ctx.irqOn()) lock.release();
+}
+
+// Shootdown IPI. Not `interruptDispatch`: that would take the kernel lock,
+// and the holder may be waiting for this flush.
+pub export fn tlbStub() callconv(.naked) void {
+    asm volatile (
+        \\push %rax
+        \\push %rcx
+        \\push %rdx
+        \\push %rsi
+        \\push %rdi
+        \\push %r8
+        \\push %r9
+        \\push %r10
+        \\push %r11
+        \\cld
+        \\clac
+        \\call tlbIpi
+        \\pop %r11
+        \\pop %r10
+        \\pop %r9
+        \\pop %r8
+        \\pop %rdi
+        \\pop %rsi
+        \\pop %rdx
+        \\pop %rcx
+        \\pop %rax
+        \\iretq
+    );
+}
+
+export fn tlbIpi() callconv(.c) void {
+    const this_cpu = cpu.current();
+    this_cpu.serviceTlb();
+    this_cpu.eoi();
 }
 
 export fn interruptStub() callconv(.naked) void {
@@ -143,14 +191,19 @@ export fn interruptStub() callconv(.naked) void {
 // Non-canonical RIP/RSP (Intel #GP in kernel) and kernel/non-user CS/SS
 // fall back to IRETQ. Kill here so IRETQ never sees a non-canonical RSP.
 export fn syscallDispatch(ctx: *cpu.Context) callconv(.c) void {
+    // User mode does not hold the lock. FMASK already cleared IF.
+    lock.acquire();
     if (!sysretFrameOk(ctx)) {
         killUser(ctx, "Non-canonical syscall frame");
-        return;
+    } else {
+        syscall.handle(ctx);
+        if (!sysretFrameOk(ctx)) {
+            killUser(ctx, "Non-canonical syscall frame");
+        }
     }
-    syscall.handle(ctx);
-    if (!sysretFrameOk(ctx)) {
-        killUser(ctx, "Non-canonical syscall frame");
-    }
+    // `killCurrent` may have switched to another frame. A frame with IF
+    // clear is still inside the kernel and keeps the lock.
+    if (ctx.irqOn()) lock.release();
 }
 
 fn sysretFrameOk(ctx: *const cpu.Context) bool {

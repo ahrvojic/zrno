@@ -14,6 +14,7 @@ const exec = @import("sched/exec.zig");
 const fadt = @import("acpi/fadt.zig");
 const heap = @import("mm/heap.zig");
 const lib_panic = @import("lib/panic.zig");
+const lock = @import("sys/lock.zig");
 const pmm = @import("mm/pmm.zig");
 const rt = @import("lib/rt.zig");
 const ps2 = @import("dev/ps2.zig");
@@ -63,6 +64,9 @@ export fn _start(info: *const bootinfo.BootInfo) callconv(.c) noreturn {
     };
     // IF still off: `int` works, a timer cannot run on the boot stack.
     // Not a scheduled thread: yield discards this context and never returns.
+    // Hold the kernel lock across that switch. The iret drops it when the
+    // next context runs with interrupts on.
+    lock.acquire();
     sched.yield();
     unreachable;
 }

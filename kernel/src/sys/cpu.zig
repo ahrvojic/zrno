@@ -59,6 +59,9 @@ const tsc_feature: u32 = 1 << 4;
 // x2APIC MSR = 0x800 + (MMIO offset >> 4).
 const x2apic_msr_base: u32 = 0x800;
 
+/// `CPU.tlb_req` value that reloads CR3 instead of invalidating one page.
+pub const tlb_flush_all: u64 = 1;
+
 const lapic_reg_id = 0x20;
 const lapic_reg_eoi = 0xb0;
 const lapic_reg_spurious = 0xf0;
@@ -146,6 +149,10 @@ pub const Context = extern struct {
     rflags: u64 = 0,
     rsp: u64 = 0,
     ss: u64 = 0,
+
+    pub fn irqOn(self: *const Context) bool {
+        return self.rflags & rflags_if != 0;
+    }
 };
 
 const nmi_stack_size = 2 * pmm.page_size;
@@ -178,6 +185,11 @@ pub const CPU = struct {
     doomed_stack: ?DoomedStack = null,
     /// PML4 of an address space that exited while CR3 still pointed at it.
     doomed_pt: ?usize = null,
+    /// Shootdown request. 0 means none. `tlb_flush_all` reloads CR3. Any
+    /// other value is a virtual address for `invlpg` (not page 0). Cleared
+    /// only after the flush. The lock spinner and `vec_tlb` both run
+    /// `serviceTlb`; doing it twice is harmless.
+    tlb_req: std.atomic.Value(u64) = .init(0),
     initialized: bool = false,
     lapic_initialized: bool = false,
 
@@ -228,6 +240,23 @@ pub const CPU = struct {
     pub fn setIrqStack(self: *CPU, top: u64) void {
         self.tss.rsp[0] = top;
         self.syscall_kernel_rsp = top;
+    }
+
+    /// Apply this core's shootdown request, if any. Does not take the kernel
+    /// lock. The spinner calls it with IF clear; `vec_tlb` calls it from user
+    /// mode or `hlt`.
+    pub fn serviceTlb(self: *CPU) void {
+        while (true) {
+            const req = self.tlb_req.load(.acquire);
+            if (req == 0) return;
+            if (req == tlb_flush_all) {
+                reloadCr3();
+            } else {
+                invlpg(req);
+            }
+            // Ack this value only. A request stored after the load stays up.
+            _ = self.tlb_req.cmpxchgStrong(req, 0, .release, .acquire);
+        }
     }
 
     pub fn initLapic(self: *CPU) !void {
@@ -624,6 +653,27 @@ pub inline fn halt() noreturn {
     while (true) {
         asm volatile ("hlt");
     }
+}
+
+fn reloadCr3() void {
+    const cr3 = asm volatile (
+        \\movq %%cr3, %[cr3]
+        : [cr3] "=r" (-> u64),
+        :
+        : .{ .memory = true });
+    asm volatile (
+        \\movq %[cr3], %%cr3
+        :
+        : [cr3] "r" (cr3),
+        : .{ .memory = true });
+}
+
+fn invlpg(virt_addr: u64) void {
+    asm volatile (
+        \\invlpg (%[virt_addr])
+        :
+        : [virt_addr] "r" (virt_addr),
+        : .{ .memory = true });
 }
 
 pub fn readCr2() u64 {

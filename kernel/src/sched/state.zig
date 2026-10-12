@@ -35,10 +35,10 @@ comptime {
 // A process does not keep its own list: filter on `parent`. Idle stays
 // unlinked so it is only the fallback when nobody is ready.
 //
-// No lock. Syscalls run with the interrupt flag off (`FMASK`), and every
-// interrupt gate clears it, so this data is touched by one context at a
-// time until `yield`, `sleep`, `wait`, or a return to user. The idle thread
-// is the kernel context that runs with interrupts on, and it only halts.
+// The kernel lock (`sys/lock.zig`) is the exclusion across cores. Syscalls
+// run with the interrupt flag off (`FMASK`), and every interrupt gate clears
+// it, so a core in the kernel is not preempted. The lock is dropped to run a
+// context with the flag on. Idle halts with the flag on and does not hold it.
 pub var processes: std.DoublyLinkedList = .{};
 pub var threads: std.DoublyLinkedList = .{};
 

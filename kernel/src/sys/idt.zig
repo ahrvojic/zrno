@@ -46,7 +46,12 @@ pub const IDT = struct {
 
     pub fn load(self: *IDT) void {
         inline for (0..self.entries.len) |i| {
-            const handler = ivt.makeHandler(i);
+            // `vec_tlb` must not take the kernel lock. Every other gate goes
+            // through `interruptDispatch`, which does.
+            const handler: ivt.InterruptHandler = if (i == @as(usize, ivt.vec_tlb))
+                ivt.tlbStub
+            else
+                ivt.makeHandler(@intCast(i));
             self.entries[i] = IDTEntry.make(@intFromPtr(handler), gateIst(@intCast(i)), interrupt_gate);
         }
 
@@ -59,8 +64,7 @@ pub const IDT = struct {
             \\lidt (%[idtr])
             :
             : [idtr] "r" (&idtr),
-            : .{ .memory = true }
-        );
+            : .{ .memory = true });
     }
 };
 
