@@ -70,6 +70,9 @@ pub fn isGuard(addr: usize) bool {
 
 fn unmap(phys: usize, base: usize) void {
     vmm.kernel_vmm.unmap(base, state.stack_size) catch @panic("unmap kernel stack");
+    // The kernel half is in every address space. Other cores ack only after
+    // they drop this stack, and only then are the frames reused.
+    cpu.shootdown(base, state.stack_size);
     pmm.free(phys, state.stack_pages);
 }
 

@@ -5,7 +5,8 @@
 //!
 //! The spin loop services this core's TLB request. IF is clear while spinning,
 //! so a shootdown IPI is not delivered here. That IPI only wakes a core in
-//! user mode or in `hlt`, and its handler does not take this lock.
+//! user mode or in `hlt`, and its handler does not take this lock. The holder
+//! writes the request and waits until the word is 0.
 
 const std = @import("std");
 

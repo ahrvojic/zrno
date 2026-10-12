@@ -351,6 +351,8 @@ pub fn schedule(ctx: *cpu.Context) void {
     next.status = .running;
     this_cpu.thread = next;
     next.parent.vmm.switchTo();
+    // After the CR3 write. A remote core still sees the old root until then.
+    this_cpu.loaded_pt = next.parent.vmm.pt_addr_phys;
     aspace.reapDoomedPt();
     // CPL 3 → 0 (IRQ) and SYSCALL both load this as the kernel stack top.
     // Absolute top; ctx.rsp is the thread's SP.
@@ -420,7 +422,8 @@ fn nextReadyThread(start: ?*std.DoublyLinkedList.Node) ?*proc.Thread {
     var node: *std.DoublyLinkedList.Node = first;
     while (true) {
         const t = threadFromSched(node);
-        if (t.status == .ready) return t;
+        // One core per address space: user unmap and page-table free stay local.
+        if (t.status == .ready and !cpu.ptLoadedElsewhere(t.parent.vmm.pt_addr_phys)) return t;
         node = node.next orelse state.threads.first orelse return null;
         if (node == first) return null;
     }

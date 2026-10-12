@@ -65,6 +65,12 @@ pub const tlb_flush_all: u64 = 1;
 const lapic_reg_id = 0x20;
 const lapic_reg_eoi = 0xb0;
 const lapic_reg_spurious = 0xf0;
+// xAPIC command. x2APIC uses one MSR at 0x800 + (0x300 >> 4).
+const lapic_reg_icr_low = 0x300;
+const lapic_reg_icr_high = 0x310;
+const icr_delivery_status: u32 = 1 << 12;
+// Fixed delivery ignores the trigger bit. Level must be assert.
+const icr_level_assert: u32 = 1 << 14;
 const lapic_reg_lvt_timer = 0x320;
 const lapic_reg_lvt_lint0 = 0x350;
 const lapic_reg_lvt_lint1 = 0x360;
@@ -86,7 +92,10 @@ comptime {
     std.debug.assert(x2apic_msr_base + (lapic_reg_timer_icr >> 4) == 0x838);
     std.debug.assert(x2apic_msr_base + (lapic_reg_timer_ccr >> 4) == 0x839);
     std.debug.assert(x2apic_msr_base + (lapic_reg_timer_dcr >> 4) == 0x83e);
+    std.debug.assert(x2apic_msr_base + (lapic_reg_icr_low >> 4) == 0x830);
 }
+
+var cpus: std.DoublyLinkedList = .{};
 
 var bsp_value: CPU = .{};
 
@@ -188,8 +197,12 @@ pub const CPU = struct {
     /// Shootdown request. 0 means none. `tlb_flush_all` reloads CR3. Any
     /// other value is a virtual address for `invlpg` (not page 0). Cleared
     /// only after the flush. The lock spinner and `vec_tlb` both run
-    /// `serviceTlb`; doing it twice is harmless.
+    /// `serviceTlb`; doing it twice is harmless. `shootdown` is the writer.
     tlb_req: std.atomic.Value(u64) = .init(0),
+    /// PML4 in CR3. 0 before the first `schedule`. Written under the kernel
+    /// lock, after the CR3 store.
+    loaded_pt: usize = 0,
+    node: std.DoublyLinkedList.Node = .{},
     initialized: bool = false,
     lapic_initialized: bool = false,
 
@@ -218,6 +231,7 @@ pub const CPU = struct {
         writeMSR(msr_pat, pat_wc_at_5);
         enableFpu();
         self.initialized = true;
+        cpus.append(&self.node);
         logger.info("bsp gdt idt tss gs syscall wp smep smap xsave", .{});
     }
 
@@ -310,6 +324,20 @@ pub const CPU = struct {
     pub fn eoi(self: *const CPU) void {
         self.expectLapicInit();
         self.lapicWrite(lapic_reg_eoi, 0);
+    }
+
+    /// Fixed IPI to `dest` (physical local-APIC id). ICR high is the xAPIC
+    /// destination; x2APIC packs it into the high half of MSR 0x830.
+    fn sendIpi(self: *const CPU, dest: u32, vector: u8) void {
+        self.expectLapicInit();
+        const command: u32 = @as(u32, vector) | icr_level_assert;
+        if (self.x2apic) {
+            writeMSR(x2apic_msr_base + (lapic_reg_icr_low >> 4), (@as(u64, dest) << 32) | command);
+            return;
+        }
+        while (self.lapicRead(lapic_reg_icr_low) & icr_delivery_status != 0) pause();
+        self.lapicWrite(lapic_reg_icr_high, dest << 24);
+        self.lapicWrite(lapic_reg_icr_low, command);
     }
 
     pub fn lapicId(self: *const CPU) u32 {
@@ -623,6 +651,46 @@ fn probeCpuBaseMhz(max_leaf: u32) u32 {
 
 pub fn bsp() *CPU {
     return &bsp_value;
+}
+
+/// Other cores drop translations for [virt_addr, virt_addr+len). This core has already
+/// run invlpg. A single page is one `invlpg` request. A longer range reloads
+/// CR3, because `tlb_req` holds one address. The word is 0 only after the flush.
+pub fn shootdown(virt_addr: usize, len: usize) void {
+    std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
+    std.debug.assert(len != 0 and std.mem.isAligned(len, pmm.page_size));
+    // One page: `invlpg` that address (aligned, so it is not `tlb_flush_all`).
+    // A longer run is one CR3 reload. Zero is not a request.
+    const req: u64 = if (len == pmm.page_size) @intCast(virt_addr) else tlb_flush_all;
+    std.debug.assert(req != 0);
+    const me = current();
+    var node = cpus.first;
+    while (node) |n| {
+        const other = cpuFromNode(n);
+        node = n.next;
+        if (other == me or !other.lapic_initialized) continue;
+        while (other.tlb_req.load(.acquire) != 0) pause();
+        other.tlb_req.store(req, .release);
+        me.sendIpi(other.lapicId(), @intCast(ivt.vec_tlb));
+        while (other.tlb_req.load(.acquire) != 0) pause();
+    }
+}
+
+/// True when another core's CR3 is still this PML4. Read under the kernel lock.
+pub fn ptLoadedElsewhere(pt: usize) bool {
+    const me = current();
+    var node = cpus.first;
+    while (node) |n| {
+        const other = cpuFromNode(n);
+        node = n.next;
+        if (other != me and other.loaded_pt == pt) return true;
+    }
+    return false;
+}
+
+fn cpuFromNode(n: *std.DoublyLinkedList.Node) *CPU {
+    // IST stacks make `CPU` align 16. The list node is not.
+    return @alignCast(@fieldParentPtr("node", n));
 }
 
 /// CPU executing this call. `CPU.init` points `IA32_GS_BASE` at that object.
