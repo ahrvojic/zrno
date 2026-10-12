@@ -38,7 +38,7 @@ run: ovmf $(DISK) $(ESP)/EFI/BOOT/BOOTX64.EFI
 # the hypervisor accelerator does not run SMP. `run` stays one core.
 .PHONY: run-smp
 run-smp: ovmf $(DISK) $(ESP)/EFI/BOOT/BOOTX64.EFI
-	$(QEMU) -accel tcg $(QEMUFLAGS) -smp 2 -bios ovmf/OVMF.fd $(QEMU_DISK) $(QEMU_VIRTIO)
+	$(QEMU) -accel tcg $(QEMUFLAGS) -smp 4 -bios ovmf/OVMF.fd $(QEMU_DISK) $(QEMU_VIRTIO)
 
 .PHONY: test-qemu
 test-qemu: ovmf $(DISK) $(ESP)/EFI/BOOT/BOOTX64.EFI
