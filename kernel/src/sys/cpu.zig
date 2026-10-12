@@ -13,6 +13,7 @@ const virt = @import("../lib/virt.zig");
 const vmm = @import("../mm/vmm.zig");
 
 const msr_lapic = 0x1b;
+const msr_gs_base: u32 = 0xc0000101;
 const msr_efer = 0xc0000080;
 const msr_pat = 0x277;
 // Architectural defaults, except index 5 is WC. Framebuffer PTEs select that index.
@@ -29,6 +30,8 @@ const cr0_ne: u64 = 1 << 5;
 const cr0_wp: u64 = 1 << 16;
 const cr4_osfxsr: u64 = 1 << 9;
 const cr4_osxmmexcpt: u64 = 1 << 10;
+// Gates `wrgsbase` / `rdgsbase` only. `%gs:disp` and `WRMSR` do not need it.
+const cr4_fsgsbase: u64 = 1 << 16;
 const cr4_osxsave: u64 = 1 << 18;
 const cr4_smep: u64 = 1 << 20;
 const cr4_smap: u64 = 1 << 21;
@@ -85,15 +88,17 @@ comptime {
 var bsp_value: CPU = .{};
 
 comptime {
-    // `CPU` has no fixed layout, so the fields cannot be exported. Entry
-    // addresses them through these names. The symbol is Zig's name for
-    // `bsp_value`.
+    // `CPU` has no fixed layout, so a field cannot be exported. These
+    // absolute symbols are GS displacements of the running CPU.
     asm (std.fmt.comptimePrint(
-            \\.globl bsp_syscall_user_rsp
-            \\.globl bsp_syscall_kernel_rsp
-            \\bsp_syscall_user_rsp = sys.cpu.bsp_value + {d}
-            \\bsp_syscall_kernel_rsp = sys.cpu.bsp_value + {d}
+            \\.globl cpu_gs_self
+            \\.globl cpu_gs_user_rsp
+            \\.globl cpu_gs_kernel_rsp
+            \\cpu_gs_self = {d}
+            \\cpu_gs_user_rsp = {d}
+            \\cpu_gs_kernel_rsp = {d}
         , .{
+            @offsetOf(CPU, "this"),
             @offsetOf(CPU, "syscall_user_rsp"),
             @offsetOf(CPU, "syscall_kernel_rsp"),
         }));
@@ -150,9 +155,11 @@ const pf_stack_size = 16 * pmm.page_size;
 pub const DoomedStack = struct { phys: usize, base: usize };
 
 pub const CPU = struct {
+    /// `IA32_GS_BASE` points here. `current` reads this field as `%gs:cpu_gs_self`.
+    /// A user `mov` to GS would replace the base. Userspace does not load GS.
+    this: *CPU = undefined,
     /// User RSP saved by `syscallEntry`, and the kernel stack it switches to.
-    /// Entry addresses these fields of `bsp_value`. `kernel_rsp` matches
-    /// `tss.rsp[0]`. A GS load is the SMP patch.
+    /// Entry reads both as `%gs:disp`. `kernel_rsp` matches `tss.rsp[0]`.
     syscall_user_rsp: u64 = 0,
     syscall_kernel_rsp: u64 = 0,
     gdt: gdt.GDT = .{},
@@ -189,13 +196,30 @@ pub const CPU = struct {
         self.tss.ist[ivt.ist_page_fault - 1] = @intFromPtr(&self.pf_stack) + self.pf_stack.len;
 
         self.gdt.load(&self.tss);
+        // After `lgdt`. `gdt.reload` does not write FS or GS, which would
+        // zero the base installed here. Before `lidt`, so a handler that
+        // calls `current` already has a CPU pointer.
+        self.bindGs();
         self.idt.load();
         enableSyscall();
         enableProtections();
         writeMSR(msr_pat, pat_wc_at_5);
         enableFpu();
         self.initialized = true;
-        logger.info("bsp gdt idt tss syscall wp smep smap xsave", .{});
+        logger.info("bsp gdt idt tss gs syscall wp smep smap xsave", .{});
+    }
+
+    /// Publish `self` as the GS base. Clears the selector first: a non-null
+    /// GS from firmware is a GDT base, and loading null does not change the
+    /// hidden base that `WRMSR` then sets.
+    fn bindGs(self: *CPU) void {
+        self.this = self;
+        asm volatile (
+            \\mov %%ax, %%gs
+            :
+            : [_] "{eax}" (@as(u32, 0)),
+            : .{ .memory = true });
+        writeMSR(msr_gs_base, @intFromPtr(self));
     }
 
     /// IRQ and SYSCALL kernel stack top. `TSS.rsp[0]` for privilege-changing
@@ -375,7 +399,8 @@ fn enableProtections() void {
     if (ebx & smap_feature == 0) @panic("smap not supported");
 
     writeCr0(readCr0() | cr0_wp);
-    writeCr4(readCr4() | cr4_smep | cr4_smap);
+    // `wrgsbase` stays disabled. Entry uses `%gs:disp`, not `swapgs`.
+    writeCr4((readCr4() | cr4_smep | cr4_smap) & ~cr4_fsgsbase);
     logger.info("wp smep smap", .{});
 }
 
@@ -571,9 +596,12 @@ pub fn bsp() *CPU {
     return &bsp_value;
 }
 
-// BSP until per-CPU identity exists.
+/// CPU executing this call. `CPU.init` points `IA32_GS_BASE` at that object.
 pub fn current() *CPU {
-    return &bsp_value;
+    return asm volatile (
+        \\movq %%gs:cpu_gs_self, %[cpu]
+        : [cpu] "=r" (-> *CPU),
+    );
 }
 
 pub fn currentThread() *proc.Thread {

@@ -138,6 +138,7 @@ pub const GDT = struct {
 };
 
 // Named asm label .reload_cs is unique per object; must not be inlined.
+// Does not load FS or GS: a data selector would zero the GS base.
 noinline fn reload() void {
     asm volatile (
         \\pushq %[kernel_code_sel]
