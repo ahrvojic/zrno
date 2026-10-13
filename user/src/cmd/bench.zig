@@ -12,6 +12,8 @@ const page: usize = 4096;
 const bytes: usize = 32 * page;
 // The pipe ring leaves one slot empty, so a full message is a page minus one.
 const pipe_full: usize = page - 1;
+// One mebibyte, off the 64 KiB user stack. Fault it in before the timer.
+const stream_len: usize = 256 * page;
 
 const Cal = struct {
     cycles: u64,
@@ -28,6 +30,7 @@ var spawn_wr: u64 = 0;
 var spawn_rd: u64 = 0;
 
 var file_fd: u64 = 0;
+var stream_addr: usize = 0;
 
 fn rdtsc() u64 {
     var hi: u32 = undefined;
@@ -49,6 +52,7 @@ fn mulDiv(a: u64, b: u64, den: u64) u64 {
 }
 
 fn fail(msg: []const u8) u64 {
+    printTable();
     lib.eprint("bench: ");
     lib.eprint(msg);
     lib.eprint("\n");
@@ -77,20 +81,116 @@ fn calibrate() ?Cal {
     return .{ .cycles = cycles, .ns = ns };
 }
 
+// A u64 is at most 20 digits, and each title is shorter than that.
+const spaces = "                    ";
+// Syscall rows, then the spin, busy, and stream pairs.
+const max_rows = 24;
+
+const h_name = "name";
+const h_count = "count";
+const h_total = "total_ns";
+const h_per = "per_ns";
+const h_cyc = "cyc";
+const h_ms = "ms";
+
+const Row = struct {
+    name: []const u8,
+    n: u64,
+    total: u64,
+    per: u64,
+    cyc: u64,
+    ms: u64,
+};
+
+var saved: [max_rows]Row = undefined;
+var saved_len: usize = 0;
+
+fn digits(v: u64) usize {
+    var n: usize = 1;
+    var x = v;
+    while (x >= 10) : (x /= 10) n += 1;
+    return n;
+}
+
+fn printPad(width: usize, len: usize) void {
+    if (len < width) lib.print(spaces[0 .. width - len]);
+}
+
+fn printLeft(text: []const u8, width: usize) void {
+    lib.print(text);
+    printPad(width, text.len);
+}
+
+fn printRight(text: []const u8, width: usize) void {
+    printPad(width, text.len);
+    lib.print(text);
+}
+
+fn printNum(v: u64, width: usize) void {
+    printPad(width, digits(v));
+    lib.printU64(v);
+}
+
 fn printRow(name: []const u8, n: u64, cycles: u64, elapsed: u64, cal: Cal) void {
+    if (saved_len == saved.len) return;
     const total = mulDiv(cycles, cal.ns, cal.cycles);
-    lib.print(name);
+    saved[saved_len] = .{
+        .name = name,
+        .n = n,
+        .total = total,
+        .per = (total + n / 2) / n,
+        .cyc = (cycles + n / 2) / n,
+        .ms = elapsed / 1_000_000,
+    };
+    saved_len += 1;
+}
+
+fn printTable() void {
+    if (saved_len == 0) return;
+    const rows = saved[0..saved_len];
+    var w_name: usize = h_name.len;
+    var w_count: usize = h_count.len;
+    var w_total: usize = h_total.len;
+    var w_per: usize = h_per.len;
+    var w_cyc: usize = h_cyc.len;
+    var w_ms: usize = h_ms.len;
+    for (rows) |r| {
+        w_name = @max(w_name, r.name.len);
+        w_count = @max(w_count, digits(r.n));
+        w_total = @max(w_total, digits(r.total));
+        w_per = @max(w_per, digits(r.per));
+        w_cyc = @max(w_cyc, digits(r.cyc));
+        w_ms = @max(w_ms, digits(r.ms));
+    }
+
+    printLeft(h_name, w_name);
     lib.print(" ");
-    lib.printU64(n);
+    printRight(h_count, w_count);
     lib.print(" ");
-    lib.printU64(total);
+    printRight(h_total, w_total);
     lib.print(" ");
-    lib.printU64((total + n / 2) / n);
+    printRight(h_per, w_per);
     lib.print(" ");
-    lib.printU64((cycles + n / 2) / n);
+    printRight(h_cyc, w_cyc);
     lib.print(" ");
-    lib.printU64(elapsed / 1_000_000);
+    printRight(h_ms, w_ms);
     lib.print("\n");
+
+    for (rows) |r| {
+        printLeft(r.name, w_name);
+        lib.print(" ");
+        printNum(r.n, w_count);
+        lib.print(" ");
+        printNum(r.total, w_total);
+        lib.print(" ");
+        printNum(r.per, w_per);
+        lib.print(" ");
+        printNum(r.cyc, w_cyc);
+        lib.print(" ");
+        printNum(r.ms, w_ms);
+        lib.print("\n");
+    }
+    saved_len = 0;
 }
 
 fn measureN(name: []const u8, cal: Cal, comptime once: fn () bool) u64 {
@@ -118,6 +218,218 @@ fn measureN(name: []const u8, cal: Cal, comptime once: fn () bool) u64 {
         if (n > max_n / 2) return fail("uptime did not advance");
         n *= 2;
     }
+}
+
+fn readFull(fd: u64, buf: []u8) i64 {
+    var got: usize = 0;
+    while (got < buf.len) {
+        const n = sys.read(fd, buf[got..]);
+        if (n < 0) return n;
+        if (n == 0) return @intCast(got);
+        got += @intCast(n);
+    }
+    return @intCast(got);
+}
+
+fn closeQuiet(fd: *i64) void {
+    if (fd.* < 0) return;
+    _ = sys.close(@intCast(fd.*));
+    fd.* = -1;
+}
+
+// User mode only. A syscall holds the one kernel lock, so the other core
+// cannot run the same work.
+fn spinCycles(n: u64) void {
+    const start = rdtsc();
+    while (rdtsc() -% start < n) {
+        asm volatile ("" ::: .{ .memory = true });
+    }
+}
+
+// `test` reads both words and writes neither, so a pure loop cannot cross
+// this point. An empty asm did not keep the result live under -Doptimize=small.
+fn pin(v: u64, other: u64) u64 {
+    asm volatile ("test %[v], %[other]"
+        :
+        : [v] "r" (v),
+          [other] "r" (other),
+        : .{ .cc = true, .memory = true });
+    return v;
+}
+
+fn spinWork(n: u64) u64 {
+    spinCycles(n);
+    return 0;
+}
+
+// Fixed steps. Sampling the TSC would time the clock, not the work.
+fn busyWork(n: u64) u64 {
+    var x: u64 = 0x9E3779B97F4A7C15;
+    for (0..n) |i| {
+        x *%= 0x9E3779B97F4A7C15;
+        x +%= i;
+        x ^= x >> 30;
+    }
+    return x;
+}
+
+// One pass reads `stream_len` bytes. The pages are already resident.
+fn streamWork(n: u64) u64 {
+    const p: [*]volatile u64 = @ptrFromInt(stream_addr);
+    var sum: u64 = 0;
+    for (0..n) |_| {
+        for (0..stream_len / @sizeOf(u64)) |i| sum +%= p[i];
+    }
+    return sum;
+}
+
+// A fault takes the kernel lock, so it happens before the timer.
+fn mapStream() bool {
+    const addr = sys.mmap(0, stream_len, sys.prot_read | sys.prot_write);
+    if (addr < 0) return false;
+    stream_addr = @intCast(addr);
+    for (0..stream_len / page) |i| {
+        const p: *volatile u8 = @ptrFromInt(stream_addr + i * page);
+        p.* = 1;
+    }
+    return true;
+}
+
+fn unmapStream() void {
+    _ = sys.munmap(stream_addr, stream_len);
+}
+
+fn twoCores() ?bool {
+    const need = @sizeOf(sys.MachineInfo) + 2 * @sizeOf(sys.CoreInfo);
+    var buf: [need]u8 = undefined;
+    const n = sys.cores(&buf);
+    if (n < 0) return null;
+    return n >= need;
+}
+
+// Ready byte, then one native-endian count. The ack is the low byte of
+// the result, so the write keeps the work.
+fn peerChild(comptime work: fn (u64) u64) u64 {
+    const ready = [_]u8{1};
+    if (sys.writeAll(1, &ready) < 0) return 1;
+    var raw: [8]u8 = undefined;
+    const n = readFull(0, &raw);
+    if (n != raw.len) return 1;
+    const ack = [_]u8{@truncate(work(@bitCast(raw)))};
+    if (sys.writeAll(1, &ack) < 0) return 1;
+    return 0;
+}
+
+fn streamChild() u64 {
+    if (!mapStream()) return 1;
+    return peerChild(streamWork);
+}
+
+fn timedRow(name: []const u8, count: u64, cal: Cal, t0: u64, c0: u64) u64 {
+    const cyc = rdtsc() -% c0;
+    const t1 = sys.uptime();
+    if (t1 < t0) return fail("uptime did not advance");
+    printRow(name, count, cyc, t1 - t0, cal);
+    return 0;
+}
+
+// Double until the window reaches `min_ns`. Returns the step count a peer
+// repeats. The row's count is `n * unit`.
+fn measureUnits(name: []const u8, cal: Cal, unit: u64, comptime work: fn (u64) u64) ?u64 {
+    var n: u64 = 1;
+    while (true) {
+        const t0 = sys.uptime();
+        var stamp = rdtsc();
+        const result = work(pin(n, stamp));
+        stamp = pin(stamp, result);
+        const cycles = rdtsc() -% stamp;
+        const t1 = sys.uptime();
+        if (t1 < t0) return null;
+        const elapsed = t1 - t0;
+        if (elapsed >= min_ns) {
+            printRow(name, n * unit, cycles, elapsed, cal);
+            return n;
+        }
+        if (n > max_n / 2) return null;
+        n *= 2;
+    }
+}
+
+// Another process: one address space stays on one core.
+// `down` is parent to child. `up` carries the ready byte and the ack.
+const Peer = struct {
+    down: [2]i64 = @splat(-1),
+    up: [2]i64 = @splat(-1),
+    pid: i64 = -1,
+
+    fn deinit(self: *Peer) void {
+        closeQuiet(&self.down[0]);
+        closeQuiet(&self.up[1]);
+        closeQuiet(&self.down[1]);
+        closeQuiet(&self.up[0]);
+        if (self.pid >= 0) _ = sys.wait(@intCast(self.pid));
+    }
+
+    fn start(self: *Peer, mode: []const u8) bool {
+        if (sys.pipe(&self.down) < 0 or sys.pipe(&self.up) < 0) return false;
+        const argv = [_][]const u8{ "/bench", mode };
+        self.pid = sys.spawn("/bench", &argv, @intCast(self.down[0]), @intCast(self.up[1]), 2);
+        closeQuiet(&self.down[0]);
+        closeQuiet(&self.up[1]);
+        if (self.pid < 0) return false;
+        var byte: [1]u8 = undefined;
+        return sys.read(@intCast(self.up[0]), &byte) == 1;
+    }
+
+    fn exchange(self: *Peer, n: u64, comptime work: fn (u64) u64) bool {
+        var raw: [8]u8 = @bitCast(n);
+        if (sys.writeAll(@intCast(self.down[1]), &raw) != 0) return false;
+        // The write clobbers memory, so this reload stays after it.
+        const steps: u64 = @bitCast(raw);
+        const result = work(steps);
+        _ = pin(result, steps);
+        var byte: [1]u8 = undefined;
+        return sys.read(@intCast(self.up[0]), &byte) == 1;
+    }
+};
+
+fn timeSpin(cal: Cal, cycles: u64) u64 {
+    const t0 = sys.uptime();
+    const c0 = rdtsc();
+    spinCycles(cycles);
+    return timedRow("spin", 1, cal, t0, c0);
+}
+
+// Spawn and the ready byte stay outside the window. The write end is
+// closed before `wait`. `count` is the work of both sides.
+fn timePeer(name: []const u8, mode: []const u8, count: u64, n: u64, cal: Cal, comptime work: fn (u64) u64) u64 {
+    var peer: Peer = .{};
+    defer peer.deinit();
+    if (!peer.start(mode)) return fail(name);
+    const t0 = sys.uptime();
+    const c0 = rdtsc();
+    if (!peer.exchange(n, work)) return fail(name);
+    return timedRow(name, count, cal, t0, c0);
+}
+
+// The 50 ms floor lets the idle core's timer pick up the child. One core
+// skips every row here. A pair row's count is both sides.
+fn multicore(cal: Cal) u64 {
+    const two = twoCores() orelse return fail("cores");
+    if (!two) return 0;
+    const cycles = mulDiv(min_ns, cal.cycles, cal.ns);
+    if (cycles == 0) return fail("spin");
+    if (timeSpin(cal, cycles) != 0) return 1;
+    if (timePeer("spin2", "spin", 1, cycles, cal, spinWork) != 0) return 1;
+
+    const steps = measureUnits("busy", cal, 1, busyWork) orelse return fail("uptime did not advance");
+    if (timePeer("busy2", "busy", steps * 2, steps, cal, busyWork) != 0) return 1;
+
+    if (!mapStream()) return fail("stream");
+    defer unmapStream();
+    const unit: u64 = stream_len;
+    const passes = measureUnits("stream", cal, unit, streamWork) orelse return fail("uptime did not advance");
+    return timePeer("stream2", "stream", passes * unit * 2, passes, cal, streamWork);
 }
 
 fn onceEmpty() bool {
@@ -322,13 +634,17 @@ fn mmapOnce() bool {
 }
 
 pub fn main(argv: []const []const u8) u64 {
-    if (argv.len > 1 and lib.eql(argv[1], "child")) return pipeChild();
+    if (argv.len > 1) {
+        if (lib.eql(argv[1], "child")) return pipeChild();
+        if (lib.eql(argv[1], "spin")) return peerChild(spinWork);
+        if (lib.eql(argv[1], "busy")) return peerChild(busyWork);
+        if (lib.eql(argv[1], "stream")) return streamChild();
+    }
 
     const cal = calibrate() orelse return fail("uptime did not advance");
     lib.print("cycles/ms ");
     lib.printU64(mulDiv(cal.cycles, 1_000_000, cal.ns));
     lib.print("\n");
-    lib.print("name count total_ns per_ns cyc ms\n");
     if (measureN("empty", cal, onceEmpty) != 0) return 1;
     if (measureN("getpid", cal, oncePid) != 0) return 1;
     if (measureN("yield", cal, onceYield) != 0) return 1;
@@ -337,5 +653,7 @@ pub fn main(argv: []const []const u8) u64 {
     if (files(cal) != 0) return 1;
     if (measureN("brk", cal, brkOnce) != 0) return 1;
     if (measureN("mmap", cal, mmapOnce) != 0) return 1;
+    if (multicore(cal) != 0) return 1;
+    printTable();
     return 0;
 }
