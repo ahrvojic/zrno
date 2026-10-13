@@ -138,6 +138,18 @@ pub fn stop(thread: *proc.Thread) void {
     thread.releaseHeld();
     state.dequeueThread(thread);
 
+    // The other core is in this thread's user code or spinning for the lock
+    // on its kernel stack. It frees the thread once it has left.
+    if (runsElsewhere(thread)) {
+        thread.stopped.store(1, .release);
+        return;
+    }
+    freeStopped(thread);
+}
+
+/// Destroy a thread `stop` already unlinked. The current core may still be
+/// on its kernel stack; that stack is freed on a later schedule.
+pub fn freeStopped(thread: *proc.Thread) void {
     const stack_phys = thread.stack_phys;
     const stack_base = thread.stack_base;
     const fpu_state = thread.fpu;
@@ -154,6 +166,15 @@ pub fn stop(thread: *proc.Thread) void {
     } else {
         kstack.free(stack_phys, stack_base);
     }
+}
+
+fn runsElsewhere(thread: *proc.Thread) bool {
+    var core = cpu.firstCpu();
+    while (core) |c| {
+        if (c != cpu.current() and c.thread == thread) return true;
+        core = cpu.nextCpu(c);
+    }
+    return false;
 }
 
 const ArgvFrame = struct {

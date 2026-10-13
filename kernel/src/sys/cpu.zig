@@ -206,9 +206,12 @@ pub const CPU = struct {
     /// only after the flush. The lock spinner and `vec_tlb` both run
     /// `serviceTlb`; doing it twice is harmless. `shootdown` is the writer.
     tlb_req: std.atomic.Value(u64) = .init(0),
-    /// PML4 in CR3. 0 before the first `schedule`. Written under the kernel
-    /// lock, after the CR3 store.
-    loaded_pt: usize = 0,
+    /// PML4 in CR3. 0 before the first `schedule`. `schedule` stores it after
+    /// the CR3 write. `abandon` stores the kernel root without the lock.
+    loaded_pt: std.atomic.Value(usize) = .init(0),
+    /// PML4 this core must leave. 0 means none. Cleared only after CR3 no
+    /// longer holds it. `vec_leave` and the lock spinner both run `abandon`.
+    leave_pt: std.atomic.Value(usize) = .init(0),
     node: std.DoublyLinkedList.Node = .{},
     /// This core's idle thread. Not on the run queue.
     idle: ?*proc.Thread = null,
@@ -849,16 +852,36 @@ pub fn nmiOthers() void {
     }
 }
 
-/// True when another core's CR3 is still this PML4. Read under the kernel lock.
-pub fn ptLoadedElsewhere(pt: usize) bool {
+/// Switch to the kernel root when `leave_pt` names the current PML4.
+/// Does not take the kernel lock. True when this call performed the switch's ack.
+pub fn abandon(self: *CPU) bool {
+    const pt = self.leave_pt.load(.acquire);
+    if (pt == 0) return false;
+    if (vmm.readCR3() == pt) vmm.kernel_vmm.switchTo();
+    if (self.loaded_pt.load(.acquire) == pt) {
+        self.loaded_pt.store(vmm.kernel_vmm.pt_addr_phys, .release);
+    }
+    _ = self.leave_pt.cmpxchgStrong(pt, 0, .release, .acquire);
+    return true;
+}
+
+/// Cores whose CR3 is `pt` switch to the kernel root. The caller holds the
+/// kernel lock. Each target acks from `abandon` before it takes the lock,
+/// then schedules once its thread is stopped.
+pub fn evacuate(pt: usize) void {
+    if (pt == 0 or !vmm.kernel_vmm.initialized or pt == vmm.kernel_vmm.pt_addr_phys) return;
     const me = current();
     var node = cpus.first;
     while (node) |n| {
         const other = cpuFromNode(n);
         node = n.next;
-        if (other != me and other.loaded_pt == pt) return true;
+        if (other == me or !other.lapic_initialized) continue;
+        if (other.loaded_pt.load(.acquire) != pt) continue;
+        while (other.leave_pt.load(.acquire) != 0) pause();
+        other.leave_pt.store(pt, .release);
+        me.sendIpi(other.apic_id, @intCast(ivt.vec_leave));
+        while (other.leave_pt.load(.acquire) != 0) pause();
     }
-    return false;
 }
 
 fn cpuFromNode(n: *std.DoublyLinkedList.Node) *CPU {

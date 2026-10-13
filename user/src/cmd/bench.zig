@@ -355,8 +355,8 @@ fn measureUnits(name: []const u8, cal: Cal, unit: u64, comptime work: fn (u64) u
     }
 }
 
-// Another process: one address space stays on one core.
-// `down` is parent to child. `up` carries the ready byte and the ack.
+// Parent and child. `down` is parent to child. `up` carries the ready byte
+// and the ack.
 const Peer = struct {
     down: [2]i64 = @splat(-1),
     up: [2]i64 = @splat(-1),

@@ -3,10 +3,11 @@
 //! idle halt. `sched.wait` does not drop it. The parked thread holds nothing;
 //! the core that stays in the kernel keeps the lock.
 //!
-//! The spin loop services this core's TLB request. IF is clear while spinning,
-//! so a shootdown IPI is not delivered here. That IPI only wakes a core in
-//! user mode or in `hlt`, and its handler does not take this lock. The holder
-//! writes the request and waits until the word is 0.
+//! The spin loop services this core's TLB request and leaves a dying address
+//! space. IF is clear while spinning, so those IPIs are not delivered here.
+//! A shootdown IPI only wakes a core in user mode or in `hlt`, and its handler
+//! does not take this lock. The holder writes the request and waits until
+//! the word is 0.
 
 const std = @import("std");
 
@@ -27,7 +28,10 @@ pub fn acquire() void {
 }
 
 fn tryLock(me: usize) bool {
-    cpu.current().serviceTlb();
+    const self = cpu.current();
+    self.serviceTlb();
+    // A dying address space is left before this core takes the lock.
+    _ = cpu.abandon(self);
     // `swap` is `xchg`. The lock word is 0 free, 1 taken.
     if (locked.swap(1, .acquire) != 0) return false;
     owner.store(me, .release);

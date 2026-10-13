@@ -76,6 +76,9 @@ pub const Thread = struct {
     // Extra file ref across a pipe read or write. `stop` releases it: the
     // syscall `defer` does not run when the waiter is killed.
     held_file: ?*file.File = null,
+    /// 1 when this thread is still current on another core. That core frees
+    /// the object after it has left the address space.
+    stopped: std.atomic.Value(u8) = .init(0),
     sched_node: std.DoublyLinkedList.Node,
     on_runqueue: bool,
 

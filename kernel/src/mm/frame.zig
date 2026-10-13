@@ -1,5 +1,4 @@
-//! A physical page owned by one block-cache slot. A second owner, when a
-//! shared mapping exists, is a count on the physical page.
+//! A physical page owned by one block-cache slot.
 
 const heap = @import("heap.zig");
 const pmm = @import("pmm.zig");

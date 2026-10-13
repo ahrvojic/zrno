@@ -30,6 +30,9 @@ pub const vec_yield = 0x90;
 // does not take the kernel lock. A core spinning for the lock has IF clear
 // and services `CPU.tlb_req` itself.
 pub const vec_tlb = 0xf0;
+// Fixed IPI. The handler switches off a dying PML4 before it takes the
+// kernel lock, then schedules once that thread is stopped.
+pub const vec_leave = 0xf1;
 pub const vec_apic_spurious = 255;
 
 // IDT IST index (1-7). TSS.ist[index - 1] is the stack pointer.
@@ -50,11 +53,44 @@ comptime {
 export fn interruptDispatch(ctx: *cpu.Context) callconv(.c) void {
     // A panic NMI must not take the lock: the panicking core may hold it.
     if (ctx.vector == vec_nmi and panic.isPanicking()) cpu.halt();
+    // Ack the leave, then take the lock. The holder is waiting for the ack
+    // and still owns the address space until this returns.
+    if (ctx.vector == vec_leave) {
+        const self = cpu.current();
+        self.serviceTlb();
+        const left = cpu.abandon(self);
+        self.eoi();
+        if (left) {
+            const thread = self.thread orelse @panic("leave without thread");
+            // `stop` runs after the ack. Service shootdowns while that core
+            // still holds the lock.
+            while (thread.stopped.load(.acquire) == 0) {
+                self.serviceTlb();
+                cpu.pause();
+            }
+            lock.acquire();
+            sched.schedule(ctx);
+            if (ctx.irqOn()) lock.release();
+        }
+        return;
+    }
     // IF set: user mode or the idle halt, and this core does not hold the
     // lock. IF clear: already inside the kernel (`int 0x90`, a fault during
     // a syscall, a kernel page fault) and the lock stays with this core.
     // A kernel page fault is fatal or a demand fill and must not lock again.
     if (ctx.irqOn()) lock.acquire();
+    if (cpu.current().thread) |t| {
+        if (t.stopped.load(.acquire) != 0) {
+            // The local APIC stays stuck if a timer or keyboard IRQ is dropped.
+            switch (ctx.vector) {
+                vec_timer, vec_keyboard => cpu.current().eoi(),
+                else => {},
+            }
+            sched.schedule(ctx);
+            if (ctx.irqOn()) lock.release();
+            return;
+        }
+    }
     switch (ctx.vector) {
         vec_nmi => fatalException(ctx, "NMI"),
         vec_double_fault => fatalException(ctx, "Double fault"),
@@ -203,6 +239,15 @@ export fn interruptStub() callconv(.naked) void {
 export fn syscallDispatch(ctx: *cpu.Context) callconv(.c) void {
     // User mode does not hold the lock. FMASK already cleared IF.
     lock.acquire();
+    // The spin left a dying address space before the lock was granted.
+    // `stop` has run; the call must not touch that process.
+    if (cpu.current().thread) |t| {
+        if (t.stopped.load(.acquire) != 0) {
+            sched.schedule(ctx);
+            if (ctx.irqOn()) lock.release();
+            return;
+        }
+    }
     if (!sysretFrameOk(ctx)) {
         killUser(ctx, "Non-canonical syscall frame");
     } else {

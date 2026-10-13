@@ -124,14 +124,27 @@ const PageTable = extern struct {
     }
 
     pub fn unmapPage(self: *PageTable, virt_addr: usize) !void {
-        const w = try self.walk(virt_addr, false, false);
+        _ = try self.clearLeaf(virt_addr);
+        self.reapCleared(virt_addr);
+    }
 
+    /// Clear one present leaf and return its frame. Empty upper tables stay
+    /// until `reapCleared`, so a remote core can drop the translation first.
+    pub fn clearLeaf(self: *PageTable, virt_addr: usize) !usize {
+        const w = try self.walk(virt_addr, false, false);
         const entry = w.pte();
         if (!entry.getFlags().present) return error.NotMapped;
+        const phys = entry.getAddress();
         entry.setAddress(0);
         entry.setFlags(.{});
         flushTLB(virt_addr);
+        return phys;
+    }
 
+    /// Free page-table pages emptied by `clearLeaf`. A present leaf is left alone.
+    pub fn reapCleared(self: *PageTable, virt_addr: usize) void {
+        const w = self.walk(virt_addr, false, false) catch return;
+        if (w.pte().getFlags().present) return;
         // Kernel L3/L2/L1 are shared with clones; never release them.
         if (w.pml4_idx >= kernel_pml4_start) return;
 
@@ -305,6 +318,19 @@ pub const VMM = struct {
 
         try self.pt.expectMappedRange(virt_addr, size);
         self.pt.unmapRange(virt_addr, size);
+    }
+
+    /// Clear one user leaf. The caller shoots down other cores, frees the
+    /// frame, then `reapCleared`.
+    pub fn clearLeaf(self: *VMM, virt_addr: usize) !usize {
+        self.expectInit();
+        std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
+        return self.pt.clearLeaf(virt_addr);
+    }
+
+    pub fn reapCleared(self: *VMM, virt_addr: usize) void {
+        self.expectInit();
+        self.pt.reapCleared(virt_addr);
     }
 
     pub fn mapMmio(self: *VMM, phys_addr: usize, size: usize) !void {
@@ -615,15 +641,11 @@ test "userRange rejects the null page" {
 }
 
 test "userRange rejects the kernel half" {
+    // One page below the canonical end, so a syscall cannot wrap SYSRET RIP.
+    try std.testing.expectEqual((@as(usize, 1) << 47) - pmm.page_size, user_space_end);
     try std.testing.expect(!userRange(user_space_end, 1));
     try std.testing.expect(!userRange(user_space_end - 1, 2));
     try std.testing.expect(userRange(user_space_end - 1, 1));
-}
-
-test "userRange omits the last canonical page" {
-    const canonical_end: usize = 1 << 47;
-    try std.testing.expectEqual(canonical_end - pmm.page_size, user_space_end);
-    try std.testing.expect(!userRange(canonical_end - pmm.page_size, 1));
 }
 
 test "userRange empty length is always in range" {

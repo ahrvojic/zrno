@@ -343,6 +343,11 @@ pub fn schedule(ctx: *cpu.Context) void {
         boot_stack = false;
         pmm.reclaimBootloader();
     }
+    // A core we pulled out of this address space is still on the thread's
+    // kernel stack. Switch away, then free it.
+    if (this_cpu.thread) |t| {
+        if (t.stopped.load(.acquire) != 0) thread.freeStopped(t);
+    }
     const curr = this_cpu.thread;
     var start = state.threads.first;
     if (curr) |t| {
@@ -370,8 +375,8 @@ pub fn schedule(ctx: *cpu.Context) void {
     next.status = .running;
     this_cpu.thread = next;
     next.parent.vmm.switchTo();
-    // After the CR3 write. A remote core still sees the old root until then.
-    this_cpu.loaded_pt = next.parent.vmm.pt_addr_phys;
+    // After the CR3 write. `evacuate` reads this without the lock.
+    this_cpu.loaded_pt.store(next.parent.vmm.pt_addr_phys, .release);
     aspace.reapDoomedPt();
     // CPL 3 → 0 (IRQ) and SYSCALL both load this as the kernel stack top.
     // Absolute top; ctx.rsp is the thread's SP.
@@ -413,6 +418,9 @@ fn idleThread() callconv(.naked) noreturn {
 fn dismantle(process: *proc.Process, exit_code: u8) void {
     process.exit_code = exit_code;
     process.zombie = true;
+    // Before user frames or the PML4 are freed. Targets ack by switching to
+    // the kernel root, then wait until `stop` marks their thread.
+    cpu.evacuate(process.vmm.pt_addr_phys);
     var node = state.threads.first;
     while (node) |n| {
         const t = threadFromSched(n);
@@ -441,8 +449,7 @@ fn nextReadyThread(start: ?*std.DoublyLinkedList.Node) ?*proc.Thread {
     var node: *std.DoublyLinkedList.Node = first;
     while (true) {
         const t = threadFromSched(node);
-        // One core per address space: user unmap and page-table free stay local.
-        if (t.status == .ready and !cpu.ptLoadedElsewhere(t.parent.vmm.pt_addr_phys)) return t;
+        if (t.status == .ready) return t;
         node = node.next orelse state.threads.first orelse return null;
         if (node == first) return null;
     }

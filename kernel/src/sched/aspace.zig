@@ -28,7 +28,7 @@ pub fn releaseUserStack(parent: *proc.Process, base: usize) void {
 }
 
 pub fn unmapUserStack(space: *vmm.VMM, base: usize) void {
-    unmapPages(space, base, state.stack_size);
+    releaseUserPages(space, base, state.stack_size, false);
 }
 
 // Linux-style `brk`: rdi=0 returns the current break; otherwise set it.
@@ -52,14 +52,14 @@ pub fn setBrk(addr: usize) error{ Invalid, OutOfMemory }!usize {
             return error.OutOfMemory;
         };
     } else {
-        unmapPages(&process.vmm, new_pg, old_pg - new_pg);
+        releaseUserPages(&process.vmm, new_pg, old_pg - new_pg, false);
     }
     return addr;
 }
 
 fn mapPages(space: *vmm.VMM, addr: usize, size: usize, flags: vmm.Flags) error{OutOfMemory}!void {
     var mapped: usize = 0;
-    errdefer unmapPages(space, addr, mapped);
+    errdefer releaseUserPages(space, addr, mapped, false);
     while (mapped < size) : (mapped += pmm.page_size) {
         const phys = pmm.alloc(1) orelse return error.OutOfMemory;
         space.map(addr + mapped, phys, pmm.page_size, flags) catch {
@@ -69,22 +69,36 @@ fn mapPages(space: *vmm.VMM, addr: usize, size: usize, flags: vmm.Flags) error{O
     }
 }
 
-fn unmapPages(space: *vmm.VMM, addr: usize, size: usize) void {
+// One shootdown covers this many leaves. The phys list sits on the kernel stack.
+const release_chunk: usize = 64;
+
+/// Clear leaves, shoot the range down, then free frames and empty tables.
+/// `sparse` skips holes (anonymous maps fault in on first touch).
+fn releaseUserPages(space: *vmm.VMM, addr: usize, size: usize, sparse: bool) void {
     var off: usize = 0;
-    while (off < size) : (off += pmm.page_size) {
-        const phys = space.virtToPhys(addr + off) catch @panic("user page unmap");
-        space.unmap(addr + off, pmm.page_size) catch @panic("user page unmap");
-        pmm.free(std.mem.alignBackward(usize, phys, pmm.page_size), 1);
+    while (off < size) {
+        const chunk = @min(size - off, release_chunk * pmm.page_size);
+        var physes: [release_chunk]usize = undefined;
+        var n: usize = 0;
+        var i: usize = 0;
+        while (i < chunk) : (i += pmm.page_size) {
+            const phys = space.clearLeaf(addr + off + i) catch {
+                if (sparse) continue;
+                @panic("user page unmap");
+            };
+            physes[n] = phys;
+            n += 1;
+        }
+        if (n != 0) cpu.shootdown(addr + off, chunk);
+        for (physes[0..n]) |phys| pmm.free(phys, 1);
+        i = 0;
+        while (i < chunk) : (i += pmm.page_size) space.reapCleared(addr + off + i);
+        off += chunk;
     }
 }
 
 fn dropMap(space: *vmm.VMM, map: maplist.Map) void {
-    var off: usize = 0;
-    while (off < map.size) : (off += pmm.page_size) {
-        const phys = space.virtToPhys(map.base + off) catch continue;
-        space.unmap(map.base + off, pmm.page_size) catch @panic("user page unmap");
-        pmm.free(std.mem.alignBackward(usize, phys, pmm.page_size), 1);
-    }
+    releaseUserPages(space, map.base, map.size, true);
 }
 
 fn pageBytes(len: usize) error{Invalid}!usize {
@@ -169,14 +183,14 @@ pub fn releaseMappings(process: *proc.Process) void {
 }
 
 /// Allocate the zero page for a reservation. False when `addr` is outside
-/// one, the access writes a read-only reservation, the page is already
-/// present, or the allocator is empty.
+/// one, the access writes a read-only reservation, or the allocator is empty.
+/// A page another core already filled is success: the fault retries.
 pub fn fillUserPage(addr: usize, write: bool) bool {
     const process = cpu.currentProcess();
     const page = std.mem.alignBackward(usize, addr, pmm.page_size);
     const map = maplist.find(&process.maps, page) orelse return false;
     if (write and !map.writable) return false;
-    if (process.vmm.virtToPhys(page)) |_| return false else |_| {}
+    if (process.vmm.virtToPhys(page)) |_| return true else |_| {}
 
     const phys = pmm.alloc(1) orelse return false;
     process.vmm.map(page, phys, pmm.page_size, userFlags(map.writable)) catch {
@@ -202,6 +216,8 @@ pub fn unmapAnon(addr: usize, len: usize) error{Invalid}!void {
 }
 
 pub fn dropAddressSpace(space: *vmm.VMM) void {
+    // A core still in this root switches to the kernel page tables first.
+    cpu.evacuate(space.pt_addr_phys);
     // Unlink before the process object is destroyed. A deferred PML4 free
     // no longer has the VMM.
     space.releaseClone();
