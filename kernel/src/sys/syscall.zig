@@ -58,6 +58,7 @@ pub const nr_uptime: u64 = 0x41; // returns ns since boot
 // 0x50 machine
 pub const nr_reboot: u64 = 0x50; // never returns
 pub const nr_poweroff: u64 = 0x51; // never returns
+pub const nr_cores: u64 = 0x52; // rdi=buf, rsi=len; MachineInfo then CoreInfo rows; returns bytes
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -117,6 +118,27 @@ pub const PsInfo = extern struct {
 };
 comptime {
     std.debug.assert(@sizeOf(PsInfo) == 32);
+}
+
+// `vendor` is the 12-byte CPUID leaf 0 string, then four zero bytes.
+// `usable_pages` counts 4 KiB pages. `core_none` is not a tid.
+pub const core_none: u64 = cpu.no_tid;
+pub const MachineInfo = extern struct {
+    family: u64,
+    model: u64,
+    tsc_hz: u64,
+    usable_pages: u64,
+    vendor: [16]u8,
+};
+pub const CoreInfo = extern struct {
+    apic_id: u64,
+    online: u64,
+    idle_tid: u64,
+    tid: u64,
+};
+comptime {
+    std.debug.assert(@sizeOf(MachineInfo) == 48);
+    std.debug.assert(@sizeOf(CoreInfo) == 32);
 }
 
 const max_io: usize = pmm.page_size;
@@ -188,6 +210,7 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_uptime => sys_uptime(),
         nr_reboot => reboot.perform(),
         nr_poweroff => reboot.poweroff(),
+        nr_cores => sys_cores(ctx),
         else => errval(ENOSYS),
     };
 }
@@ -620,6 +643,47 @@ fn sys_ps(ctx: *cpu.Context) u64 {
     }
     copyToUser(addr, std.mem.sliceAsBytes(tmp[0..n])) catch return errval(EFAULT);
     return n * @sizeOf(PsInfo);
+}
+
+const max_cores = (max_io - @sizeOf(MachineInfo)) / @sizeOf(CoreInfo);
+
+fn sys_cores(ctx: *cpu.Context) u64 {
+    const addr: usize = @intCast(ctx.rdi);
+    const len: usize = @intCast(ctx.rsi);
+    if (len < @sizeOf(MachineInfo)) return errval(EINVAL);
+    if (checkIo(len)) |r| return r;
+
+    const room = @min(max_cores, (len - @sizeOf(MachineInfo)) / @sizeOf(CoreInfo));
+    const snap = cpu.machineSnap();
+    var hdr: MachineInfo = .{
+        .family = snap.family,
+        .model = snap.model,
+        .tsc_hz = snap.tsc_hz,
+        .usable_pages = snap.usable_pages,
+        .vendor = @splat(0),
+    };
+    @memcpy(hdr.vendor[0..snap.vendor.len], &snap.vendor);
+
+    @setRuntimeSafety(false);
+    var rows: [max_cores]cpu.CoreSnap = undefined;
+    const n = cpu.snapshotCores(rows[0..room]);
+    var out: [max_io]u8 = undefined;
+    const hdr_bytes = std.mem.asBytes(&hdr);
+    @memcpy(out[0..hdr_bytes.len], hdr_bytes);
+    for (rows[0..n], 0..) |row, i| {
+        const info: CoreInfo = .{
+            .apic_id = row.apic_id,
+            .online = @intFromBool(row.online),
+            .idle_tid = row.idle_tid,
+            .tid = row.tid,
+        };
+        const row_bytes = std.mem.asBytes(&info);
+        const at = hdr_bytes.len + i * row_bytes.len;
+        @memcpy(out[at..][0..row_bytes.len], row_bytes);
+    }
+    const nbytes = hdr_bytes.len + n * @sizeOf(CoreInfo);
+    copyToUser(addr, out[0..nbytes]) catch return errval(EFAULT);
+    return nbytes;
 }
 
 fn sys_brk(ctx: *cpu.Context) u64 {

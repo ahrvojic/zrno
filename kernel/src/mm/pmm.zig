@@ -181,6 +181,11 @@ pub fn reclaimBootloader() void {
     });
 }
 
+pub fn usablePages() usize {
+    expectInit();
+    return usable_pages;
+}
+
 pub fn trampolinePage() ?usize {
     expectInit();
     return trampoline_page;

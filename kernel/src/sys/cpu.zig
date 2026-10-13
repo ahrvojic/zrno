@@ -615,6 +615,54 @@ pub fn tscHz() u64 {
     return tsc_hz_value;
 }
 
+pub const MachineSnap = struct {
+    vendor: [12]u8,
+    family: u32,
+    model: u32,
+    tsc_hz: u64,
+    usable_pages: usize,
+};
+
+pub fn machineSnap() MachineSnap {
+    return .{
+        .vendor = vendor,
+        .family = display_family,
+        .model = display_model,
+        .tsc_hz = tsc_hz_value,
+        .usable_pages = pmm.usablePages(),
+    };
+}
+
+/// `snapshotCores` writes this when `CPU.thread` is null. Not a tid.
+pub const no_tid: u64 = ~@as(u64, 0);
+
+pub const CoreSnap = struct {
+    apic_id: u32,
+    online: bool,
+    idle_tid: u64,
+    tid: u64,
+};
+
+/// Walk order. The bootstrap processor is first. `online` is the local
+/// APIC, not `CPU.online`: the bootstrap processor never sets that atomic.
+pub fn snapshotCores(out: []CoreSnap) usize {
+    var n: usize = 0;
+    var core = firstCpu();
+    while (core) |c| {
+        if (n == out.len) return n;
+        const idle = c.idle orelse @panic("no idle thread");
+        out[n] = .{
+            .apic_id = c.apic_id,
+            .online = c.lapic_initialized,
+            .idle_tid = idle.tid,
+            .tid = if (c.thread) |t| t.tid else no_tid,
+        };
+        n += 1;
+        core = nextCpu(c);
+    }
+    return n;
+}
+
 pub fn lapicIcr() u32 {
     return lapic_icr_value;
 }

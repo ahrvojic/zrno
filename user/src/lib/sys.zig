@@ -42,6 +42,7 @@ pub const nr_uptime: u64 = 0x41;
 // 0x50 machine
 pub const nr_reboot: u64 = 0x50;
 pub const nr_poweroff: u64 = 0x51;
+pub const nr_cores: u64 = 0x52;
 
 pub const prot_read: u64 = 1;
 pub const prot_write: u64 = 2;
@@ -100,6 +101,27 @@ pub const PsInfo = extern struct {
 };
 comptime {
     if (@sizeOf(PsInfo) != 32) @compileError("PsInfo must be 32 bytes");
+}
+
+// Matches kernel/src/sys/syscall.zig. `vendor` is 12 CPUID bytes, then zeros.
+// `usable_pages` counts 4 KiB pages. `core_none` is not a tid.
+pub const core_none: u64 = ~@as(u64, 0);
+pub const MachineInfo = extern struct {
+    family: u64,
+    model: u64,
+    tsc_hz: u64,
+    usable_pages: u64,
+    vendor: [16]u8,
+};
+pub const CoreInfo = extern struct {
+    apic_id: u64,
+    online: u64,
+    idle_tid: u64,
+    tid: u64,
+};
+comptime {
+    if (@sizeOf(MachineInfo) != 48) @compileError("MachineInfo must be 48 bytes");
+    if (@sizeOf(CoreInfo) != 32) @compileError("CoreInfo must be 32 bytes");
 }
 
 pub const max_argv: usize = 32;
@@ -324,4 +346,8 @@ pub fn getdents(fd: u64, buf: []Dirent) i64 {
 
 pub fn ps(buf: []PsInfo) i64 {
     return syscall3(nr_ps, @intFromPtr(buf.ptr), buf.len * @sizeOf(PsInfo), 0);
+}
+
+pub fn cores(buf: []u8) i64 {
+    return syscall3(nr_cores, @intFromPtr(buf.ptr), buf.len, 0);
 }
