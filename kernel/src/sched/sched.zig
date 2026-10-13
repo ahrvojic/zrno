@@ -45,6 +45,8 @@ pub fn ticksSinceBoot() u64 {
 pub fn init() !void {
     state.expectUninit();
     const kernel_process = try startProcess(true);
+    // Its only threads are the idle threads, one per core.
+    kernel_process.setName("idle");
     // Fallback only; never linked into `threads`.
     state.idle_thread = try makeIdle(kernel_process);
     cpu.bsp().idle = state.idle_thread;
@@ -452,7 +454,20 @@ pub const PsSnap = struct {
     ppid: u64,
     // Null on a zombie: `thread.stop` already removed its threads.
     status: ?proc.ThreadStatus,
+    name_len: u8,
+    name: [proc.ps_name_max]u8,
 };
+
+fn psRow(p: *proc.Process, tid: u64, status: ?proc.ThreadStatus) PsSnap {
+    return .{
+        .tid = tid,
+        .pid = p.pid,
+        .ppid = p.parent,
+        .status = status,
+        .name_len = p.name_len,
+        .name = p.name,
+    };
+}
 
 // One row per thread, in process-table order. A zombie is one row with
 // no status. Idle is not on `state.threads`; it is reported with the
@@ -465,7 +480,7 @@ pub fn snapshotPs(out: []PsSnap) usize {
         const p = processFromNode(nd);
         if (p.zombie) {
             if (n == out.len) break;
-            out[n] = .{ .tid = 0, .pid = p.pid, .ppid = p.parent, .status = null };
+            out[n] = psRow(p, 0, null);
             n += 1;
         } else {
             var tnode = state.threads.first;
@@ -474,12 +489,7 @@ pub fn snapshotPs(out: []PsSnap) usize {
                 const t = threadFromSched(tn);
                 tnode = tn.next;
                 if (t.parent != p) continue;
-                out[n] = .{
-                    .tid = t.tid,
-                    .pid = p.pid,
-                    .ppid = p.parent,
-                    .status = t.status,
-                };
+                out[n] = psRow(p, t.tid, t.status);
                 n += 1;
             }
             if (p == state.idle_thread.parent) {
@@ -487,12 +497,7 @@ pub fn snapshotPs(out: []PsSnap) usize {
                 while (core) |c| {
                     if (n == out.len) return n;
                     if (c.idle) |t| {
-                        out[n] = .{
-                            .tid = t.tid,
-                            .pid = p.pid,
-                            .ppid = p.parent,
-                            .status = t.status,
-                        };
+                        out[n] = psRow(p, t.tid, t.status);
                         n += 1;
                     }
                     core = cpu.nextCpu(c);

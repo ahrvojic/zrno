@@ -6,6 +6,9 @@ const maplist = @import("maplist.zig");
 const vfs = @import("../fs/vfs.zig");
 const vmm = @import("../mm/vmm.zig");
 
+// Last component of the spawn path, cut to this. `ps` copies it into the row.
+pub const ps_name_max: usize = 24;
+
 pub const Process = struct {
     pid: u64,
     parent: u64,
@@ -32,6 +35,16 @@ pub const Process = struct {
     // Retained directory. A path that does not begin with `/` starts here.
     // Spawn copies the parent's node. Exit releases it.
     cwd: *vfs.Node,
+    // Last component of the spawn path. The kernel process is `idle`.
+    name_len: u8 = 0,
+    name: [ps_name_max]u8 = @splat(0),
+
+    pub fn setName(self: *Process, name: []const u8) void {
+        const n = @min(name.len, ps_name_max);
+        @memset(self.name[0..], 0);
+        @memcpy(self.name[0..n], name[0..n]);
+        self.name_len = @intCast(n);
+    }
 };
 
 pub const ThreadStatus = enum {

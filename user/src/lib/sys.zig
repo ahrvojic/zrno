@@ -93,14 +93,18 @@ pub const ps_running: u64 = 1;
 pub const ps_sleeping: u64 = 2;
 pub const ps_waiting: u64 = 3;
 pub const ps_zombie: u64 = 4;
+// Process name. `name_len` bytes of `name`, not NUL-terminated. Matches the kernel.
+pub const ps_name_max: usize = 24;
 pub const PsInfo = extern struct {
     tid: u64,
     pid: u64,
     ppid: u64,
     state: u64,
+    name_len: u64,
+    name: [ps_name_max]u8,
 };
 comptime {
-    if (@sizeOf(PsInfo) != 32) @compileError("PsInfo must be 32 bytes");
+    if (@sizeOf(PsInfo) != 64) @compileError("PsInfo must be 64 bytes");
 }
 
 // Matches kernel/src/sys/syscall.zig. `vendor` is 12 CPUID bytes, then zeros.

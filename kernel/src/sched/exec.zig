@@ -21,6 +21,7 @@ pub fn spawnPathArgv(path: []const u8, argv: []const []const u8, stdin: u64, std
 fn spawn(path: []const u8, argv: []const []const u8, stdio: ?[3]u64) SpawnError!u64 {
     const process = sched.startProcess(true) catch |err| return spawnFail(err);
     errdefer sched.abortProcess(process, 1);
+    process.setName(pathName(path));
 
     if (stdio) |fds| {
         const t = cpu.currentThread();
@@ -43,6 +44,15 @@ const NodeSrc = struct {
         return self.node.readAt(off, dest);
     }
 };
+
+fn pathName(path: []const u8) []const u8 {
+    var end = path.len;
+    while (end > 0 and path[end - 1] == '/') end -= 1;
+    if (end == 0) return path[0..0];
+    var start = end;
+    while (start > 0 and path[start - 1] != '/') start -= 1;
+    return path[start..end];
+}
 
 fn loadPath(vm: *vmm.VMM, cwd: *vfs.Node, path: []const u8) SpawnError!elf.Loaded {
     const node = vfs.walkFrom(cwd, path) catch return error.NoEnt;

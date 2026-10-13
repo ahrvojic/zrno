@@ -4,6 +4,7 @@ const std = @import("std");
 
 const cpu = @import("cpu.zig");
 const exec = @import("../sched/exec.zig");
+const proc = @import("../sched/proc.zig");
 const file = @import("../fs/file.zig");
 const pmm = @import("../mm/pmm.zig");
 const pipe = @import("../fs/pipe.zig");
@@ -110,14 +111,19 @@ pub const ps_running: u64 = 1;
 pub const ps_sleeping: u64 = 2;
 pub const ps_waiting: u64 = 3;
 pub const ps_zombie: u64 = 4;
+// `name` is the process name, `name_len` bytes, not NUL-terminated.
+// Idle rows share the kernel process name. 64 bytes keeps 64 rows in one page.
 pub const PsInfo = extern struct {
     tid: u64,
     pid: u64,
     ppid: u64,
     state: u64,
+    name_len: u64,
+    name: [proc.ps_name_max]u8,
 };
 comptime {
-    std.debug.assert(@sizeOf(PsInfo) == 32);
+    std.debug.assert(proc.ps_name_max == 24);
+    std.debug.assert(@sizeOf(PsInfo) == 64);
 }
 
 // `vendor` is the 12-byte CPUID leaf 0 string, then four zero bytes.
@@ -639,6 +645,8 @@ fn sys_ps(ctx: *cpu.Context) u64 {
             .pid = s.pid,
             .ppid = s.ppid,
             .state = psState(s),
+            .name_len = s.name_len,
+            .name = s.name,
         };
     }
     copyToUser(addr, std.mem.sliceAsBytes(tmp[0..n])) catch return errval(EFAULT);
