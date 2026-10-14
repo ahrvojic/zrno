@@ -72,29 +72,60 @@ fn mapPages(space: *vmm.VMM, addr: usize, size: usize, flags: vmm.Flags) error{O
 // One shootdown covers this many leaves. The phys list sits on the kernel stack.
 const release_chunk: usize = 64;
 
-/// Clear leaves, shoot the range down, then free frames and empty tables.
+/// Clear leaves and empty parent entries, shoot the range down, then free.
 /// `sparse` skips holes (anonymous maps fault in on first touch).
-fn releaseUserPages(space: *vmm.VMM, addr: usize, size: usize, sparse: bool) void {
+/// `free_frames` is false when the caller still owns the leaf frames and
+/// will free them after this returns.
+fn dropRange(space: *vmm.VMM, addr: usize, size: usize, sparse: bool, free_frames: bool) void {
     var off: usize = 0;
     while (off < size) {
         const chunk = @min(size - off, release_chunk * pmm.page_size);
         var physes: [release_chunk]usize = undefined;
-        var n: usize = 0;
+        // A chunk spans at most two page tables, plus the directory levels.
+        var tables: [8]usize = undefined;
+        var n_frames: usize = 0;
+        var n_tables: usize = 0;
+        var cleared = false;
         var i: usize = 0;
         while (i < chunk) : (i += pmm.page_size) {
             const phys = space.clearLeaf(addr + off + i) catch {
                 if (sparse) continue;
                 @panic("user page unmap");
             };
-            physes[n] = phys;
-            n += 1;
+            cleared = true;
+            if (free_frames) {
+                physes[n_frames] = phys;
+                n_frames += 1;
+            }
+            var got: [3]usize = undefined;
+            const k = space.detachEmpty(addr + off + i, &got);
+            for (got[0..k]) |table| {
+                if (n_tables >= tables.len) @panic("page table batch");
+                tables[n_tables] = table;
+                n_tables += 1;
+            }
         }
-        if (n != 0) cpu.shootdown(addr + off, chunk);
-        for (physes[0..n]) |phys| pmm.free(phys, 1);
-        i = 0;
-        while (i < chunk) : (i += pmm.page_size) space.reapCleared(addr + off + i);
+        // Parents are already not present. Remote cores drop cached walks
+        // before either the leaves or the tables are reused.
+        if (cleared) cpu.shootdown(addr + off, chunk);
+        if (free_frames) {
+            for (physes[0..n_frames]) |phys| pmm.free(phys, 1);
+        }
+        for (tables[0..n_tables]) |phys| pmm.free(phys, 1);
         off += chunk;
     }
+}
+
+fn releaseUserPages(space: *vmm.VMM, addr: usize, size: usize, sparse: bool) void {
+    dropRange(space, addr, size, sparse, true);
+}
+
+/// Unmap an eager user range (stack, ELF). Leaf frames stay allocated; the
+/// caller frees them after this returns, which is after the shootdown.
+pub fn unmapEager(space: *vmm.VMM, addr: usize, size: usize) void {
+    std.debug.assert(std.mem.isAligned(addr, pmm.page_size));
+    std.debug.assert(std.mem.isAligned(size, pmm.page_size));
+    dropRange(space, addr, size, false, false);
 }
 
 fn dropMap(space: *vmm.VMM, map: maplist.Map) void {

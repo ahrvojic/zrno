@@ -1,3 +1,4 @@
+const aspace = @import("aspace.zig");
 const cpu = @import("../sys/cpu.zig");
 const elf = @import("../sys/elf.zig");
 const file = @import("../fs/file.zig");
@@ -116,6 +117,6 @@ const VmmSpace = struct {
     }
 
     pub fn unmap(self: *VmmSpace, vaddr: usize, size: usize) void {
-        self.vmm.unmap(vaddr, size) catch @panic("unmap of mapped elf segment");
+        aspace.unmapEager(self.vmm, vaddr, size);
     }
 };

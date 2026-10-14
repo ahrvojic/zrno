@@ -57,6 +57,13 @@ const PageTableEntry = extern struct {
     pub fn setFlags(self: *PageTableEntry, flags: Flags) void {
         self.value = self.getAddress() | @as(u64, @bitCast(flags));
     }
+
+    /// One store. `setAddress(0)` keeps the old flags, so the entry is
+    /// briefly present at frame 0. Another core can walk that without the
+    /// kernel lock.
+    pub fn clear(self: *PageTableEntry) void {
+        self.value = 0;
+    }
 };
 
 const page_table_entries = pmm.page_size / @sizeOf(PageTableEntry);
@@ -125,43 +132,58 @@ const PageTable = extern struct {
 
     pub fn unmapPage(self: *PageTable, virt_addr: usize) !void {
         _ = try self.clearLeaf(virt_addr);
-        self.reapCleared(virt_addr);
+        var frames: [3]usize = undefined;
+        const n = self.detachEmpty(virt_addr, &frames);
+        // No remote shootdown. Kernel-half tables are not detached. The
+        // trampoline's lower-half tables are freed here. Shared user
+        // teardown shoots other cores down before it frees.
+        for (frames[0..n]) |phys| pmm.free(phys, 1);
     }
 
     /// Clear one present leaf and return its frame. Empty upper tables stay
-    /// until `reapCleared`, so a remote core can drop the translation first.
+    /// until `detachEmpty`, so a remote core can drop the translation first.
     pub fn clearLeaf(self: *PageTable, virt_addr: usize) !usize {
         const w = try self.walk(virt_addr, false, false);
         const entry = w.pte();
         if (!entry.getFlags().present) return error.NotMapped;
         const phys = entry.getAddress();
-        entry.setAddress(0);
-        entry.setFlags(.{});
+        entry.clear();
         flushTLB(virt_addr);
         return phys;
     }
 
-    /// Free page-table pages emptied by `clearLeaf`. A present leaf is left alone.
-    pub fn reapCleared(self: *PageTable, virt_addr: usize) void {
-        const w = self.walk(virt_addr, false, false) catch return;
-        if (w.pte().getFlags().present) return;
-        // Kernel L3/L2/L1 are shared with clones; never release them.
-        if (w.pml4_idx >= kernel_pml4_start) return;
+    /// Clear parent entries of empty user tables above a not-present leaf.
+    /// Frames are written to `out` and not freed. Shoot down `virt_addr`
+    /// before reusing them. A present leaf is left alone. Kernel tables are
+    /// shared with every address space and are never detached.
+    pub fn detachEmpty(self: *PageTable, virt_addr: usize, out: *[3]usize) usize {
+        const w = self.walk(virt_addr, false, false) catch return 0;
+        if (w.pte().getFlags().present) return 0;
+        if (w.pml4_idx >= kernel_pml4_start) return 0;
 
-        if (!w.pml1.isEmpty()) return;
-        pmm.free(w.pml2.entries[w.pml2_idx].getAddress(), 1);
-        w.pml2.entries[w.pml2_idx].setAddress(0);
-        w.pml2.entries[w.pml2_idx].setFlags(.{});
+        if (!w.pml1.isEmpty()) return 0;
+        var n: usize = 0;
+        out[n] = w.pml2.entries[w.pml2_idx].getAddress();
+        w.pml2.entries[w.pml2_idx].clear();
+        n += 1;
 
-        if (!w.pml2.isEmpty()) return;
-        pmm.free(w.pml3.entries[w.pml3_idx].getAddress(), 1);
-        w.pml3.entries[w.pml3_idx].setAddress(0);
-        w.pml3.entries[w.pml3_idx].setFlags(.{});
+        if (!w.pml2.isEmpty()) {
+            flushTLB(virt_addr);
+            return n;
+        }
+        out[n] = w.pml3.entries[w.pml3_idx].getAddress();
+        w.pml3.entries[w.pml3_idx].clear();
+        n += 1;
 
-        if (!w.pml3.isEmpty()) return;
-        pmm.free(self.entries[w.pml4_idx].getAddress(), 1);
-        self.entries[w.pml4_idx].setAddress(0);
-        self.entries[w.pml4_idx].setFlags(.{});
+        if (!w.pml3.isEmpty()) {
+            flushTLB(virt_addr);
+            return n;
+        }
+        out[n] = self.entries[w.pml4_idx].getAddress();
+        self.entries[w.pml4_idx].clear();
+        n += 1;
+        flushTLB(virt_addr);
+        return n;
     }
 
     fn expectMappedRange(self: *PageTable, virt_addr: usize, size: usize) !void {
@@ -320,17 +342,19 @@ pub const VMM = struct {
         self.pt.unmapRange(virt_addr, size);
     }
 
-    /// Clear one user leaf. The caller shoots down other cores, frees the
-    /// frame, then `reapCleared`.
+    /// Clear one present leaf and return its frame. One store, then `invlpg`
+    /// on this core. The caller shoots other cores down before reusing it.
     pub fn clearLeaf(self: *VMM, virt_addr: usize) !usize {
         self.expectInit();
         std.debug.assert(std.mem.isAligned(virt_addr, pmm.page_size));
         return self.pt.clearLeaf(virt_addr);
     }
 
-    pub fn reapCleared(self: *VMM, virt_addr: usize) void {
+    /// Clear parent entries of empty user tables. Frames are written to `out`
+    /// and not freed. Shoot down `virt_addr` before reusing them.
+    pub fn detachEmpty(self: *VMM, virt_addr: usize, out: *[3]usize) usize {
         self.expectInit();
-        self.pt.reapCleared(virt_addr);
+        return self.pt.detachEmpty(virt_addr, out);
     }
 
     pub fn mapMmio(self: *VMM, phys_addr: usize, size: usize) !void {

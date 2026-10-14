@@ -114,7 +114,7 @@ fn setupUserStack(
     errdefer pmm.free(stack_phys, state.stack_pages);
     // Page below `stack_base` is the slot guard; left unmapped.
     try space.map(stack_base, stack_phys, state.stack_size, user_stack_flags);
-    errdefer space.unmap(stack_base, state.stack_size) catch {};
+    errdefer aspace.unmapEager(space, stack_base, state.stack_size);
     const mem = virt.toHH([*]u8, stack_phys)[0..state.stack_size];
     const frame: ArgvFrame = switch (entry) {
         .argv => |argv| try setupUserArgv(mem, stack_base, argv),
