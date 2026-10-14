@@ -156,8 +156,14 @@ pub const Disk = struct {
         slot.holds -= 1;
     }
 
+    /// Publish `slot`. A refused write drops it so the next read reloads
+    /// the device block. The bytes stay for the caller's rollback.
     pub fn commit(self: *Disk, slot: *Slot) error{Io}!void {
-        try self.write_fn(self.dev, slot.block, slot.data);
+        self.write_fn(self.dev, slot.block, slot.data) catch |err| {
+            slot.live = false;
+            slot.dirty = false;
+            return err;
+        };
         slot.dirty = false;
     }
 
@@ -265,4 +271,29 @@ test "a full cache replaces the next slot, and a held slot stays" {
     disk.put(again);
     try std.testing.expect(cached(disk, 2));
     try std.testing.expect(!cached(disk, 3));
+}
+
+fn failWrite(_: *anyopaque, _: u32, _: []const u8) error{Io}!void {
+    return error.Io;
+}
+
+test "a failed commit drops the block so the next read reloads it" {
+    const a = std.testing.allocator;
+    const disk = try Disk.memory(a, 4);
+    defer disk.deinit();
+
+    const slot = try disk.get(0);
+    @memset(slot.data, 'a');
+    try disk.commit(slot);
+    disk.put(slot);
+
+    disk.write_fn = failWrite;
+    const again = try disk.get(0);
+    defer disk.put(again);
+    @memset(again.data, 'b');
+    try std.testing.expectError(error.Io, disk.commit(again));
+
+    const reloaded = try disk.get(0);
+    defer disk.put(reloaded);
+    try std.testing.expect(std.mem.allEqual(u8, reloaded.data, 'a'));
 }
