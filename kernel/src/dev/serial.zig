@@ -48,13 +48,18 @@ pub fn init() void {
     logger.info("COM1 0x{x} {d} 8N1", .{ com1_io, baud });
 }
 
-pub fn write(bytes: []const u8) void {
+/// Bytes accepted by the transmitter. A missing UART counts as a full
+/// write. A transmitter that stays busy returns the prefix already sent.
+pub fn write(bytes: []const u8) usize {
     if (!initialized) init();
-    if (!present) return;
+    if (!present) return bytes.len;
+    var n: usize = 0;
     for (bytes) |byte| {
-        if (!waitThre()) return;
+        if (!waitThre()) return n;
         port.outb(com1_io + data, byte);
+        n += 1;
     }
+    return n;
 }
 
 pub fn readByte() ?u8 {

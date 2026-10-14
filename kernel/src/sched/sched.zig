@@ -413,8 +413,12 @@ fn wakeSleepers() void {
 // instruction boundary, so the interrupt is taken after `hlt`. The `int`
 // returns here only when this thread is still current; otherwise `iret`
 // resumes at `cli` or at the instruction after the `int`.
+// iret lands at RSP ≡ 8. One `sub` before the loop makes the calls and
+// a timer frame taken at `hlt` see RSP ≡ 0. The initial `ctx.rsp` stays
+// the C-function alignment other kernel threads use.
 fn idleThread() callconv(.naked) noreturn {
     asm volatile (
+        \\sub $8, %%rsp
         \\1:
         \\call lockRelease
         \\sti

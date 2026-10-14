@@ -92,7 +92,7 @@ fn udiv(n: u128, d: u128) u128 {
 }
 
 fn probeStack() callconv(.naked) void {
-    // %rax is the probe length. Touch each page, then restore %rsp.
+    // %rax is the probe length. Touch the page just reserved, then restore %rsp.
     asm volatile (
         \\        push   %%rcx
         \\        mov    %%rax, %%rcx
@@ -100,13 +100,13 @@ fn probeStack() callconv(.naked) void {
         \\        jb     2f
         \\ 1:
         \\        sub    $0x1000,%%rsp
-        \\        orl    $0,16(%%rsp)
+        \\        orl    $0,(%%rsp)
         \\        sub    $0x1000,%%rcx
         \\        cmp    $0x1000,%%rcx
         \\        ja     1b
         \\ 2:
         \\        sub    %%rcx, %%rsp
-        \\        orl    $0,16(%%rsp)
+        \\        orl    $0,(%%rsp)
         \\        add    %%rax,%%rsp
         \\        pop    %%rcx
         \\        ret

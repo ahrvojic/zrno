@@ -21,7 +21,7 @@ pub fn panicImpl(message: []const u8, first_trace_addr: ?usize) noreturn {
     debug.print(writer.buffered());
     writer = .fixed(&buf);
     debug.printTo(&writer, "KERNEL PANIC: {s}\n", .{message});
-    tty.writeBytes(writer.buffered());
+    _ = tty.writeBytes(writer.buffered());
 
     dumpErrorReturnTrace();
     dumpStackTrace(first_trace_addr);
@@ -115,5 +115,5 @@ fn printTraceLine(comptime fmt: []const u8, args: anytype) void {
     var tty_buf: [192]u8 = undefined;
     var tty_writer: std.Io.Writer = .fixed(&tty_buf);
     debug.printTo(&tty_writer, fmt ++ "\n", args);
-    tty.writeBytes(tty_writer.buffered());
+    _ = tty.writeBytes(tty_writer.buffered());
 }

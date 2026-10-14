@@ -19,6 +19,9 @@ const reg_config: u32 = 0x10;
 const reg_counter: u32 = 0xf0;
 
 const tick_spins: u32 = 1_000_000;
+// A 64-bit read retries while the high half changes. Past this, the
+// counter is treated as absent so calibration can use another source.
+const counter_tries: u32 = 4;
 // General Capabilities: period in femtoseconds, max 100 ns (spec).
 const fs_per_s: u64 = 1_000_000_000_000_000;
 const max_period_fs: u32 = 100_000_000;
@@ -66,15 +69,10 @@ pub fn init() void {
     write32(reg_config, stores[1]);
     write32(reg_config, stores[2]);
 
-    const a = readCounter();
+    const a = readCounter() orelse return absent("HPET counter read failed");
     pauseLoop(tick_spins);
-    const b = readCounter();
-    if (b == a) {
-        logger.warn("HPET counter is not ticking", .{});
-        write32(reg_config, read32(reg_config) & ~cfg_enable);
-        mmio_base = 0;
-        return;
-    }
+    const b = readCounter() orelse return absent("HPET counter read failed");
+    if (b == a) return absent("HPET counter is not ticking");
 
     freq_hz_value = freq;
     logger.info("{d} Hz period={d} fs 64bit={} addr=0x{x}", .{
@@ -95,7 +93,7 @@ pub fn freqHz() u64 {
     return freq_hz_value;
 }
 
-pub fn read() u64 {
+pub fn read() ?u64 {
     expectPresent();
     return readCounter();
 }
@@ -106,14 +104,21 @@ pub fn delta(now: u64, then: u64) u64 {
     return (now -% then) & 0xffff_ffff;
 }
 
-fn readCounter() u64 {
+fn readCounter() ?u64 {
     if (!counter_64) return read32(reg_counter);
-    while (true) {
+    for (0..counter_tries) |_| {
         const hi1 = read32(reg_counter + 4);
         const lo = read32(reg_counter);
         const hi2 = read32(reg_counter + 4);
         if (hi1 == hi2) return (@as(u64, hi1) << 32) | lo;
     }
+    return null;
+}
+
+fn absent(msg: []const u8) void {
+    logger.warn("{s}", .{msg});
+    if (mmio_base != 0) write32(reg_config, read32(reg_config) & ~cfg_enable);
+    mmio_base = 0;
 }
 
 fn read32(offset: u32) u32 {

@@ -306,8 +306,7 @@ fn sys_write(ctx: *cpu.Context) u64 {
 
 const TtySink = struct {
     fn write(_: @This(), buf: []const u8) error{Broken}!usize {
-        tty.writeBytes(buf);
-        return buf.len;
+        return tty.writeBytes(buf);
     }
 };
 
@@ -328,6 +327,8 @@ fn writeUser(addr: usize, len: usize, sink: anytype) u64 {
                 if (done + off == 0) return errval(EPIPE);
                 return done + off;
             };
+            // A stuck transmitter returns 0. Retrying that slice would spin.
+            if (w == 0) return done + off;
             off += w;
         }
         done += n;

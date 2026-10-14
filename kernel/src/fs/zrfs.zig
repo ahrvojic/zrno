@@ -177,12 +177,6 @@ pub fn link(disk: *blk.Disk, parent: u32, name: []const u8, ino: u32, kind: Kind
     try writeRec(disk, parent, i, ino, kind, name);
 }
 
-pub fn unlinkName(disk: *blk.Disk, dir: u32, name: []const u8) error{ Io, OutOfMemory, TooBig, NoEnt }!void {
-    const hit = try findName(disk, dir, name) orelse return error.NoEnt;
-    var rec: [rec_size]u8 = @splat(0);
-    _ = try write(disk, dir, hit.index * rec_size, &rec);
-}
-
 /// Free the inode and every block it points at.
 pub fn destroy(disk: *blk.Disk, ino: u32) IoMem!void {
     if (ino <= bitmap_block) return error.Io;

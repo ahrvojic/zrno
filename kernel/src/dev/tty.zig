@@ -9,11 +9,14 @@ var cursor_on: bool = false;
 var input: tty_input.Input = .{};
 var serial_saw_cr = false;
 
-pub fn writeBytes(string: []const u8) void {
+pub fn writeBytes(string: []const u8) usize {
+    var n: usize = 0;
     for (string) |ch| {
-        putSerial(ch);
+        if (!putSerial(ch)) break;
         putVideo(ch);
+        n += 1;
     }
+    return n;
 }
 
 /// Block until a cooked line is queued, then copy up to the first newline.
@@ -37,10 +40,10 @@ pub fn consume(n: usize) void {
 pub fn enqueue(ch: u8) void {
     if (ch == 0x03) {
         input.discardLine();
-        if (sched.stopForeground()) writeBytes("^C\n");
+        if (sched.stopForeground()) _ = writeBytes("^C\n");
         return;
     }
-    if (input.feed(ch)) |e| writeBytes(&.{e});
+    if (input.feed(ch)) |e| _ = writeBytes(&.{e});
     if (ch == '\n' and !input.empty()) sched.wakeup(&input.in.buf);
 }
 
@@ -66,12 +69,14 @@ fn mapSerialByte(b: u8) ?u8 {
     };
 }
 
-fn putSerial(ch: u8) void {
-    switch (ch) {
-        '\n' => serial.write("\r\n"),
-        '\x08' => serial.write("\x08 \x08"),
-        else => serial.write(&.{ch}),
-    }
+fn putSerial(ch: u8) bool {
+    var one: [1]u8 = .{ch};
+    const seq: []const u8 = switch (ch) {
+        '\n' => "\r\n",
+        '\x08' => "\x08 \x08",
+        else => &one,
+    };
+    return serial.write(seq) == seq.len;
 }
 
 fn hideCursor() void {
