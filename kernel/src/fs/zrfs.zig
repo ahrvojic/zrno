@@ -17,6 +17,8 @@
 //!
 //! A directory's bytes are 128-byte records: inode, kind, name length, and
 //! 100 name bytes. Inode 0 is a free slot. Records do not cross a block.
+//! A rewrite commits each block once: the live records in that block and
+//! the zeroed tail share that commit.
 
 const std = @import("std");
 
@@ -111,23 +113,49 @@ pub fn create(disk: *blk.Disk, parent: u32, name: []const u8, kind: Kind) Error!
     return ino;
 }
 
-/// Write one directory record at `index`. Callers pack live records from zero.
-pub fn putEntry(disk: *blk.Disk, dir: u32, index: usize, ino: u32, kind: Kind, name: []const u8) Error!void {
-    try checkName(name);
-    try writeRec(disk, dir, index, ino, kind, name);
-}
+/// Rebuild `dir`. `add` each live record, then `finish`. The old tail is
+/// zeroed in the same block write as the records that replace it.
+pub const DirWriter = struct {
+    disk: *blk.Disk,
+    dir: u32,
+    old: usize,
+    block: [blk.block_size]u8,
+    filled: usize,
+    off: usize,
 
-/// Zero records from `from` through the last one. Inode 0 is already empty.
-pub fn clearTail(disk: *blk.Disk, dir: u32, from: usize) Error!void {
-    var i = from;
-    while (true) : (i += 1) {
-        var ignore: [name_cap]u8 = undefined;
-        const ent = try readEntry(disk, dir, i, &ignore) orelse return;
-        if (ent.ino == 0) continue;
-        var rec: [rec_size]u8 = @splat(0);
-        _ = try write(disk, dir, i * rec_size, &rec);
+    pub fn init(self: *DirWriter, disk: *blk.Disk, dir: u32) Error!void {
+        self.* = .{
+            .disk = disk,
+            .dir = dir,
+            .old = try byteSize(disk, dir),
+            .block = @splat(0),
+            .filled = 0,
+            .off = 0,
+        };
     }
-}
+
+    pub fn add(self: *DirWriter, ino: u32, kind: Kind, name: []const u8) Error!void {
+        try checkName(name);
+        if (self.off + self.filled + rec_size > max_bytes) return error.TooBig;
+        if (self.filled == blk.block_size) try self.flush(self.off + blk.block_size);
+        encodeRec(self.block[self.filled..][0..rec_size], ino, kind, name);
+        self.filled += rec_size;
+    }
+
+    /// One `write` per block still covering the previous directory.
+    pub fn finish(self: *DirWriter) Error!void {
+        const end = @max(self.off + self.filled, self.old);
+        while (self.off < end) try self.flush(end);
+    }
+
+    fn flush(self: *DirWriter, end: usize) Error!void {
+        const room = @min(blk.block_size, end - self.off);
+        _ = try write(self.disk, self.dir, self.off, self.block[0..room]);
+        @memset(&self.block, 0);
+        self.filled = 0;
+        self.off += blk.block_size;
+    }
+};
 
 pub fn lookup(disk: *blk.Disk, dir: u32, name: []const u8) IoMem!?u32 {
     const hit = try findName(disk, dir, name) orelse return null;
@@ -293,12 +321,17 @@ fn findName(disk: *blk.Disk, dir: u32, name: []const u8) IoMem!?Hit {
     }
 }
 
+fn encodeRec(dest: []u8, ino: u32, kind: Kind, name: []const u8) void {
+    @memset(dest[0..rec_size], 0);
+    writeU32(dest, 0, ino);
+    writeU32(dest, 4, @backingInt(kind));
+    writeU32(dest, 8, @intCast(name.len));
+    @memcpy(dest[12..][0..name.len], name);
+}
+
 fn writeRec(disk: *blk.Disk, dir: u32, index: usize, ino: u32, kind: Kind, name: []const u8) Error!void {
     var rec: [rec_size]u8 = @splat(0);
-    writeU32(&rec, 0, ino);
-    writeU32(&rec, 4, @backingInt(kind));
-    writeU32(&rec, 8, @intCast(name.len));
-    @memcpy(rec[12..][0..name.len], name);
+    encodeRec(&rec, ino, kind, name);
     _ = try write(disk, dir, index * rec_size, &rec);
 }
 
@@ -433,6 +466,118 @@ fn bitSet(buf: []const u8, i: u32) bool {
 fn setBit(buf: []u8, i: u32, on: bool) void {
     const mask: u8 = @as(u8, 1) << @intCast(i % 8);
     if (on) buf[i / 8] |= mask else buf[i / 8] &= ~mask;
+}
+
+const WriteCount = struct {
+    dev: *anyopaque,
+    read_fn: blk.ReadFn,
+    write_fn: blk.WriteFn,
+    writes: usize = 0,
+
+    fn readHook(ptr: *anyopaque, block: u32, dest: []u8) error{Io}!void {
+        const self: *WriteCount = @ptrCast(@alignCast(ptr));
+        return self.read_fn(self.dev, block, dest);
+    }
+
+    fn writeHook(ptr: *anyopaque, block: u32, src: []const u8) error{Io}!void {
+        const self: *WriteCount = @ptrCast(@alignCast(ptr));
+        self.writes += 1;
+        return self.write_fn(self.dev, block, src);
+    }
+
+    fn install(self: *WriteCount, disk: *blk.Disk) void {
+        self.* = .{
+            .dev = disk.dev,
+            .read_fn = disk.read_fn,
+            .write_fn = disk.write_fn,
+        };
+        disk.dev = self;
+        disk.read_fn = readHook;
+        disk.write_fn = writeHook;
+    }
+
+    fn restore(self: *WriteCount, disk: *blk.Disk) void {
+        disk.dev = self.dev;
+        disk.read_fn = self.read_fn;
+        disk.write_fn = self.write_fn;
+    }
+};
+
+test "a directory rewrite commits a block's records and zero tail together" {
+    const a = std.testing.allocator;
+    const disk = try blk.Disk.memory(a, 32);
+    defer disk.deinit();
+    try format(disk);
+
+    const dir = try create(disk, root_ino, "d", .dir);
+    const file_a = try create(disk, dir, "a", .file);
+    const file_b = try create(disk, dir, "b", .file);
+    try std.testing.expectEqual(file_a, (try lookup(disk, dir, "a")).?);
+
+    var counted: WriteCount = undefined;
+    counted.install(disk);
+    defer counted.restore(disk);
+
+    var writer: DirWriter = undefined;
+    try writer.init(disk, dir);
+    try writer.add(file_b, .file, "b");
+    try writer.finish();
+    try std.testing.expectEqual(1, counted.writes);
+
+    var name: [name_cap]u8 = undefined;
+    const first = (try readEntry(disk, dir, 0, &name)).?;
+    try std.testing.expectEqual(file_b, first.ino);
+    try std.testing.expectEqualStrings("b", name[0..first.name_len]);
+    const hole = (try readEntry(disk, dir, 1, &name)).?;
+    try std.testing.expectEqual(@as(u32, 0), hole.ino);
+    try std.testing.expect(try readEntry(disk, dir, 2, &name) == null);
+    try std.testing.expect(try lookup(disk, dir, "a") == null);
+    try std.testing.expectEqual(file_b, (try lookup(disk, dir, "b")).?);
+    try std.testing.expectEqual(@as(usize, rec_size * 2), try byteSize(disk, dir));
+
+    counted.writes = 0;
+    try writer.init(disk, dir);
+    try writer.finish();
+    try std.testing.expectEqual(1, counted.writes);
+    const cleared = (try readEntry(disk, dir, 0, &name)).?;
+    try std.testing.expectEqual(@as(u32, 0), cleared.ino);
+    try std.testing.expect(try lookup(disk, dir, "b") == null);
+}
+
+test "a two-block directory rewrite clears the tail block" {
+    const a = std.testing.allocator;
+    const disk = try blk.Disk.memory(a, 64);
+    defer disk.deinit();
+    try format(disk);
+
+    const dir = try create(disk, root_ino, "d", .dir);
+    const count = blk.block_size / rec_size + 1;
+    var last: u32 = 0;
+    var name_buf: [8]u8 = undefined;
+    for (0..count) |i| {
+        const name = std.fmt.bufPrint(&name_buf, "f{d}", .{i}) catch unreachable;
+        last = try create(disk, dir, name, .file);
+    }
+
+    var counted: WriteCount = undefined;
+    counted.install(disk);
+    defer counted.restore(disk);
+
+    var writer: DirWriter = undefined;
+    try writer.init(disk, dir);
+    try writer.add(last, .file, "kept");
+    try writer.finish();
+    try std.testing.expectEqual(2, counted.writes);
+
+    var name: [name_cap]u8 = undefined;
+    const kept = (try readEntry(disk, dir, 0, &name)).?;
+    try std.testing.expectEqual(last, kept.ino);
+    try std.testing.expectEqualStrings("kept", name[0..kept.name_len]);
+    var i: usize = 1;
+    while (try readEntry(disk, dir, i, &name)) |ent| : (i += 1) {
+        try std.testing.expectEqual(@as(u32, 0), ent.ino);
+    }
+    try std.testing.expect(i > blk.block_size / rec_size);
 }
 
 test "a directory written to the disk reads back from a copy of the blocks" {

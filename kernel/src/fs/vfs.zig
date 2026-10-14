@@ -611,17 +611,28 @@ fn checkpoint(self: *Tree) Error!void {
 }
 
 fn writeDir(dir: *Node) Error!void {
+    if (dir.disk == null) return;
+    // The block buffer stays in `storeDir`, which returns before the
+    // recursive call.
+    try storeDir(dir);
+    var c = dir.child;
+    while (c) |n| {
+        if (n.isDir()) try writeDir(n);
+        c = n.next;
+    }
+}
+
+fn storeDir(dir: *Node) Error!void {
     const disk = dir.disk orelse return;
-    var i: usize = 0;
+    var writer: zrfs.DirWriter = undefined;
+    try writer.init(disk, dir.ino);
     var c = dir.child;
     while (c) |n| {
         const kind: zrfs.Kind = if (n.isDir()) .dir else .file;
-        try zrfs.putEntry(disk, dir.ino, i, n.ino, kind, n.name());
-        if (n.isDir()) try writeDir(n);
-        i += 1;
+        try writer.add(n.ino, kind, n.name());
         c = n.next;
     }
-    try zrfs.clearTail(disk, dir.ino, i);
+    try writer.finish();
 }
 
 /// `free_inodes` releases the blocks. A reread keeps them: the snapshot
