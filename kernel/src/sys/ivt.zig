@@ -232,10 +232,13 @@ export fn interruptStub() callconv(.naked) void {
 // FMASK holds IF off so this is not re-entered. An NMI in that window uses
 // `ist_nmi`. GS is already the kernel CPU; entry does not `swapgs`.
 
-// Same `cpu.Context` layout as `interruptStub` (vector/error slots unused),
-// then SYSRET when the iret frame is a clean 64-bit user context.
-// Non-canonical RIP/RSP (Intel #GP in kernel) and kernel/non-user CS/SS
-// fall back to IRETQ. Kill here so IRETQ never sees a non-canonical RSP.
+// Same `cpu.Context` layout as `interruptStub` (vector/error slots unused).
+// SYSRET only if popped RCX is still the frame RIP and popped R11 is still
+// the frame RFLAGS. This stub pushed both from those registers. A frame
+// `schedule` copied in has the thread's real RCX and R11; SYSRET would
+// replace them, so that path IRETs. Non-canonical RIP/RSP (Intel #GP in
+// kernel) and kernel/non-user CS/SS also IRET. Kill here so IRETQ never
+// sees a non-canonical RSP.
 export fn syscallDispatch(ctx: *cpu.Context) callconv(.c) void {
     // User mode does not hold the lock. FMASK already cleared IF.
     lock.acquire();
@@ -328,6 +331,10 @@ pub export fn syscallEntry() callconv(.naked) void {
         \\jne 1f
         \\testq %[tf_rf], 16(%%rsp)
         \\jnz 1f
+        \\cmpq (%%rsp), %%rcx // this stub's frame: RCX was RIP, R11 was RFLAGS
+        \\jne 1f
+        \\cmpq 16(%%rsp), %%r11
+        \\jne 1f
         \\movq (%%rsp), %%rcx
         \\sarq $47, %%rcx
         \\jnz 1f
