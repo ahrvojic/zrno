@@ -333,18 +333,13 @@ pub const CPU = struct {
             return error.BspNotInMadt;
         };
 
-        var disabled: usize = 0;
-        for (madt.lapics()) |lapic| {
-            if (!lapic.enabled()) disabled += 1;
-        }
-
         self.programLintNmis(entry.processor_id);
 
         self.lapic_initialized = true;
         if (self.x2apic) {
-            logger.info("lapic x2apic id={d} cpu={d} disabled={d}", .{ id, entry.processor_id, disabled });
+            logger.info("lapic x2apic id={d} cpu={d}", .{ id, entry.processor_id });
         } else {
-            logger.info("lapic 0x{x} id={d} cpu={d} disabled={d}", .{ madt.lapicAddress(), id, entry.processor_id, disabled });
+            logger.info("lapic 0x{x} id={d} cpu={d}", .{ madt.lapicAddress(), id, entry.processor_id });
         }
     }
 

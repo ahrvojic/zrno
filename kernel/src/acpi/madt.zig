@@ -65,8 +65,8 @@ const pcat_compat_flag: u32 = 1 << 0;
 // Local APIC / x2APIC flags bit 0: processor is enabled and usable.
 const lapic_enabled_flag: u32 = 1 << 0;
 
-// Processor table cap: large enough that MADT parse survives a
-// typical desktop/VM, small enough to stay a static array.
+// Enabled processors, one slot per APIC id. A static array, not one
+// slot per raw MADT record.
 pub const max_lapics = 64;
 // Each CPU has two LINT pins that can be NMI sources.
 pub const max_lapic_nmis = max_lapics * 2;
@@ -79,6 +79,8 @@ pub const Lapic = struct {
     apic_id: u32,
     flags: u32,
     x2apic: bool,
+    // Type 0 and type 9 both listed this id. One slot, either mode.
+    both_modes: bool = false,
 
     pub fn enabled(self: Lapic) bool {
         return self.flags & lapic_enabled_flag != 0;
@@ -136,11 +138,15 @@ pub fn applicationIds(bsp_id: u32, x2apic: bool, out: []u32) usize {
     return collectApplicationIds(lapics(), bsp_id, x2apic, out);
 }
 
+fn listedForMode(entry: Lapic, x2apic: bool) bool {
+    return entry.both_modes or entry.x2apic == x2apic;
+}
+
 fn collectApplicationIds(entries: []const Lapic, bsp_id: u32, x2apic: bool, out: []u32) usize {
     var n: usize = 0;
     for (entries) |entry| {
         if (!entry.enabled()) continue;
-        if (entry.x2apic != x2apic) continue;
+        if (!listedForMode(entry, x2apic)) continue;
         if (entry.apic_id == bsp_id) continue;
         var seen = false;
         for (out[0..n]) |id| {
@@ -159,7 +165,7 @@ fn findEnabled(entries: []const Lapic, apic_id: u32, x2apic: bool) ?Lapic {
     for (entries) |entry| {
         if (!entry.enabled()) continue;
         if (entry.apic_id != apic_id) continue;
-        if (entry.x2apic == x2apic) return entry;
+        if (listedForMode(entry, x2apic)) return entry;
         fallback = fallback orelse entry;
     }
     return fallback;
@@ -179,6 +185,7 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
 
     var offset: usize = 0;
     var have_lapic_override = false;
+    var disabled_cpus: usize = 0;
 
     while (madt_entries.len - offset >= header_size) {
         const header_end = offset + header_size;
@@ -193,13 +200,15 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
             0 => {
                 if (data.len < @sizeOf(Type0Lapic)) return error.InvalidMadt;
                 const raw = std.mem.bytesToValue(Type0Lapic, data[0..@sizeOf(Type0Lapic)]);
-                try lapics_value.append(.{
+                logger.info("cpu {d} apic_id={d} flags=0x{x}", .{ raw.processor_id, raw.apic_id, raw.flags });
+                const cpu_entry: Lapic = .{
                     .processor_id = raw.processor_id,
                     .apic_id = raw.apic_id,
                     .flags = raw.flags,
                     .x2apic = false,
-                });
-                logger.info("cpu {d} apic_id={d} flags=0x{x}", .{ raw.processor_id, raw.apic_id, raw.flags });
+                };
+                if (!cpu_entry.enabled()) disabled_cpus += 1;
+                try storeLapic(&lapics_value, cpu_entry);
             },
             1 => {
                 if (data.len < @sizeOf(IOApic)) return error.InvalidMadt;
@@ -233,13 +242,15 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
             9 => {
                 if (data.len < @sizeOf(Type9X2Apic)) return error.InvalidMadt;
                 const raw = std.mem.bytesToValue(Type9X2Apic, data[0..@sizeOf(Type9X2Apic)]);
-                try lapics_value.append(.{
+                logger.info("cpu {d} apic_id={d} flags=0x{x} x2apic", .{ raw.uid, raw.apic_id, raw.flags });
+                const cpu_entry: Lapic = .{
                     .processor_id = raw.uid,
                     .apic_id = raw.apic_id,
                     .flags = raw.flags,
                     .x2apic = true,
-                });
-                logger.info("cpu {d} apic_id={d} flags=0x{x} x2apic", .{ raw.uid, raw.apic_id, raw.flags });
+                };
+                if (!cpu_entry.enabled()) disabled_cpus += 1;
+                try storeLapic(&lapics_value, cpu_entry);
             },
             else => {
                 logger.warn("unknown MADT type {d} len={d}", .{ entry.id, entry.length });
@@ -249,13 +260,28 @@ pub fn init(sdt: *align(1) const acpi.SDT) !void {
         offset += @max(entry.length, header_size);
     }
 
-    logger.info("lapic=0x{x} pcat={} cpus={d} ioapics={d}", .{
+    logger.info("lapic=0x{x} pcat={} cpus={d} disabled={d} ioapics={d}", .{
         lapic_address_value,
         pcat_compat_value,
         lapics_value.len,
+        disabled_cpus,
         io_apics_value.len,
     });
     initialized = true;
+}
+
+// Disabled records and a second record for an id already stored take
+// no slot. The other processor type sets `both_modes` instead of a
+// second entry, so 64 CPUs listed both ways still fit. The first
+// enabled record keeps `processor_id`.
+fn storeLapic(list: *BoundedArray(Lapic, max_lapics), entry: Lapic) !void {
+    if (!entry.enabled()) return;
+    for (list.slice()) |*have| {
+        if (have.apic_id != entry.apic_id) continue;
+        if (have.x2apic != entry.x2apic) have.both_modes = true;
+        return;
+    }
+    try list.append(entry);
 }
 
 fn expectInit() void {
@@ -280,6 +306,52 @@ test "collectApplicationIds skips bsp, disabled, other mode, and duplicate ids" 
     try std.testing.expectEqual(2, n);
     try std.testing.expectEqual(@as(u32, 3), out[0]);
     try std.testing.expectEqual(@as(u32, 4), out[1]);
+}
+
+test "storeLapic skips disabled and duplicate ids" {
+    var list: BoundedArray(Lapic, max_lapics) = .{};
+    const on: u32 = 1;
+    try storeLapic(&list, .{ .processor_id = 1, .apic_id = 1, .flags = 0, .x2apic = false });
+    try storeLapic(&list, .{ .processor_id = 2, .apic_id = 2, .flags = on, .x2apic = false });
+    try storeLapic(&list, .{ .processor_id = 9, .apic_id = 2, .flags = on, .x2apic = false });
+    try storeLapic(&list, .{ .processor_id = 3, .apic_id = 2, .flags = on, .x2apic = true });
+    try storeLapic(&list, .{ .processor_id = 4, .apic_id = 4, .flags = on, .x2apic = true });
+
+    try std.testing.expectEqual(2, list.len);
+    try std.testing.expectEqual(@as(u32, 2), list.constSlice()[0].processor_id);
+    try std.testing.expect(list.constSlice()[0].both_modes);
+    try std.testing.expect(!list.constSlice()[1].both_modes);
+
+    var out: [4]u32 = undefined;
+    const as_xapic = collectApplicationIds(list.constSlice(), 0, false, &out);
+    try std.testing.expectEqual(1, as_xapic);
+    try std.testing.expectEqual(@as(u32, 2), out[0]);
+    const as_x2 = collectApplicationIds(list.constSlice(), 0, true, &out);
+    try std.testing.expectEqual(2, as_x2);
+    try std.testing.expectEqual(@as(u32, 2), out[0]);
+    try std.testing.expectEqual(@as(u32, 4), out[1]);
+
+    const both = findEnabled(list.constSlice(), 2, true).?;
+    try std.testing.expectEqual(@as(u32, 2), both.processor_id);
+    try std.testing.expect(findEnabled(list.constSlice(), 4, false).?.x2apic);
+}
+
+test "storeLapic fits one slot per cpu when both types are listed" {
+    var list: BoundedArray(Lapic, max_lapics) = .{};
+    for (0..max_lapics) |i| {
+        const id: u32 = @intCast(i);
+        try storeLapic(&list, .{ .processor_id = id, .apic_id = id, .flags = 1, .x2apic = false });
+        try storeLapic(&list, .{ .processor_id = id, .apic_id = id, .flags = 1, .x2apic = true });
+        try storeLapic(&list, .{ .processor_id = id, .apic_id = id, .flags = 0, .x2apic = false });
+    }
+    try std.testing.expectEqual(max_lapics, list.len);
+    try std.testing.expect(list.constSlice()[0].both_modes);
+    try std.testing.expectError(error.Overflow, storeLapic(&list, .{
+        .processor_id = 99,
+        .apic_id = 1000,
+        .flags = 1,
+        .x2apic = false,
+    }));
 }
 
 test "findEnabled skips disabled and prefers matching mode" {
