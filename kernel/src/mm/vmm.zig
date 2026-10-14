@@ -382,13 +382,29 @@ pub const VMM = struct {
         }
     }
 
-    fn userPagePhys(self: *VMM, virt_addr: usize, write: bool) error{Fault}!usize {
+    fn userLeaf(self: *VMM, virt_addr: usize) ?*PageTableEntry {
         const base = std.mem.alignBackward(usize, virt_addr, pmm.page_size);
-        const entry = self.pt.virtToPTE(base, false, false) catch return error.Fault;
+        return self.pt.virtToPTE(base, false, false) catch null;
+    }
+
+    fn leafUsable(entry: *const PageTableEntry, write: bool) bool {
         const flags = entry.getFlags();
-        if (!flags.present or !flags.user) return error.Fault;
-        if (write and !flags.writable) return error.Fault;
+        if (!flags.present or !flags.user) return false;
+        if (write and !flags.writable) return false;
+        return true;
+    }
+
+    fn userPagePhys(self: *VMM, virt_addr: usize, write: bool) error{Fault}!usize {
+        const entry = self.userLeaf(virt_addr) orelse return error.Fault;
+        if (!leafUsable(entry, write)) return error.Fault;
         return entry.getAddress();
+    }
+
+    /// True when a user copy can use `virt_addr` without filling a hole.
+    pub fn userAccessible(self: *VMM, virt_addr: usize, write: bool) bool {
+        self.expectInit();
+        const entry = self.userLeaf(virt_addr) orelse return false;
+        return leafUsable(entry, write);
     }
 
     pub fn switchTo(self: *VMM) void {

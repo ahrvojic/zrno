@@ -898,12 +898,17 @@ test "copyTries covers an unaligned span plus the final copy" {
     try std.testing.expectEqual(1, copyTries(page, 0));
 }
 
-/// Fill the first anonymous hole in the range and stop. Later holes wait
-/// for the next fault, so a bad page does not allocate its neighbors.
+/// Fill the first anonymous hole in the range and stop. A page the copy
+/// can already use is not a hole: an unaligned span often faults on the
+/// next page. A page that cannot be filled stops the walk, so its
+/// neighbors stay unallocated.
 fn fillFirst(addr: usize, len: usize, write: bool) bool {
+    const space = userSpace();
     var off: usize = 0;
     while (off < len) {
-        if (sched.fillUserPage(addr + off, write)) return true;
+        if (!space.userAccessible(addr + off, write)) {
+            return sched.fillUserPage(addr + off, write);
+        }
         const page_off = (addr + off) & (pmm.page_size - 1);
         const step = pmm.page_size - page_off;
         if (step > len - off) return false;
