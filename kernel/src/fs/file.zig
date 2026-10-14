@@ -28,16 +28,30 @@ pub const File = struct {
         pipe_write: *pipe.Pipe,
     };
 
-    pub fn create(kind: Kind) error{OutOfMemory}!*File {
-        const f = try heap.kernel_heap.allocator().create(File);
-        f.* = .{ .refs = 1, .kind = kind };
-        switch (f.kind) {
+    /// Unbound object. `bind` installs a kind, or `destroy` frees it.
+    /// Nothing is retained yet, so `destroy` does not release a node.
+    pub fn alloc() error{OutOfMemory}!*File {
+        return heap.kernel_heap.allocator().create(File);
+    }
+
+    pub fn bind(self: *File, kind: Kind) void {
+        self.* = .{ .refs = 1, .kind = kind };
+        switch (self.kind) {
             .pipe_read => |p| p.readers += 1,
             .pipe_write => |p| p.writers += 1,
             .file => |open| open.node.retain(),
             .dir => |open| open.node.retain(),
             .tty => {},
         }
+    }
+
+    pub fn destroy(self: *File) void {
+        heap.kernel_heap.allocator().destroy(self);
+    }
+
+    pub fn create(kind: Kind) error{OutOfMemory}!*File {
+        const f = try alloc();
+        f.bind(kind);
         return f;
     }
 

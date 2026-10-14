@@ -415,14 +415,20 @@ fn sys_open(ctx: *cpu.Context) u64 {
     const want_keep = flags & open_keep != 0;
     if (want_keep and !want_write) return errval(EINVAL);
     const mode: vfs.Mode = if (!want_write) .read else if (want_keep) .keep else .write;
-    // Reserve the slot before create or truncate. EMFILE must leave the file alone.
+    // The slot and the File exist before create or truncate. EMFILE and
+    // ENOMEM must leave the file alone.
     const fd = firstFreeFd(0) orelse return errval(EMFILE);
-    const opened = vfs.openPathFrom(cpu.currentProcess().cwd, path, mode, want_create) catch |err| return fsErr(err);
+    const reserved = file.File.alloc() catch return errval(ENOMEM);
+    const opened = vfs.openPathFrom(cpu.currentProcess().cwd, path, mode, want_create) catch |err| {
+        reserved.destroy();
+        return fsErr(err);
+    };
     const kind: file.File.Kind = if (opened.node.isDir())
         .{ .dir = .{ .node = opened.node, .pos = 0 } }
     else
         .{ .file = .{ .node = opened.node, .pos = 0, .can_write = opened.can_write } };
-    cpu.currentProcess().fds[fd] = file.File.create(kind) catch return errval(ENOMEM);
+    reserved.bind(kind);
+    cpu.currentProcess().fds[fd] = reserved;
     return fd;
 }
 

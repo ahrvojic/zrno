@@ -438,8 +438,9 @@ pub const Tree = struct {
     }
 
     /// Moves a heap node. The same path is a no-op. An existing file, or an
-    /// empty directory of the same kind, is replaced. A directory cannot be
-    /// moved under itself. Directory records change at `sync`.
+    /// empty directory of the same kind, is replaced unless something else
+    /// still holds that directory. A directory cannot be moved under itself.
+    /// Directory records change at `sync`.
     pub fn renamePath(self: *Tree, old_path: []const u8, new_path: []const u8) Error!void {
         const start = self.root orelse return error.NoEnt;
         return self.renamePathFrom(start, old_path, new_path);
@@ -462,6 +463,7 @@ pub const Tree = struct {
             if (dest.isDir()) {
                 if (dest.child != null) return error.NotEmpty;
                 if (!dest.isWritableDir()) return error.ReadOnly;
+                if (dest.refs != 1) return error.Invalid;
             } else if (!dest.isWritableFile()) return error.ReadOnly;
             detach(to.parent, dest);
             dest.release();
@@ -970,6 +972,11 @@ test "rename moves a heap node and replaces a file or empty directory" {
     try t.mkdirPath("/tmp/empty");
     try std.testing.expectError(error.IsDir, t.renamePath("/tmp/c", "/tmp/empty"));
     try std.testing.expectError(error.NotDir, t.renamePath("/tmp/dir", "/tmp/c"));
+    const pinned = try t.walk("/tmp/empty");
+    pinned.retain();
+    try std.testing.expectError(error.Invalid, t.renamePath("/tmp/dir", "/tmp/empty"));
+    try std.testing.expect(try t.walk("/tmp/empty") == pinned);
+    pinned.release();
     try t.renamePath("/tmp/dir", "/tmp/empty");
     try std.testing.expectError(error.NoEnt, t.walk("/tmp/dir"));
     try std.testing.expectEqualStrings("x", textOf(try t.walk("/tmp/empty/sub/f"), &buf));

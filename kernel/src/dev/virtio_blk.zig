@@ -46,6 +46,8 @@ pub const Dev = struct {
     used_at: usize,
     req_phys: usize,
     avail_idx: u16 = 0,
+    /// A timed-out reset never finished. The queue stays with the device.
+    dead: bool = false,
 };
 
 var device: Dev = undefined;
@@ -62,7 +64,7 @@ pub fn init() ?*Dev {
 }
 
 pub fn shutdown(dev: *Dev) void {
-    port.outb(dev.io + off_status, 0);
+    _ = resetStatus(dev.io);
     pmm.free(dev.queue_phys, dev.queue_pages);
     pmm.free(dev.req_phys, 1);
     ready = false;
@@ -91,18 +93,9 @@ fn open() OpenError!Dev {
     if (raw == 0 or raw > 0xffff) return error.NoBar;
     const io: u16 = @intCast(raw);
 
-    port.outb(io + off_status, 0);
-    var spun: u32 = 0;
-    while (port.inb(io + off_status) != 0) : (spun += 1) {
-        if (spun == poll_spins) return error.NoDevice;
-        cpu.pause();
-    }
-    port.outb(io + off_status, ack);
-    errdefer port.outb(io + off_status, 0);
-    port.outb(io + off_status, ack | driver);
-    port.outl(io + off_guest, 0);
-
-    port.outw(io + off_select, 0);
+    if (!resetStatus(io)) return error.NoDevice;
+    errdefer _ = resetStatus(io);
+    selectQueue(io);
     const qsz = port.inw(io + off_qsz);
     if (qsz < 3) return error.Queue;
     const layout = queueLayout(qsz);
@@ -114,10 +107,9 @@ fn open() OpenError!Dev {
     errdefer pmm.free(req_phys, 1);
 
     if (queue_phys >> 12 > std.math.maxInt(u32)) return error.Queue;
-    port.outl(io + off_pfn, @intCast(queue_phys >> 12));
-    port.outb(io + off_status, ack | driver | driver_ok);
-    // Reset before the queue pages are freed if the disk is too small.
-    errdefer port.outb(io + off_status, 0);
+    publishQueue(io, queue_phys);
+    // This errdefer runs before the page frees. Wait out the reset first.
+    errdefer _ = resetStatus(io);
 
     const sectors = readSectors(io);
     if (sectors < 24) return error.Capacity;
@@ -140,7 +132,7 @@ fn open() OpenError!Dev {
 }
 
 fn transfer(self: *Dev, kind: u32, block: u32, data: []const u8) error{Io}!void {
-    if (data.len != mem.page_size or block >= self.blocks) return error.Io;
+    if (self.dead or data.len != mem.page_size or block >= self.blocks) return error.Io;
     const data_phys = virt.fromHH(@intFromPtr(data.ptr));
     const req = virt.toHH([*]u8, self.req_phys);
     const hdr = req[0..16];
@@ -167,10 +159,50 @@ fn transfer(self: *Dev, kind: u32, block: u32, data: []const u8) error{Io}!void 
     const used_idx: *volatile u16 = @ptrCast(@alignCast(base + self.used_at + 2));
     var spins: u32 = 0;
     while (used_idx.* != self.avail_idx) : (spins += 1) {
-        if (spins == poll_spins) return error.Io;
+        if (spins == poll_spins) {
+            recover(self);
+            return error.Io;
+        }
         cpu.pause();
     }
     if (req[16] != 0) return error.Io;
+}
+
+/// The device may still own the descriptors. Reset before the next
+/// transfer rewrites the ring and the request page.
+fn recover(self: *Dev) void {
+    if (!resetStatus(self.io)) {
+        self.dead = true;
+        return;
+    }
+    const bytes = self.queue_pages * mem.page_size;
+    @memset(virt.toHH([*]u8, self.queue_phys)[0..bytes], 0);
+    self.avail_idx = 0;
+    selectQueue(self.io);
+    publishQueue(self.io, self.queue_phys);
+}
+
+/// Write status 0 and wait until the device has dropped the queue.
+fn resetStatus(io: u16) bool {
+    port.outb(io + off_status, 0);
+    var spun: u32 = 0;
+    while (port.inb(io + off_status) != 0) : (spun += 1) {
+        if (spun == poll_spins) return false;
+        cpu.pause();
+    }
+    return true;
+}
+
+fn selectQueue(io: u16) void {
+    port.outb(io + off_status, ack);
+    port.outb(io + off_status, ack | driver);
+    port.outl(io + off_guest, 0);
+    port.outw(io + off_select, 0);
+}
+
+fn publishQueue(io: u16, queue_phys: usize) void {
+    port.outl(io + off_pfn, @intCast(queue_phys >> 12));
+    port.outb(io + off_status, ack | driver | driver_ok);
 }
 
 const Layout = struct { bytes: usize, avail: usize, used: usize };

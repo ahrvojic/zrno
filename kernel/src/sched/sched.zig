@@ -214,6 +214,19 @@ fn hasSibling(process: *proc.Process, self: *proc.Thread) bool {
     return false;
 }
 
+/// Close live fds and cwds so the halt-time sync can free unlinked inodes.
+/// A zombie already released both in `exitProcess`.
+pub fn releaseLiveFiles() void {
+    var node = state.processes.first;
+    while (node) |n| {
+        const process = processFromNode(n);
+        node = n.next;
+        if (process.zombie) continue;
+        file.closeAll(&process.fds);
+        process.cwd.release();
+    }
+}
+
 pub fn exitProcess(process: *proc.Process, exit_code: u8) void {
     state.expectInit();
     // Last close wakes pipe waiters before this process is a zombie.

@@ -6,6 +6,7 @@ const cpu = @import("cpu.zig");
 const dsdt = @import("../acpi/dsdt.zig");
 const fadt = @import("../acpi/fadt.zig");
 const port = @import("port.zig");
+const sched = @import("../sched/sched.zig");
 const vfs = @import("../fs/vfs.zig");
 
 const ps2_cmd_port: u16 = 0x64;
@@ -17,6 +18,7 @@ const slp_en: u16 = 1 << 13;
 
 pub fn perform() noreturn {
     cpu.interruptsOff();
+    sched.releaseLiveFiles();
     vfs.sync();
     logger.info("reboot", .{});
     tryAcpiReset();
@@ -26,6 +28,7 @@ pub fn perform() noreturn {
 
 pub fn poweroff() noreturn {
     cpu.interruptsOff();
+    sched.releaseLiveFiles();
     vfs.sync();
     logger.info("poweroff", .{});
     tryAcpiSleep();
