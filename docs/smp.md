@@ -1,3 +1,5 @@
+[zrno](../README.md) / [How zrno works](README.md) / Several CPUs
+
 # Several CPUs
 
 `make run` boots one processor. The kernel starts every processor the firmware lists. User threads of one process can run on several of them at once. Kernel code cannot. One lock, taken on entry and dropped on the way back to user mode, covers every kernel path. [The CPU](cpu.md) defines the lock. This chapter is what the other processors do with it.
@@ -64,3 +66,5 @@ A ready thread appears in `ps` and in no core's row. Nothing records which core 
 - `cpu.shootdown`, `cpu.evacuate`, and `cpu.serviceTlb` in `kernel/src/sys/cpu.zig`
 - The `0xf0` and `0xf1` handlers in `kernel/src/sys/ivt.zig`
 - `dismantle` and the timer split in `kernel/src/sched/sched.zig` and `kernel/src/sys/ivt.zig`
+
+Previous: [The console](console.md). Next: [Userspace](userspace.md).

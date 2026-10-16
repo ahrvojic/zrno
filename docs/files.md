@@ -1,3 +1,5 @@
+[zrno](../README.md) / [How zrno works](README.md) / Files
+
 # Files
 
 There is one name tree. `/` is the initramfs the loader handed over, and it is read-only. `/tmp` is a block device, and it is the only place a program can create, rename, or remove a name. Pipes and the console are file descriptors in the same table, but they are not names in the tree.
@@ -85,3 +87,5 @@ The thread is marked polling and sleeps on the file table. A close, a pipe wake,
 - `kernel/src/fs/blk.zig`, `kernel/src/fs/file.zig`, `kernel/src/fs/pipe.zig`
 - `kernel/src/dev/virtio_blk.zig`, `kernel/src/dev/pci.zig`
 - The syscall bodies are in `kernel/src/sys/syscall.zig`
+
+Previous: [Processes and the scheduler](scheduler.md). Next: [The console](console.md).

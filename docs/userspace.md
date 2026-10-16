@@ -1,3 +1,5 @@
+[zrno](../README.md) / [How zrno works](README.md) / Userspace
+
 # Userspace
 
 Userspace is a handful of freestanding programs packed into the initramfs. `/init` is pid 1. It spawns a shell, and the shell spawns everything else. The library they share is a thin wrapper over the syscalls the earlier chapters defined.
@@ -51,3 +53,5 @@ The commands are small wrappers around one or two syscalls.
 - `user/src/lib/start.zig`, `user/src/lib/sys.zig`, `user/src/lib/lib.zig`, `user/src/lib/malloc.zig`
 - `user/src/cmd/init.zig`, `user/src/cmd/shell.zig`
 - `user/build.zig`, `user/user.ld`
+
+Previous: [Several CPUs](smp.md).

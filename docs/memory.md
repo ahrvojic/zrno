@@ -1,3 +1,5 @@
+[zrno](../README.md) / [How zrno works](README.md) / Memory
+
 # Memory
 
 Memory is three layers. A bitmap hands out physical frames. Page tables map those frames into the higher half for the kernel and into the lower half for a process. A process then grows three ways: the program break upward, anonymous mappings downward, and a stack per thread at the top of the user range.
@@ -66,3 +68,5 @@ A copy between user memory and the kernel fills the same holes, so the program d
 - `kernel/src/sched/aspace.zig`, `kernel/src/sched/maplist.zig`
 - `kernel/src/sys/elf.zig` for the user-range constants
 - The fault gate is `kernel/src/sys/ivt.zig`
+
+Previous: [Boot](boot.md). Next: [The CPU](cpu.md).

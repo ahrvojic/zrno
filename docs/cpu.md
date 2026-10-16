@@ -1,3 +1,5 @@
+[zrno](../README.md) / [How zrno works](README.md) / The CPU
+
 # The CPU
 
 Every core has a `CPU` object. The kernel enters through a syscall or an interrupt, takes one lock, and runs to completion with interrupts off. Time comes from the local APIC timer, calibrated from whatever firmware timer is actually there.
@@ -69,3 +71,5 @@ Four tables matter:
 - `kernel/src/sys/lock.zig`, `kernel/src/sys/fpu.zig`
 - `kernel/src/dev/timer.zig`, `kernel/src/dev/hpet.zig`, `kernel/src/dev/pmtimer.zig`, `kernel/src/dev/pit.zig`
 - `kernel/src/acpi/acpi.zig`, `kernel/src/acpi/madt.zig`, `kernel/src/acpi/fadt.zig`, `kernel/src/acpi/dsdt.zig`
+
+Previous: [Memory](memory.md). Next: [Processes and the scheduler](scheduler.md).

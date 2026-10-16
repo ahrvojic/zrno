@@ -1,3 +1,5 @@
+[zrno](../README.md) / [How zrno works](README.md) / Boot
+
 # Boot
 
 A UEFI application in `boot/` reads the kernel and the initramfs off the boot volume, builds page tables, and jumps to the kernel's link address. The kernel then brings its own subsystems up and spawns `/init`. Later chapters start at a step in that sequence.
@@ -51,3 +53,5 @@ The memory map tags each range. Usable RAM can be allocated. Loader pages are re
 - `common/bootinfo.zig`
 - `kernel/linker.ld`
 - `kernel/src/main.zig`, `kernel/src/sys/boot.zig`
+
+Previous: [How zrno works](README.md). Next: [Memory](memory.md).

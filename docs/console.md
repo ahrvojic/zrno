@@ -1,3 +1,5 @@
+[zrno](../README.md) / [How zrno works](README.md) / The console
+
 # The console
 
 Programs see one terminal on file descriptors 0, 1, and 2. Under it are a serial port that always works, a framebuffer when the firmware provided one, and a single cooked input line fed by the keyboard and by the serial port.
@@ -35,3 +37,5 @@ The keyboard comes in through the I/O APIC as vector 33, when the FADT says the 
 - `kernel/src/dev/tty.zig`, `kernel/src/dev/tty_input.zig`, `kernel/src/dev/tty_screen.zig`
 - `kernel/src/dev/serial.zig`, `kernel/src/dev/video.zig`, `kernel/src/dev/ps2.zig`
 - `kernel/src/dev/apic.zig` for the keyboard route
+
+Previous: [Files](files.md). Next: [Several CPUs](smp.md).

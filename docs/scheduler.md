@@ -1,3 +1,5 @@
+[zrno](../README.md) / [How zrno works](README.md) / Processes and the scheduler
+
 # Processes and the scheduler
 
 A process owns an address space, a file table, a working directory, and a name. A thread owns a kernel stack, a saved context, and a place on one ready list. `spawn` is how a program starts. The scheduler is round-robin over that list, plus the idle thread on each core.
@@ -82,3 +84,5 @@ A row does not name the core the thread is on. A ready thread has no core. The c
 - `kernel/src/sched/sched.zig`, `kernel/src/sched/exec.zig`, `kernel/src/sched/kstack.zig`
 - `kernel/src/sys/elf.zig` for the loader
 - The yield stub and the timer call into `schedule` are in `kernel/src/sys/ivt.zig`
+
+Previous: [The CPU](cpu.md). Next: [Files](files.md).
