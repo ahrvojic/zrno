@@ -12,7 +12,11 @@
 
 `kernel/src/sys/smp.zig` reads the MADT. One enabled local APIC is kept per APIC id, and the bootstrap processor is left out. Each remaining id gets a `CPU` from the heap and an idle thread that is not on the ready list. The `CPU` is zeroed and then given a real GDT before the startup message. A zeroed GDT has a null code selector, and the first far return on that processor would fault.
 
-The trampoline is the frame [Memory](memory.md) reserved below 1 MiB. It is identity-mapped for the transition, filled with a real-mode stub, and targeted with INIT and SIPI. The stub turns on PAE, long mode, and the NX bit, loads the kernel page tables, and jumps to `apEnter`. `apEnter` does not allocate or log. It marks the processor online and spins, serving TLB requests, until `smp.live`. The bootstrap processor logs `ap online` once it sees that flag. The new processor then programs its local APIC timer with the count the bootstrap processor measured, takes the kernel lock, and yields onto its idle thread.
+The trampoline is the frame [Memory](memory.md) reserved below 1 MiB. An application processor begins in real mode. Real mode fetches from the first megabyte and loads CR3 with a 32-bit move, so `smp.start` panics if the kernel page-table root does not fit in that width. The page is identity-mapped for the transition, and only in the kernel root. It is not part of the shared higher half, so a cloned address space never contains it. The page is filled with a real-mode stub and targeted with INIT and then SIPI. The SIPI vector is the page frame number.
+
+The stub enables PAE, sets long mode and the NX enable in `EFER`, and only then turns paging on in CR0. The NX bit in a page-table entry is reserved unless that enable is already set, and the kernel stacks are non-executable, so paging first would fault on the way into the kernel. The far jump into long mode uses a small GDT stored in that same page. That table is only for the transition. `apEnter` then loads the `CPU` object's GDT, the one installed before the SIPI.
+
+`apEnter` does not allocate or log. The bootstrap processor still holds the kernel lock, and the lock is what serializes the console. The new processor marks itself online and spins, serving TLB requests, until `smp.live`. The bootstrap processor logs `ap online` once it sees that flag. The new processor then programs its local APIC timer with the count the bootstrap processor measured, takes the kernel lock, and yields onto its idle thread.
 
 The trampoline page is unmapped once every processor has stored online. The frame stays reserved. A processor can still have the translation cached until its next CR3 reload, which is why the page is not reused.
 
@@ -32,13 +36,13 @@ The idle halt is the other place a core runs without the lock. It dropped the lo
 
 Reloading CR3 drops translations on the core that reloaded it. The global bit is clear, so the drop on that core is complete. Other cores keep the translations they already had.
 
-After the kernel clears a page-table entry, it writes a request into the target `CPU` and sends interrupt `0xf0`. One page asks for `invlpg` of that address. A longer range asks for a CR3 reload. The sender waits until the target stores a zero back. User ranges are flushed 64 pages at a time, so one interrupt covers a stack. The physical addresses sit on the sender's kernel stack until the acknowledgement, and only then are the frames freed.
+After the kernel clears a page-table entry, it writes one word into the target `CPU.tlb_req` and sends interrupt `0xf0`. Zero means the target is idle. `1` means reload CR3. Any other value is a page-aligned virtual address, and the target executes `invlpg` on it. A page address cannot be `1`, because pages are 4 KiB aligned, so the two requests stay distinct. One word holds one address, so a longer range is a CR3 reload. User ranges are still split into chunks of 64 pages. The physical addresses of that chunk sit on the sender's kernel stack until the target stores zero, and only then are the frames freed. One such chunk covers a 16-page stack.
 
 A core in user mode, or halted, takes the interrupt. The handler flushes, acknowledges, and returns. It does not take the kernel lock. The holder of the lock is often the sender, and taking it here would deadlock. A core spinning for the lock has interrupts off, so the interrupt is not delivered. The spin loop reads the same request word and does the flush itself.
 
-Kernel stacks go through this path, because they are mapped in every address space. User mappings do too. A first mapping of an address that was never present skips it. The processor does not cache a translation that is not present.
+Kernel stacks go through this path, because they are mapped in every address space. User mappings do too. A first mapping of an address that was never present does not send a shootdown. The core that installs the entry still executes `invlpg`, because a not-present translation may be cached. Other cores are told when a present entry is removed.
 
-Clearing an entry is one store of zero. Writing a physical address of zero while leaving the flags would publish a present page at frame 0 for any core walking the table without the lock.
+Clearing an entry stores zero in one write. The address and the flags share the entry. Writing a physical address of zero and leaving the flags would publish a present page at frame 0, for any core walking the table without the lock, until a second store cleared the present bit.
 
 ## Leaving an address space
 

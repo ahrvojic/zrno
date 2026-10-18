@@ -24,7 +24,7 @@ Tids and pids are allocated from a counter and are not reused for the life of th
 
 The first thread gets a 16-page user stack, mapped immediately, with the argument vector on it. The child inherits the parent's working directory (a new reference, not a copy of the path). The three descriptors are looked up in the parent and installed in the child. `/init` is spawned by the kernel rather than by a process, and it gets the console on 0, 1, and 2.
 
-The child is marked ready and the call returns. The parent keeps running. Another core notices the new thread the next time it looks at the ready list, which is its next timer tick. Nothing sends a reschedule interrupt.
+The child is marked ready and the call returns. The parent keeps running. Another core notices the new thread the next time it looks at the ready list. That look is its next timer tick, at most about 1 ms later. The timer is 1 kHz, and nothing sends a reschedule interrupt.
 
 `thread` (`0x10`) starts another thread in the same process. It shares the page tables and the file table, gets its own user stack and its own kernel stack, and takes one argument in `rdi`. `thread_exit` (`0x11`) unmaps that user stack. When the last thread of a process exits, the process becomes a zombie. `gettid` (`0x12`) and `yield` (`0x13`) are the rest of that block.
 
@@ -68,7 +68,7 @@ The address is a kernel pointer. Pipe reads sleep on the ring's buffer and pipe 
 
 `kernel/src/sched/kstack.zig` hands out stacks from a 1 GiB window in the shared high half, starting at `0xffffff0000000000`. Each stack is 16 pages with a guard page below it. A bitmap remembers holes under the high-water mark, so freeing a stack in the middle does not lose the address. The window is mapped into every process by the shared kernel half.
 
-Because the mapping is shared, unmapping a stack on this core does not remove it from another core's TLB. `free` shoots the range down before it returns the frames. A fault on the guard page is a fatal kernel overflow.
+Because the mapping is shared, unmapping a stack on this core does not remove it from another core's TLB. `free` shoots the range down and only then returns the frames. A core that still held the translation would write a frame the allocator had already handed out again. The page below each stack is left unmapped. A kernel store that walks off the 16 pages hits that guard and panics. The overflow has already happened in kernel mode, so the fault is fatal.
 
 The boot stack from the loader is not in this window. The first schedule that has a current thread drops it and returns those frames to the physical allocator.
 

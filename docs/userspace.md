@@ -10,7 +10,7 @@ Userspace is a handful of freestanding programs packed into the initramfs. `/ini
 
 Each binary is linked with `user/user.ld`. The entry is `_start` in `user/src/lib/start.zig`. It receives the argument vector the kernel placed on the stack and calls `main`. `main` is either `fn () u64` or `fn ([]const []const u8) u64`. The return value is the process exit status. The programs are built small, without compiler-rt, so they do not use 128-bit division or the usual runtime helpers.
 
-`user/src/lib/sys.zig` is the other half of `kernel/src/sys/syscall.zig`. The numbers, the flag bits, and the struct layouts are duplicated by hand and have to stay identical. A wrapper puts the number in `rax`, the arguments in `rdi`, `rsi`, `rdx`, `r10`, `r8`, and `r9`, and executes `syscall`. A negative return is a negated errno. `rcx` and `r11` are clobbered by the instruction, as [The CPU](cpu.md) describes.
+`user/src/lib/sys.zig` is the other half of `kernel/src/sys/syscall.zig`. The numbers, the flag bits, and the struct layouts are duplicated by hand and have to stay identical. A wrapper puts the number in `rax`, the arguments in `rdi`, `rsi`, `rdx`, `r10`, `r8`, and `r9`, and executes `syscall`. The fourth argument is `r10` because the instruction overwrites `rcx` with the return address. A negative return is a negated errno. `rcx` and `r11` are clobbered by the instruction, as [The CPU](cpu.md) describes.
 
 `malloc` is a free list on top of `brk`. It grows the break and never calls `mmap`. That is a choice of the library, not a limit of the kernel. The kernel calls are in [Memory](memory.md).
 

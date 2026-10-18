@@ -16,11 +16,11 @@ The loader's own pages are tagged reclaimable. They stay reserved until the firs
 
 ## The kernel map
 
-`kernel/src/mm/vmm.zig` builds a 4-level page table and loads it. The direct map covers every range the boot info said to map: usable RAM, reclaimable loader memory, ACPI, the framebuffer, and the modules. Ordinary RAM entries are 4 KiB, writable, and not executable. The framebuffer is write-combining. Text and read-only data are read-only in this map, and the same pages are mapped again at the link address with the permissions from the linker script: executable, read-only, or read-write.
+`kernel/src/mm/vmm.zig` builds a 4-level page table and loads it. The direct map covers every range the boot info said to map: usable RAM, reclaimable loader memory, ACPI, the framebuffer, and the modules. Ordinary RAM entries are 4 KiB, writable, and not executable. The framebuffer is write-combining. That is a PAT entry the kernel programs, not an attribute left by the firmware. `cpu.init` writes `IA32_PAT` so index 5 is write-combining, and the framebuffer entries select that index by setting PWT and PAT and leaving PCD clear. Ordinary RAM stays write-back. Text and read-only data are read-only in this map, and the same pages are mapped again at the link address with the permissions from the linker script: executable, read-only, or read-write.
 
 The upper half of every PML4 is the kernel. PML4 index 256 is the direct map. The top of the higher half holds the kernel image and, later, kernel stacks. A new process gets an empty lower half and a copy of those upper PML4 entries (`cloneKernel`). When the kernel later allocates a page-table page in its own half, that entry is written into every process as well. User mappings stay private.
 
-The global bit is clear on every entry. Reloading CR3 on this core drops this core's old translations. Another core can still hold them. Unmapping a page that some other core might have used tells those cores before the frame is freed. The mechanism is in [Several CPUs](smp.md). A first mapping of an address that was never present skips that step. The processor does not cache a translation that is not present.
+The global bit is clear on every entry. Set, it would keep a translation across a CR3 reload, which is the usual way to avoid flushing the kernel half on every process switch. This kernel never sets it, so reloading CR3 drops every translation on this core, kernel pages included. Another core can still hold them. Unmapping a page that some other core might have used tells those cores before the frame is freed. The mechanism is in [Several CPUs](smp.md). A first mapping of an address that was never present does not send that shootdown. The mapping core still executes `invlpg`. A not-present translation may be cached, which is why the local flush is there. Other cores are told only when a present entry is cleared.
 
 `switchTo` reloads CR3 only when the root actually changes. A syscall does not switch page tables: the kernel is already mapped in the upper half of the process that called.
 
@@ -32,7 +32,7 @@ The global bit is clear on every entry. Reloading CR3 on this core drops this co
 
 ## A user address space
 
-User addresses run from the first page to `(1 << 47) - 4096`. The last canonical page is left unmapped so a syscall on it cannot hand `SYSRET` a non-canonical return address. The null page is never mapped. Three cursors divide what remains. A cursor moves backward only when the range being freed is the one at its tip. A hole in the middle stays a hole.
+User addresses run from the first page to `(1 << 47) - 4096`. A user pointer is canonical only when bits 63:47 are clear, so the hardware user range ends at `1 << 47`. `SYSCALL` is two bytes and leaves the address of the next instruction in `rcx`, which is the address `SYSRET` jumps to. Placed in the last two bytes of that range, the instruction would hand `SYSRET` a return address with bit 47 set. The last page is left unmapped so the instruction cannot sit there. [The CPU](cpu.md) describes the second check, which refuses the return if `rcx` or the user stack is non-canonical anyway. The null page is never mapped. Three cursors divide what remains. A cursor moves backward only when the range being freed is the one at its tip. A hole in the middle stays a hole.
 
 | Region | Where it grows | When pages appear |
 |---|---|---|
