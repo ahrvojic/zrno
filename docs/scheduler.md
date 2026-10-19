@@ -8,7 +8,7 @@ A process owns an address space, a file table, a working directory, and a name. 
 
 `Process` and `Thread` live in `kernel/src/sched/proc.zig`.
 
-A process has a pid, a parent pid, and a zombie flag. It has the page tables from [Memory](memory.md), the break and the mmap cursor, a table of 16 file descriptors, a reference to its current directory, and a name. The name is the last component of the path it was spawned from, cut to 24 bytes. Pid 0 is the kernel process, and its name is `idle`.
+A process has a pid, a parent pid, and a zombie flag. It has the page tables from [Memory](memory.md), the end of the loaded image, the mmap cursor, a table of 16 file descriptors, a reference to its current directory, and a name. The name is the last component of the path it was spawned from, cut to 24 bytes. Pid 0 is the kernel process, and its name is `idle`.
 
 A thread has a tid, a status (`ready`, `running`, `sleeping`, `waiting`), and a pointer to its process. It also has a saved register frame, an XSAVE image in its own allocation, a kernel stack, a user stack (zero for a kernel thread), and the address it is sleeping on.
 
@@ -20,7 +20,7 @@ Tids and pids are allocated from a counter and are not reused for the life of th
 
 `spawn` (`0x01`) takes a path, an argument vector, and three file descriptors that become the child's stdin, stdout, and stderr. The path and each argument are a pointer and a length. There are at most 32 arguments, and each is at most 512 bytes.
 
-`kernel/src/sched/exec.zig` creates a process, clones the kernel half of the page tables, and loads the ELF. A file whose bytes are the initramfs is loaded straight from that slice. An owned file is read a page at a time into the pages just allocated. There is no intermediate copy of the whole file. Up to eight load segments are allowed, they must sit below the mmap region, and a writable segment cannot also be executable. The break is set to the end of the image.
+`kernel/src/sched/exec.zig` creates a process, clones the kernel half of the page tables, and loads the ELF. A file whose bytes are the initramfs is loaded straight from that slice. An owned file is read a page at a time into the pages just allocated. There is no intermediate copy of the whole file. Up to eight load segments are allowed, they must sit below the mmap region, and a writable segment cannot also be executable. The end of the image is recorded so a later mapping stops there. Stacks stop at the top of the mmap region.
 
 The first thread gets a 16-page user stack, mapped immediately, with the argument vector on it. The child inherits the parent's working directory (a new reference, not a copy of the path). The three descriptors are looked up in the parent and installed in the child. `/init` is spawned by the kernel rather than by a process, and it gets the console on 0, 1, and 2.
 

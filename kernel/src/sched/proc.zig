@@ -25,10 +25,9 @@ pub const Process = struct {
     // `elf.user_mmap_top`. `maps` are the live ranges; a hole is not reused.
     mmap_next: usize,
     maps: maplist.List = .{},
-    // Program break: exclusive end of the data/heap segment. `brk_start` is
-    // the page-aligned end of the loaded image; `brk` may grow up to mmap.
-    brk_start: usize,
-    brk: usize,
+    // Page-aligned exclusive end of the loaded image. Mappings stop here.
+    // Stacks stop at the mmap region. `spawn` sets it; nothing moves it.
+    image_end: usize,
     // Spawn installs 0/1/2 from the caller's fds. Kernel pid 0 has none;
     // `/init` (spawned from the kernel) gets a shared TTY.
     fds: [file.max_fds]file.Fd,

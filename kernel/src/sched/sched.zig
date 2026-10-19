@@ -18,7 +18,6 @@ const vmm = @import("../mm/vmm.zig");
 pub const tick_hz = state.tick_hz;
 pub const startUserThread = thread.startUserThread;
 pub const createUserThread = thread.createUserThread;
-pub const setBrk = aspace.setBrk;
 pub const mapAnon = aspace.mapAnon;
 pub const mapFile = aspace.mapFile;
 pub const unmapAnon = aspace.unmapAnon;
@@ -86,8 +85,7 @@ pub fn startProcess(enqueue: bool) !*proc.Process {
         .exit_code = 0,
         .user_stack_next = state.user_stack_top,
         .mmap_next = state.user_mmap_top,
-        .brk_start = 0,
-        .brk = 0,
+        .image_end = 0,
         .fds = @splat(null),
         .cwd = cwd,
     };

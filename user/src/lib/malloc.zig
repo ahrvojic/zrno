@@ -16,7 +16,6 @@ fn alignUp(n: usize) usize {
 
 const header_size: usize = alignUp(@sizeOf(Header));
 
-var heap_cur: usize = 0;
 var free_head: ?*Header = null;
 
 fn payload(h: *Header) [*]u8 {
@@ -81,20 +80,11 @@ fn moreCore(payload_n: usize) ?*Header {
     const grow_by = (need + page_size - 1) & ~(page_size - 1);
     if (grow_by < need) return null;
 
-    if (heap_cur == 0) {
-        const cur = sys.brk(0);
-        if (cur <= 0) return null;
-        heap_cur = @intCast(cur);
-    }
-    if (heap_cur > ~@as(usize, 0) - grow_by) return null;
+    const addr = sys.mmap(0, grow_by, sys.prot_read | sys.prot_write);
+    if (addr < 0) return null;
 
-    const next = heap_cur + grow_by;
-    const got = sys.brk(next);
-    if (got < 0 or @as(usize, @intCast(got)) != next) return null;
-
-    const h: *Header = @ptrFromInt(heap_cur);
+    const h: *Header = @ptrFromInt(@as(usize, @intCast(addr)));
     h.size = grow_by - header_size;
-    heap_cur = next;
     insertFree(h);
     return take(payload_n);
 }

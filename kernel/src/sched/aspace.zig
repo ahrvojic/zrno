@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const cpu = @import("../sys/cpu.zig");
+const heap = @import("../mm/heap.zig");
 const maplist = @import("maplist.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
@@ -9,12 +10,10 @@ const vfs = @import("../fs/vfs.zig");
 const virt = @import("../lib/virt.zig");
 const vmm = @import("../mm/vmm.zig");
 
-const max_mmap: usize = 32 * 1024 * 1024;
-
 pub fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
     if (parent.user_stack_next < state.user_stack_slot) return error.OutOfMemory;
     const slot_lo = parent.user_stack_next - state.user_stack_slot;
-    if (slot_lo < parent.brk or slot_lo < state.user_mmap_top) return error.OutOfMemory;
+    if (slot_lo < state.user_mmap_top) return error.OutOfMemory;
     parent.user_stack_next = slot_lo;
     return slot_lo + pmm.page_size;
 }
@@ -29,44 +28,6 @@ pub fn releaseUserStack(parent: *proc.Process, base: usize) void {
 
 pub fn unmapUserStack(space: *vmm.VMM, base: usize) void {
     releaseUserPages(space, base, state.stack_size, false);
-}
-
-// Linux-style `brk`: rdi=0 returns the current break; otherwise set it.
-// The stored break is byte-granular; mapping is page-aligned.
-pub fn setBrk(addr: usize) error{ Invalid, OutOfMemory }!usize {
-    state.expectInit();
-    const process = cpu.currentProcess();
-    if (addr == 0) return process.brk;
-
-    const old = process.brk;
-    if (process.brk_start == 0 or addr < process.brk_start) return error.Invalid;
-    if (addr > process.mmap_next or addr > process.user_stack_next) return error.OutOfMemory;
-    const old_pg = std.mem.alignForward(usize, old, pmm.page_size);
-    const new_pg = std.mem.alignForward(usize, addr, pmm.page_size);
-    process.brk = addr;
-    if (old_pg == new_pg) return addr;
-
-    if (addr > old) {
-        mapPages(&process.vmm, old_pg, new_pg - old_pg, userFlags(true)) catch {
-            process.brk = old;
-            return error.OutOfMemory;
-        };
-    } else {
-        releaseUserPages(&process.vmm, new_pg, old_pg - new_pg, false);
-    }
-    return addr;
-}
-
-fn mapPages(space: *vmm.VMM, addr: usize, size: usize, flags: vmm.Flags) error{OutOfMemory}!void {
-    var mapped: usize = 0;
-    errdefer releaseUserPages(space, addr, mapped, false);
-    while (mapped < size) : (mapped += pmm.page_size) {
-        const phys = pmm.alloc(1) orelse return error.OutOfMemory;
-        space.map(addr + mapped, phys, pmm.page_size, flags) catch {
-            pmm.free(phys, 1);
-            return error.OutOfMemory;
-        };
-    }
 }
 
 // One shootdown covers this many leaves. The phys list sits on the kernel stack.
@@ -128,7 +89,7 @@ pub fn unmapEager(space: *vmm.VMM, addr: usize, size: usize) void {
     dropRange(space, addr, size, false, false);
 }
 
-fn dropMap(space: *vmm.VMM, map: maplist.Map) void {
+fn dropMap(space: *vmm.VMM, map: *const maplist.Map) void {
     releaseUserPages(space, map.base, map.size, true);
 }
 
@@ -141,7 +102,7 @@ fn reserve(process: *proc.Process, size: usize) error{OutOfMemory}!usize {
     const old = process.mmap_next;
     if (old < size) return error.OutOfMemory;
     const base = old - size;
-    if (base < process.brk or state.user_mmap_top - base > max_mmap) return error.OutOfMemory;
+    if (base < process.image_end) return error.OutOfMemory;
     return base;
 }
 
@@ -156,11 +117,9 @@ fn userFlags(writable: bool) vmm.Flags {
 
 fn install(process: *proc.Process, size: usize, writable: bool) error{OutOfMemory}!usize {
     const base = try reserve(process, size);
-    process.maps.append(.{
-        .base = base,
-        .size = size,
-        .writable = writable,
-    }) catch return error.OutOfMemory;
+    const map = heap.kernel_heap.allocator().create(maplist.Map) catch return error.OutOfMemory;
+    map.* = .{ .base = base, .size = size, .writable = writable };
+    process.maps.insert(map);
     process.mmap_next = base;
     return base;
 }
@@ -187,8 +146,9 @@ pub fn mapFile(node: *vfs.Node, len: usize, writable: bool) error{ Invalid, OutO
 
     const size = try pageBytes(len);
     const base = try install(process, size, writable);
-    errdefer if (maplist.remove(&process.maps, &process.mmap_next, base, size)) |old| {
+    errdefer if (process.maps.remove(&process.mmap_next, base, size)) |old| {
         dropMap(&process.vmm, old);
+        heap.kernel_heap.allocator().destroy(old);
     };
 
     const flags = userFlags(writable);
@@ -209,8 +169,11 @@ pub fn mapFile(node: *vfs.Node, len: usize, writable: bool) error{ Invalid, OutO
 }
 
 pub fn releaseMappings(process: *proc.Process) void {
-    for (process.maps.slice()) |m| dropMap(&process.vmm, m);
-    process.maps.len = 0;
+    const allocator = heap.kernel_heap.allocator();
+    while (process.maps.pop()) |map| {
+        dropMap(&process.vmm, map);
+        allocator.destroy(map);
+    }
 }
 
 /// Allocate the zero page for a reservation. False when `addr` is outside
@@ -219,7 +182,7 @@ pub fn releaseMappings(process: *proc.Process) void {
 pub fn fillUserPage(addr: usize, write: bool) bool {
     const process = cpu.currentProcess();
     const page = std.mem.alignBackward(usize, addr, pmm.page_size);
-    const map = maplist.find(&process.maps, page) orelse return false;
+    const map = process.maps.find(page) orelse return false;
     if (write and !map.writable) return false;
     if (process.vmm.virtToPhys(page)) |_| return true else |_| {}
 
@@ -242,8 +205,9 @@ pub fn unmapAnon(addr: usize, len: usize) error{Invalid}!void {
     if (!std.mem.isAligned(addr, pmm.page_size)) return error.Invalid;
     const size = pageBytes(len) catch return error.Invalid;
 
-    const old = maplist.remove(&process.maps, &process.mmap_next, addr, size) orelse return error.Invalid;
+    const old = process.maps.remove(&process.mmap_next, addr, size) orelse return error.Invalid;
     dropMap(&process.vmm, old);
+    heap.kernel_heap.allocator().destroy(old);
 }
 
 pub fn dropAddressSpace(space: *vmm.VMM) void {

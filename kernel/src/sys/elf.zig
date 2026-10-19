@@ -96,11 +96,11 @@ fn parseAt(file_len: usize, src: anytype) !Image {
 
 pub const Loaded = struct {
     entry: usize,
-    // Page-aligned exclusive end of PT_LOAD; initial program break.
-    brk: usize,
+    // Page-aligned exclusive end of PT_LOAD. Mappings stop here.
+    image_end: usize,
 };
 
-fn imageBrk(segs: []const Load) usize {
+fn imageEnd(segs: []const Load) usize {
     var end: usize = 0;
     for (segs) |seg| {
         end = @max(end, seg.map_vaddr + seg.map_size);
@@ -147,7 +147,7 @@ pub fn loadAt(space: anytype, file_len: usize, src: anytype) !Loaded {
         done[mapped] = .{ .vaddr = seg.map_vaddr, .size = seg.map_size, .alloc = mem };
         mapped += 1;
     }
-    return .{ .entry = parsed.entry, .brk = imageBrk(segs) };
+    return .{ .entry = parsed.entry, .image_end = imageEnd(segs) };
 }
 
 fn Mapped(comptime Alloc: type) type {
@@ -517,7 +517,7 @@ test "load copies filesz, zeros BSS, maps R/W/X" {
     const loaded = try loadAt(&space, image.len, &src);
     try std.testing.expect(src.widest < image.len);
     try std.testing.expectEqual(0x400000, loaded.entry);
-    try std.testing.expectEqual(0x402000, loaded.brk);
+    try std.testing.expectEqual(0x402000, loaded.image_end);
     try std.testing.expectEqual(2, space.nmaps);
 
     const t = space.at(0x400000).?;
@@ -543,7 +543,7 @@ test "load page-aligns unaligned p_vaddr and zeros the lead" {
     var space: MockSpace = .{ .backing = &backing };
     const loaded = try load(&space, image);
     try std.testing.expectEqual(0x400010, loaded.entry);
-    try std.testing.expectEqual(0x401000, loaded.brk);
+    try std.testing.expectEqual(0x401000, loaded.image_end);
     const t = space.at(0x400000).?;
     try std.testing.expectEqual(page_size, t.bytes.len);
     try std.testing.expectEqualSlices(u8, &@as([0x10]u8, @splat(0)), t.bytes[0..0x10]);

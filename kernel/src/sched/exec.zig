@@ -32,8 +32,7 @@ fn spawn(path: []const u8, argv: []const []const u8, stdio: ?[3]u64) SpawnError!
     }
 
     const loaded = try loadPath(&process.vmm, process.cwd, path);
-    process.brk_start = loaded.brk;
-    process.brk = loaded.brk;
+    process.image_end = loaded.image_end;
     _ = sched.startUserThread(process, loaded.entry, argv, true) catch |err| return spawnFail(err);
     return process.pid;
 }

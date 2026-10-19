@@ -612,20 +612,6 @@ fn files(cal: Cal) u64 {
     return rc;
 }
 
-fn pageUp(addr: usize) usize {
-    return (addr + page - 1) & ~(page - 1);
-}
-
-fn brkOnce() bool {
-    const cur = sys.brk(0);
-    if (cur < 0) return false;
-    const old: usize = @intCast(cur);
-    const start = pageUp(old);
-    if (sys.brk(start + bytes) < 0) return false;
-    touch(start, bytes);
-    return sys.brk(old) >= 0;
-}
-
 fn mmapOnce() bool {
     const addr = sys.mmap(0, bytes, sys.prot_read | sys.prot_write);
     if (addr < 0) return false;
@@ -651,7 +637,6 @@ pub fn main(argv: []const []const u8) u64 {
     if (pipes(cal) != 0) return 1;
     if (spawns(cal) != 0) return 1;
     if (files(cal) != 0) return 1;
-    if (measureN("brk", cal, brkOnce) != 0) return 1;
     if (measureN("mmap", cal, mmapOnce) != 0) return 1;
     if (multicore(cal) != 0) return 1;
     printTable();

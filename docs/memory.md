@@ -2,7 +2,7 @@
 
 # Memory
 
-Memory is three layers. A bitmap hands out physical frames. Page tables map those frames into the higher half for the kernel and into the lower half for a process. A process then grows three ways: the program break upward, anonymous mappings downward, and a stack per thread at the top of the user range.
+Memory is three layers. A bitmap hands out physical frames. Page tables map those frames into the higher half for the kernel and into the lower half for a process. A process then obtains anonymous memory by mapping downward, and a stack per thread at the top of the user range. The loaded image stays where `spawn` put it.
 
 ## Physical frames
 
@@ -32,19 +32,19 @@ The global bit is clear on every entry. Set, it would keep a translation across 
 
 ## A user address space
 
-User addresses run from the first page to `(1 << 47) - 4096`. A user pointer is canonical only when bits 63:47 are clear, so the hardware user range ends at `1 << 47`. `SYSCALL` is two bytes and leaves the address of the next instruction in `rcx`, which is the address `SYSRET` jumps to. Placed in the last two bytes of that range, the instruction would hand `SYSRET` a return address with bit 47 set. The last page is left unmapped so the instruction cannot sit there. [The CPU](cpu.md) describes the second check, which refuses the return if `rcx` or the user stack is non-canonical anyway. The null page is never mapped. Three cursors divide what remains. A cursor moves backward only when the range being freed is the one at its tip. A hole in the middle stays a hole.
+User addresses run from the first page to `(1 << 47) - 4096`. A user pointer is canonical only when bits 63:47 are clear, so the hardware user range ends at `1 << 47`. `SYSCALL` is two bytes and leaves the address of the next instruction in `rcx`, which is the address `SYSRET` jumps to. Placed in the last two bytes of that range, the instruction would hand `SYSRET` a return address with bit 47 set. The last page is left unmapped so the instruction cannot sit there. [The CPU](cpu.md) describes the second check, which refuses the return if `rcx` or the user stack is non-canonical anyway. The null page is never mapped. What remains is the image, then mappings, then stacks. A cursor moves backward only when the range being freed is the one at its tip. A hole in the middle stays a hole.
 
-| Region | Where it grows | When pages appear |
+| Region | Where it sits | When pages appear |
 |---|---|---|
-| Program image and `brk` | Up from the end of the ELF | During the call |
-| Anonymous `mmap` | Down from `user_mmap_top` | On the first access |
+| Program image | Where the ELF asked, below `user_mmap_top` | During `spawn` |
+| `mmap` and `map_file` | Down from `user_mmap_top` | `mmap` on the first access; `map_file` during the call |
 | Stacks | Down from the top of user space | During the call that creates the thread |
 
-`user_mmap_top` sits 256 MiB below the top. That gap is the stack region. ELF load segments have to land below `user_mmap_top`. The program break starts at the page-aligned end of the image and moves up. `brk` (`0x20`) with a zero argument returns the current break. Any other argument sets it. The stored break is a byte address. The mapping is in whole pages, allocated and mapped before the call returns. Growth stops when the break would pass the mmap cursor or the stack cursor, or when the machine is out of frames. There is no separate byte cap.
+`user_mmap_top` sits 256 MiB below the top. That gap is the stack region. ELF load segments have to land below it. `spawn` records the page-aligned end of the image, and nothing moves that address. A mapping that would cross it is rejected. Stacks stop at `user_mmap_top`, which is always at or above that end. There is no program break.
 
-Anonymous `mmap` (`0x21`) ignores a non-zero address hint. The protection may be read, write, or both. Executable is rejected, and every anonymous page is non-executable. The call reserves the range and records it. It does not allocate frames. The process may hold 32 such ranges, totaling at most 32 MiB. `munmap` (`0x22`) removes one whole range that `mmap` handed out. Frames are freed only for pages that were actually touched.
+Anonymous `mmap` (`0x20`) ignores a non-zero address hint. The protection may be read, write, or both. Executable is rejected, and every anonymous page is non-executable. The call reserves the range and records it. It does not allocate frames. Each record is a node from the kernel heap, so the process holds as many ranges as that heap can allocate. A range runs until it meets the end of the image. `munmap` (`0x21`) removes one whole range that `mmap` or `map_file` handed out, and frees the node. Frames are freed only for pages that were actually touched.
 
-`map_file` (`0x23`) allocates during the call. It reserves a range the same way `mmap` does, then copies a `/tmp` file into private pages. A later write to the file does not change the mapping, and closing the file leaves the mapping in place. An initramfs file cannot be mapped. Its bytes are the archive itself. See [Files](files.md).
+`map_file` (`0x22`) allocates during the call. It reserves a range the same way `mmap` does, then copies a `/tmp` file into private pages. A later write to the file does not change the mapping, and closing the file leaves the mapping in place. An initramfs file cannot be mapped. Its bytes are the archive itself. See [Files](files.md). The copy stops when the machine is out of frames. That is the same limit an anonymous mapping hits when the reserved pages are first touched.
 
 Each thread gets a user stack of 16 pages, mapped at creation, with an unmapped guard page below it. Further threads take the next slot down. A fault on the guard ends the process.
 

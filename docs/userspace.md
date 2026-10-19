@@ -12,7 +12,7 @@ Each binary is linked with `user/user.ld`. The entry is `_start` in `user/src/li
 
 `user/src/lib/sys.zig` is the other half of `kernel/src/sys/syscall.zig`. The numbers, the flag bits, and the struct layouts are duplicated by hand and have to stay identical. A wrapper puts the number in `rax`, the arguments in `rdi`, `rsi`, `rdx`, `r10`, `r8`, and `r9`, and executes `syscall`. The fourth argument is `r10` because the instruction overwrites `rcx` with the return address. A negative return is a negated errno. `rcx` and `r11` are clobbered by the instruction, as [The CPU](cpu.md) describes.
 
-`malloc` is a free list on top of `brk`. It grows the break and never calls `mmap`. That is a choice of the library, not a limit of the kernel. The kernel calls are in [Memory](memory.md).
+`malloc` is a free list. When the list cannot satisfy a request, it asks `mmap` for a new range of whole pages and inserts that range. `free` returns the block to the list and does not unmap the range. The kernel calls are in [Memory](memory.md).
 
 ## `/init`
 
@@ -44,7 +44,7 @@ The commands are small wrappers around one or two syscalls.
 - `ls` reads a directory. `mkdir`, `rmdir`, `rm`, and `mv` create, remove, and rename names. They only succeed under `/tmp`.
 - `ps` prints one row per thread: tid, pid, parent, state, and the process name. A zombie tid is a dash. The formatting lives in the program. The kernel returns plain rows.
 - `cores` prints the vendor, family, model, TSC frequency, and usable memory, then one row per started processor. A ready thread has no row here. It has a row in `ps`.
-- `bench` times an empty loop, `getpid`, `yield`, a one-byte pipe round trip, a full pipe, `spawn` from the initramfs and from `/tmp`, a file read, `map_file`, `brk`, and anonymous `mmap`. When `cores` reports two or more processors it adds pairs of processes that burn cycles, do arithmetic, or walk memory, to show the second core overlapping the first. No other program starts a thread.
+- `bench` times an empty loop, `getpid`, `yield`, a one-byte pipe round trip, a full pipe, `spawn` from the initramfs and from `/tmp`, a file read, `map_file`, and anonymous `mmap`. When `cores` reports two or more processors it adds pairs of processes that burn cycles, do arithmetic, or walk memory, to show the second core overlapping the first. No other program starts a thread.
 
 `thread`, `wait_word`, and `poll` have wrappers in `sys.zig` and no caller under `user/src/cmd`. Programs that run at the same time are separate processes. The shell's pipeline is the usual case.
 
