@@ -6,7 +6,9 @@ Memory is three layers. A bitmap hands out physical frames. Page tables map thos
 
 ## Physical frames
 
-`kernel/src/mm/pmm.zig` builds a bitmap over every usable page in the memory map from [Boot](boot.md). Bits start set, meaning taken. Usable pages are cleared. The bitmap itself sits in one of those usable ranges and is marked taken, so it cannot hand itself out.
+A physical frame is one 4 KiB page from the bitmap in `kernel/src/mm/pmm.zig`. Every later mention of a frame in this chapter means one of those pages. `Frame` in `kernel/src/mm/frame.zig` is a kernel-heap object that remembers the address of one of them. The block cache is its only user, and that object is described with the heap below.
+
+The bitmap covers every usable page in the memory map from [Boot](boot.md). Bits start set, meaning taken. Usable pages are cleared. The bitmap itself sits in one of those usable ranges and is marked taken, so it cannot hand itself out.
 
 `alloc` returns a physical address and zeros the frame. Callers turn that into a pointer by adding the higher-half offset. `free` panics on a double free or an address outside the bitmap.
 
@@ -26,9 +28,9 @@ The global bit is clear on every entry. Set, it would keep a translation across 
 
 ## The heap
 
-`kernel/src/mm/heap_core.zig` is a power-of-two allocator. Sizes from 16 bytes up to a page come out of page-sized slabs. Anything larger is a contiguous run of frames, up to 1 GiB. The kernel heap's page source is the physical allocator, and the memory it returns is already mapped through the direct map. Kernel objects (processes, file nodes, the block cache's frame headers) come from here.
+`kernel/src/mm/heap_core.zig` is a power-of-two allocator. Sizes from 16 bytes up to a page come out of page-sized slabs. Anything larger is a contiguous run of frames, up to 1 GiB. The kernel heap's page source is the physical allocator, and the memory it returns is already mapped through the direct map. Kernel objects come from here: processes, file nodes, and the `Frame` headers.
 
-`kernel/src/mm/frame.zig` is a single physical page owned by one block-cache slot. It is not a shared cache of user pages.
+A `Frame` holds the physical address of one frame and points at that page through the direct map. The block cache creates one `Frame` per slot when the disk comes up, and the slot keeps that same page for every block it caches. `map_file` and anonymous `mmap` take pages from `pmm.alloc` and never allocate a `Frame`.
 
 ## A user address space
 
@@ -42,9 +44,9 @@ User addresses run from the first page to `(1 << 47) - 4096`. A user pointer is 
 
 `user_mmap_top` sits 256 MiB below the top. That gap is the stack region. ELF load segments have to land below it. `spawn` records the page-aligned end of the image, and nothing moves that address. A mapping that would cross it is rejected. Stacks stop at `user_mmap_top`, which is always at or above that end. There is no program break.
 
-Anonymous `mmap` (`0x20`) ignores a non-zero address hint. The protection may be read, write, or both. Executable is rejected, and every anonymous page is non-executable. The call reserves the range and records it. It does not allocate frames. Each record is a node from the kernel heap, so the process holds as many ranges as that heap can allocate. A range runs until it meets the end of the image. `munmap` (`0x21`) removes one whole range that `mmap` or `map_file` handed out, and frees the node. Frames are freed only for pages that were actually touched.
+Anonymous `mmap` (`0x20`) ignores a non-zero address hint. The protection may be read, write, or both. Executable is rejected, and every anonymous page is non-executable. The call reserves the range and records it. It does not allocate physical frames. Each record is a node from the kernel heap, so the process holds as many ranges as that heap can allocate. A range runs until it meets the end of the image. `munmap` (`0x21`) removes one whole range that `mmap` or `map_file` handed out, and frees the node. Physical frames are freed only for pages that were actually touched.
 
-`map_file` (`0x22`) allocates during the call. It reserves a range the same way `mmap` does, then copies a `/tmp` file into private pages. A later write to the file does not change the mapping, and closing the file leaves the mapping in place. An initramfs file cannot be mapped. Its bytes are the archive itself. See [Files](files.md). The copy stops when the machine is out of frames. That is the same limit an anonymous mapping hits when the reserved pages are first touched.
+`map_file` (`0x22`) allocates during the call. It reserves a range the same way `mmap` does, then copies a `/tmp` file into private pages. A later write to the file does not change the mapping, and closing the file leaves the mapping in place. An initramfs file cannot be mapped. Its bytes are the archive itself. See [Files](files.md). The copy stops when `pmm.alloc` cannot hand out another physical frame. An anonymous mapping hits that same limit when a reserved page is first touched.
 
 Each thread gets a user stack of 16 pages, mapped at creation, with an unmapped guard page below it. Further threads take the next slot down. A fault on the guard ends the process.
 
@@ -55,7 +57,7 @@ The page-fault gate runs on an interrupt stack with interrupts off. For a user a
 - The address is outside every reservation, or it is a stack guard: the process exits with status 142 (128 plus vector 14).
 - The access is a write and the reservation is read-only: the same exit.
 - The page is already present: the fault returns and the instruction runs again.
-- Otherwise one zeroed frame is allocated (the physical allocator clears it), mapped non-executable, and the instruction runs again.
+- Otherwise `pmm.alloc` returns one zeroed physical frame. It is mapped non-executable, and the instruction runs again.
 
 A kernel fault is fatal. A fault on a kernel-stack guard page is reported as an overflow.
 
