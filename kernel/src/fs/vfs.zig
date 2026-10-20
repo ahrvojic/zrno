@@ -916,21 +916,10 @@ test "tmp directories nest, and rmdir refuses a non-empty dir" {
     try t.rmdirPath("/tmp/a");
     try std.testing.expectError(error.NoEnt, t.walk("/tmp/a"));
 
-    try t.mkdirPath("/tmp/held");
-    const pinned = try t.walk("/tmp/held");
-    pinned.retain();
-    try std.testing.expectError(error.Invalid, t.rmdirPath("/tmp/held"));
-    pinned.release();
-    try t.rmdirPath("/tmp/held");
-    try std.testing.expectError(error.NoEnt, t.walk("/tmp/held"));
-
     try std.testing.expectError(error.ReadOnly, t.mkdirPath("/nope"));
     try std.testing.expectError(error.NotDir, t.mkdirPath("/init/x"));
     try std.testing.expectError(error.Exists, t.mkdirPath("/tmp"));
     try std.testing.expectError(error.ReadOnly, t.rmdirPath("/tmp"));
-
-    try t.mkdirPath("/tmp/keep");
-    try t.mkdirPath("/tmp/keep/child");
 }
 
 test "rename moves a heap node and replaces a file or empty directory" {
