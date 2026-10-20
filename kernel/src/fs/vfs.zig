@@ -294,16 +294,12 @@ pub const Tree = struct {
     /// Write directory records from the sibling list, then free inodes that
     /// no longer have a name. File bytes are already on the disk.
     pub fn sync(self: *Tree) void {
-        const disk = self.disk orelse return;
+        if (self.disk == null) return;
         if (self.names_dirty) {
-            checkpoint(self) catch {
-                disk.sync();
-                return;
-            };
+            checkpoint(self) catch return;
             self.names_dirty = false;
         }
         takeGraves(self, true);
-        disk.sync();
     }
 
     pub fn walk(self: *Tree, path: []const u8) error{ NoEnt, NotDir }!*Node {

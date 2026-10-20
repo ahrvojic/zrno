@@ -34,9 +34,9 @@ With no virtio device, `/tmp` is a 256-block RAM image, allocated after the heap
 
 ## The block cache
 
-`kernel/src/fs/blk.zig` caches 32 blocks. On the kernel a cached block is a physical page from [Memory](memory.md). Callers `get` a block, edit the bytes, `commit` or `put` it, and the cache writes dirty blocks back.
+`kernel/src/fs/blk.zig` caches 32 blocks. On the kernel a cached block is a physical page from [Memory](memory.md). Callers `get` a block, edit the bytes, and `commit`. `commit` writes that block to the device before it returns. `put` drops the hold.
 
-A miss reuses a slot. The scan starts at the slot after the last choice and walks forward, skipping a slot that someone still holds. An empty slot is preferred, so a block that was just dropped is reused before a dirty one is written back. A commit that the device refuses drops the slot. The next `get` reads the device again.
+A miss reuses a slot. The scan starts at the slot after the last choice and walks forward, skipping a slot that someone still holds. An empty slot is preferred. Otherwise the first live slot in that walk is reused. A commit that the device refuses drops the slot. The next `get` reads the device again.
 
 ## virtio-blk
 

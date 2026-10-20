@@ -27,7 +27,6 @@ pub const WriteFn = *const fn (*anyopaque, u32, []const u8) error{Io}!void;
 pub const Slot = struct {
     block: u32 = 0,
     live: bool = false,
-    dirty: bool = false,
     holds: u32 = 0,
     frame: ?*frame.Frame = null,
     data: []u8 = &.{},
@@ -134,10 +133,8 @@ pub const Disk = struct {
         }
         // Every slot is held, so the block cannot be read.
         const slot = self.victim() orelse return error.Io;
-        if (slot.live and slot.dirty) try self.commit(slot);
         self.read_fn(self.dev, block, slot.data) catch |err| {
             slot.live = false;
-            slot.dirty = false;
             return err;
         };
         slot.* = .{
@@ -161,19 +158,8 @@ pub const Disk = struct {
     pub fn commit(self: *Disk, slot: *Slot) error{Io}!void {
         self.write_fn(self.dev, slot.block, slot.data) catch |err| {
             slot.live = false;
-            slot.dirty = false;
             return err;
         };
-        slot.dirty = false;
-    }
-
-    /// Write back slots that are still dirty. Mappings do not store into
-    /// cache pages, so a clean slot is the common case.
-    pub fn sync(self: *Disk) void {
-        for (&self.slots) |*slot| {
-            if (!slot.live or !slot.dirty) continue;
-            self.commit(slot) catch {};
-        }
     }
 
     /// Drop a cached block that is about to be freed. The page stays with
@@ -183,7 +169,6 @@ pub const Disk = struct {
             if (!slot.live or slot.block != block) continue;
             if (slot.holds != 0) @panic("freeing a held block");
             slot.live = false;
-            slot.dirty = false;
             return;
         }
     }
