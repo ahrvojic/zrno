@@ -123,7 +123,7 @@ pub const Disk = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn get(self: *Disk, block: u32) error{ Io, OutOfMemory }!*Slot {
+    pub fn get(self: *Disk, block: u32) error{Io}!*Slot {
         if (block >= self.live) return error.Io;
         for (&self.slots) |*slot| {
             if (slot.live and slot.block == block) {

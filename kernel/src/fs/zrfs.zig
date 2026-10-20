@@ -11,9 +11,8 @@
 //!
 //! An inode is one block. `kind` is 1 for a file and 2 for a directory,
 //! then the number of direct blocks, then the byte size, then up to 1020
-//! direct block numbers. A count of zero and a non-zero first pointer is
-//! an older list ended by a zero number. New writes store the count.
-//! Block 0 is the superblock, so it is never a data block.
+//! direct block numbers. The count is the block span. Block 0 is the
+//! superblock, so it is never a data block.
 //!
 //! A directory's bytes are 128-byte records: inode, kind, name length, and
 //! 100 name bytes. Inode 0 is a free slot. Records do not cross a block.
@@ -214,7 +213,6 @@ pub fn write(disk: *blk.Disk, ino: u32, off: usize, src: []const u8) error{ Io, 
 
     const need = blocksFor(end);
     const have = try blockCount(slot.data);
-    const stored = readCount(slot.data);
     var i: usize = have;
     while (i < need) : (i += 1) {
         const b = allocBlock(disk) catch |err| {
@@ -225,10 +223,10 @@ pub fn write(disk: *blk.Disk, ino: u32, off: usize, src: []const u8) error{ Io, 
     }
     // `need` is only this write. The count is the file's block span.
     const live = @max(have, blocksFor(@max(end, sz)));
-    if (live != @as(usize, stored)) {
+    if (live != have) {
         writeCount(slot.data, @intCast(live));
         disk.commit(slot) catch |err| {
-            writeCount(slot.data, stored);
+            writeCount(slot.data, @intCast(have));
             freeNew(disk, slot, have, i);
             return err;
         };
@@ -330,14 +328,11 @@ fn writeCount(data: []u8, n: u32) void {
     writeU32(data, 4, n);
 }
 
-/// Direct blocks. A zero count with a live pointer is the old terminator.
+/// Direct-block count. A count past the pointer table is corrupt.
 fn blockCount(data: []const u8) error{Io}!usize {
     const n = readCount(data);
     if (n > max_ptrs) return error.Io;
-    if (n != 0) return n;
-    var i: usize = 0;
-    while (i < max_ptrs and ptrAt(data, i) != 0) i += 1;
-    return i;
+    return n;
 }
 
 fn freeNew(disk: *blk.Disk, slot: *blk.Slot, have: usize, end: usize) void {
@@ -575,32 +570,6 @@ test "a directory written to the disk reads back from a copy of the blocks" {
     try std.testing.expectEqualStrings("hello", buf[0..n]);
 }
 
-test "an old pointer list with a zero count still reads" {
-    const a = std.testing.allocator;
-    const disk = try blk.Disk.memory(a, 8);
-    defer disk.deinit();
-    try format(disk);
-    const file = try allocInode(disk, .file);
-    try std.testing.expectEqual(@as(usize, 5), try write(disk, file, 0, "hello"));
-    {
-        const slot = try disk.get(file);
-        defer disk.put(slot);
-        writeU32(slot.data, 4, 0);
-        try disk.commit(slot);
-    }
-    var buf: [8]u8 = undefined;
-    const n = try read(disk, file, 0, &buf);
-    try std.testing.expectEqualStrings("hello", buf[0..n]);
-    try std.testing.expectEqual(@as(usize, 1), try write(disk, file, 5, "!"));
-    {
-        const slot = try disk.get(file);
-        defer disk.put(slot);
-        try std.testing.expectEqual(@as(u32, 1), readCount(slot.data));
-    }
-    const n2 = try read(disk, file, 0, &buf);
-    try std.testing.expectEqualStrings("hello!", buf[0..n2]);
-}
-
 test "a short write keeps the tail blocks" {
     const a = std.testing.allocator;
     const disk = try blk.Disk.memory(a, 8);
@@ -623,24 +592,6 @@ test "a short write keeps the tail blocks" {
     try std.testing.expectEqual(@as(u8, 'z'), buf[0]);
     try std.testing.expectEqual(@as(usize, 1), try read(disk, file, blk.block_size, &buf));
     try std.testing.expectEqual(@as(u8, 'y'), buf[0]);
-    {
-        const slot = try disk.get(file);
-        defer disk.put(slot);
-        writeCount(slot.data, 0);
-        try disk.commit(slot);
-    }
-    try std.testing.expectEqual(@as(usize, 1), try write(disk, file, 1, "q"));
-    {
-        const slot = try disk.get(file);
-        defer disk.put(slot);
-        try std.testing.expectEqual(@as(u32, 2), readCount(slot.data));
-    }
-    try std.testing.expectEqual(@as(usize, 1), try read(disk, file, blk.block_size, &buf));
-    try std.testing.expectEqual(@as(u8, 'y'), buf[0]);
-    try truncate(disk, file);
-    const again = try allocInode(disk, .file);
-    try std.testing.expectEqual(page.len, try write(disk, again, 0, &page));
-    try std.testing.expectEqual(page.len, try write(disk, again, page.len, &page));
 }
 
 test "truncate publishes a zero size and frees the blocks" {
