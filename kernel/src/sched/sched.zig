@@ -19,7 +19,6 @@ pub const tick_hz = state.tick_hz;
 pub const startUserThread = thread.startUserThread;
 pub const createUserThread = thread.createUserThread;
 pub const mapAnon = aspace.mapAnon;
-pub const mapFile = aspace.mapFile;
 pub const unmapAnon = aspace.unmapAnon;
 pub const fillUserPage = aspace.fillUserPage;
 pub const isKernelStackGuard = kstack.isGuard;

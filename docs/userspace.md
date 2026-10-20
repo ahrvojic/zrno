@@ -44,7 +44,7 @@ The commands are small wrappers around one or two syscalls.
 - `ls` reads a directory. `mkdir`, `rmdir`, `rm`, and `mv` create, remove, and rename names. They only succeed under `/tmp`.
 - `ps` prints one row per thread: tid, pid, parent, state, and the process name. A zombie tid is a dash. The formatting lives in the program. The kernel returns plain rows.
 - `cores` prints the vendor, family, model, TSC frequency, and usable memory, then one row per started processor. A ready thread has no row here. It has a row in `ps`.
-- `bench` times an empty loop, `getpid`, `yield`, a one-byte pipe round trip, a full pipe, `spawn` from the initramfs and from `/tmp`, a file read, `map_file`, and anonymous `mmap`. When `cores` reports two or more processors it adds pairs of processes that burn cycles, do arithmetic, or walk memory, to show the second core overlapping the first. No other program starts a thread.
+- `bench` times an empty loop, `getpid`, `yield`, a one-byte pipe round trip, a full pipe, `spawn` from the initramfs and from `/tmp`, a file read, and anonymous `mmap`. When `cores` reports two or more processors it adds pairs of processes that burn cycles, do arithmetic, or walk memory, to show the second core overlapping the first. No other program starts a thread.
 
 `thread`, `wait_word`, and `poll` have wrappers in `sys.zig` and no caller under `user/src/cmd`. Programs that run at the same time are separate processes. The shell's pipeline is the usual case.
 

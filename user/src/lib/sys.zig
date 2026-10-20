@@ -19,7 +19,6 @@ pub const nr_wake_word: u64 = 0x15;
 // 0x20 memory
 pub const nr_mmap: u64 = 0x20;
 pub const nr_munmap: u64 = 0x21;
-pub const nr_map_file: u64 = 0x22;
 // 0x30 file
 pub const nr_open: u64 = 0x30;
 pub const nr_close: u64 = 0x31;
@@ -317,12 +316,6 @@ pub fn mmap(addr: usize, len: usize, prot: u64) i64 {
 
 pub fn munmap(addr: usize, len: usize) i64 {
     return syscall3(nr_munmap, addr, len, 0);
-}
-
-/// Map `len` bytes of an owned file. The pages are a private copy. Bytes
-/// past the end of the file are zero. `munmap` drops the copy.
-pub fn mapFile(fd: usize, len: usize, prot: u64) i64 {
-    return syscall3(nr_map_file, fd, len, prot);
 }
 
 pub fn reboot() noreturn {

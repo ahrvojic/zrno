@@ -6,8 +6,6 @@ const maplist = @import("maplist.zig");
 const pmm = @import("../mm/pmm.zig");
 const proc = @import("proc.zig");
 const state = @import("state.zig");
-const vfs = @import("../fs/vfs.zig");
-const virt = @import("../lib/virt.zig");
 const vmm = @import("../mm/vmm.zig");
 
 pub fn takeUserStack(parent: *proc.Process) error{OutOfMemory}!usize {
@@ -134,38 +132,6 @@ pub fn mapAnon(len: usize, writable: bool) error{ Invalid, OutOfMemory }!usize {
 
     const size = try pageBytes(len);
     return install(process, size, writable);
-}
-
-/// Copy an owned file into private pages. Bytes past the end stay zero.
-/// A later write to the file does not change this mapping.
-pub fn mapFile(node: *vfs.Node, len: usize, writable: bool) error{ Invalid, OutOfMemory, Io }!usize {
-    state.expectInit();
-    const process = cpu.currentProcess();
-    if (process.pid == state.kernel_pid) @panic("mmap kernel process");
-    if (node.bytes() != null or node.isDir()) return error.Invalid;
-
-    const size = try pageBytes(len);
-    const base = try install(process, size, writable);
-    errdefer if (process.maps.remove(&process.mmap_next, base, size)) |old| {
-        dropMap(&process.vmm, old);
-        heap.kernel_heap.allocator().destroy(old);
-    };
-
-    const flags = userFlags(writable);
-    var done: usize = 0;
-    while (done < size) : (done += pmm.page_size) {
-        const phys = pmm.alloc(1) orelse return error.OutOfMemory;
-        const bytes = virt.toHH([*]u8, phys)[0..pmm.page_size];
-        _ = node.readAt(done, bytes) catch |err| {
-            pmm.free(phys, 1);
-            return err;
-        };
-        process.vmm.map(base + done, phys, pmm.page_size, flags) catch {
-            pmm.free(phys, 1);
-            return error.OutOfMemory;
-        };
-    }
-    return base;
 }
 
 pub fn releaseMappings(process: *proc.Process) void {

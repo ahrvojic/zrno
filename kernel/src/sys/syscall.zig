@@ -35,8 +35,7 @@ pub const nr_wait_word: u64 = 0x14; // rdi=addr, rsi=expected; sleep while the u
 pub const nr_wake_word: u64 = 0x15; // rdi=addr; wake this process's waiters; returns how many
 // 0x20 memory
 pub const nr_mmap: u64 = 0x20; // rdi=addr (0), rsi=len, rdx=prot; anonymous, NX, zero page on first touch
-pub const nr_munmap: u64 = 0x21; // rdi=addr, rsi=len; one whole mapping from mmap or map_file
-pub const nr_map_file: u64 = 0x22; // rdi=fd, rsi=len, rdx=prot; private copy, NX
+pub const nr_munmap: u64 = 0x21; // rdi=addr, rsi=len; one whole mapping from mmap
 // 0x30 file
 pub const nr_open: u64 = 0x30; // rdi/rsi=path, rdx=flags (0 = read)
 pub const nr_close: u64 = 0x31;
@@ -195,7 +194,6 @@ fn dispatch(ctx: *cpu.Context) u64 {
         nr_wake_word => sys_wake_word(ctx),
         nr_mmap => sys_mmap(ctx),
         nr_munmap => sys_munmap(ctx),
-        nr_map_file => sys_map_file(ctx),
         nr_open => sys_open(ctx),
         nr_close => sys_close(ctx),
         nr_read => sys_read(ctx),
@@ -715,17 +713,6 @@ fn sys_munmap(ctx: *cpu.Context) u64 {
     return 0;
 }
 
-fn sys_map_file(ctx: *cpu.Context) u64 {
-    const f = fdFile(ctx.rdi) orelse return errval(EBADF);
-    const opened = switch (f.kind) {
-        .file => |open| open,
-        else => return errval(EINVAL),
-    };
-    const writable = protWritable(ctx.rdx) orelse return errval(EINVAL);
-    if (writable and !opened.can_write) return errval(EACCES);
-    return sched.mapFile(opened.node, @intCast(ctx.rsi), writable) catch |err| mmErr(err);
-}
-
 fn sys_getdents(ctx: *cpu.Context) u64 {
     const f = fdFile(ctx.rdi) orelse return errval(EBADF);
     const dir = switch (f.kind) {
@@ -949,11 +936,10 @@ fn protWritable(prot: u64) ?bool {
     return prot & prot_write != 0;
 }
 
-fn mmErr(err: error{ Invalid, OutOfMemory, Io }) u64 {
+fn mmErr(err: error{ Invalid, OutOfMemory }) u64 {
     return switch (err) {
         error.Invalid => errval(EINVAL),
         error.OutOfMemory => errval(ENOMEM),
-        error.Io => errval(EIO),
     };
 }
 

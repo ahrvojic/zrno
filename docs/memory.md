@@ -30,7 +30,7 @@ The global bit is clear on every entry. Set, it would keep a translation across 
 
 `kernel/src/mm/heap_core.zig` is a power-of-two allocator. Sizes from 16 bytes up to a page come out of page-sized slabs. Anything larger is a contiguous run of frames, up to 1 GiB. The kernel heap's page source is the physical allocator, and the memory it returns is already mapped through the direct map. Kernel objects come from here: processes, file nodes, and the `Frame` headers.
 
-A `Frame` holds the physical address of one frame and points at that page through the direct map. The block cache creates one `Frame` per slot when the disk comes up, and the slot keeps that same page for every block it caches. `map_file` and anonymous `mmap` take pages from `pmm.alloc` and never allocate a `Frame`.
+A `Frame` holds the physical address of one frame and points at that page through the direct map. The block cache creates one `Frame` per slot when the disk comes up, and the slot keeps that same page for every block it caches. Anonymous `mmap` takes pages from `pmm.alloc` and never allocates a `Frame`.
 
 ## A user address space
 
@@ -39,14 +39,12 @@ User addresses run from the first page to `(1 << 47) - 4096`. A user pointer is 
 | Region | Where it sits | When pages appear |
 |---|---|---|
 | Program image | Where the ELF asked, below `user_mmap_top` | During `spawn` |
-| `mmap` and `map_file` | Down from `user_mmap_top` | `mmap` on the first access; `map_file` during the call |
+| `mmap` | Down from `user_mmap_top` | On the first access |
 | Stacks | Down from the top of user space | During the call that creates the thread |
 
 `user_mmap_top` sits 256 MiB below the top. That gap is the stack region. ELF load segments have to land below it. `spawn` records the page-aligned end of the image, and nothing moves that address. A mapping that would cross it is rejected. Stacks stop at `user_mmap_top`, which is always at or above that end. There is no program break.
 
-Anonymous `mmap` (`0x20`) ignores a non-zero address hint. The protection may be read, write, or both. Executable is rejected, and every anonymous page is non-executable. The call reserves the range and records it. It does not allocate physical frames. Each record is a node from the kernel heap, so the process holds as many ranges as that heap can allocate. A range runs until it meets the end of the image. `munmap` (`0x21`) removes one whole range that `mmap` or `map_file` handed out, and frees the node. Physical frames are freed only for pages that were actually touched.
-
-`map_file` (`0x22`) allocates during the call. It reserves a range the same way `mmap` does, then copies a `/tmp` file into private pages. A later write to the file does not change the mapping, and closing the file leaves the mapping in place. An initramfs file cannot be mapped. Its bytes are the archive itself. See [Files](files.md). The copy stops when `pmm.alloc` cannot hand out another physical frame. An anonymous mapping hits that same limit when a reserved page is first touched.
+Anonymous `mmap` (`0x20`) ignores a non-zero address hint. The protection may be read, write, or both. Executable is rejected, and every anonymous page is non-executable. The call reserves the range and records it. It does not allocate physical frames. Each record is a node from the kernel heap, so the process holds as many ranges as that heap can allocate. A range runs until it meets the end of the image. `munmap` (`0x21`) removes one whole range that `mmap` handed out, and frees the node. Physical frames are freed only for pages that were actually touched.
 
 Each thread gets a user stack of 16 pages, mapped at creation, with an unmapped guard page below it. Further threads take the next slot down. A fault on the guard ends the process.
 
@@ -57,7 +55,7 @@ The page-fault gate runs on an interrupt stack with interrupts off. For a user a
 - The address is outside every reservation, or it is a stack guard: the process exits with status 142 (128 plus vector 14).
 - The access is a write and the reservation is read-only: the same exit.
 - The page is already present: the fault returns and the instruction runs again.
-- Otherwise `pmm.alloc` returns one zeroed physical frame. It is mapped non-executable, and the instruction runs again.
+- Otherwise `pmm.alloc` returns one zeroed physical frame. It is mapped non-executable, and the instruction runs again. An empty allocator ends the process the same way.
 
 A kernel fault is fatal. A fault on a kernel-stack guard page is reported as an overflow.
 

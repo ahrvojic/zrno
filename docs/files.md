@@ -38,8 +38,6 @@ With no virtio device, `/tmp` is a 256-block RAM image, allocated after the heap
 
 A miss reuses a slot. The scan starts at the slot after the last choice and walks forward, skipping a slot that someone still holds. An empty slot is preferred, so a block that was just dropped is reused before a dirty one is written back. A commit that the device refuses drops the slot. The next `get` reads the device again.
 
-`map_file` does not pin these slots. It copies the bytes into private pages at the call, so a program can map as many pages as it wants without evicting the cache. See [Memory](memory.md).
-
 ## virtio-blk
 
 `kernel/src/dev/virtio_blk.zig` drives the legacy device only. PCI config space is mechanism 1, ports `0xCF8` and `0xCFC`. The scan looks for vendor `0x1AF4`, device `0x1001`. The BAR is an I/O port range, there is one queue, and the descriptor ring holds guest-physical addresses.

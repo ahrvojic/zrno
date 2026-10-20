@@ -583,13 +583,6 @@ fn touch(addr: usize, len: usize) void {
     }
 }
 
-fn mapOnce() bool {
-    const addr = sys.mapFile(file_fd, bytes, sys.prot_read);
-    if (addr < 0) return false;
-    touch(@intCast(addr), bytes);
-    return sys.munmap(@intCast(addr), bytes) == 0;
-}
-
 fn files(cal: Cal) u64 {
     const created = sys.openAt("/tmp/bench.dat", sys.open_write | sys.open_create);
     if (created < 0) return fail("read");
@@ -605,8 +598,7 @@ fn files(cal: Cal) u64 {
         return fail("read");
     }
     file_fd = @intCast(fd);
-    var rc = measureN("read", cal, readOnce);
-    if (rc == 0) rc = measureN("map", cal, mapOnce);
+    const rc = measureN("read", cal, readOnce);
     _ = sys.close(file_fd);
     _ = sys.unlink("/tmp/bench.dat");
     return rc;
