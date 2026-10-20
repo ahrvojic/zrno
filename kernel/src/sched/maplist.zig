@@ -1,7 +1,7 @@
 const std = @import("std");
 
-/// One anonymous or file mapping. The node is allocated from the kernel heap
-/// by the caller. The list has no fixed capacity.
+/// One anonymous mapping. The node is allocated from the kernel heap by the
+/// caller. The list has no fixed capacity.
 pub const Map = struct {
     base: usize,
     size: usize,

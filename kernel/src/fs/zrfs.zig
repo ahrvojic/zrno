@@ -31,7 +31,7 @@ const name_cap: usize = 100;
 
 pub const Kind = enum(u32) { file = 1, dir = 2 };
 
-pub const Error = error{ Io, OutOfMemory, Exists, BadName, TooBig, NoEnt };
+pub const Error = error{ Io, OutOfMemory, BadName, TooBig };
 
 const IoMem = error{ Io, OutOfMemory };
 
@@ -102,17 +102,6 @@ pub fn allocInode(disk: *blk.Disk, kind: Kind) Error!u32 {
     return ino;
 }
 
-pub fn create(disk: *blk.Disk, parent: u32, name: []const u8, kind: Kind) Error!u32 {
-    try checkName(name);
-    if (try lookup(disk, parent, name) != null) return error.Exists;
-    const ino = try allocInode(disk, kind);
-    link(disk, parent, name, ino, kind) catch |err| {
-        freeBlock(disk, ino) catch {};
-        return err;
-    };
-    return ino;
-}
-
 /// Rebuild `dir`. `add` each live record, then `finish`. The old tail is
 /// zeroed in the same block write as the records that replace it.
 pub const DirWriter = struct {
@@ -156,26 +145,6 @@ pub const DirWriter = struct {
         self.off += blk.block_size;
     }
 };
-
-pub fn lookup(disk: *blk.Disk, dir: u32, name: []const u8) IoMem!?u32 {
-    const hit = try findName(disk, dir, name) orelse return null;
-    return hit.ino;
-}
-
-pub fn link(disk: *blk.Disk, parent: u32, name: []const u8, ino: u32, kind: Kind) Error!void {
-    try checkName(name);
-    if (try lookup(disk, parent, name) != null) return error.Exists;
-    var i: usize = 0;
-    while (true) : (i += 1) {
-        var ignore: [name_cap]u8 = undefined;
-        const ent = try readEntry(disk, parent, i, &ignore) orelse break;
-        if (ent.ino == 0) {
-            try writeRec(disk, parent, i, ino, kind, name);
-            return;
-        }
-    }
-    try writeRec(disk, parent, i, ino, kind, name);
-}
 
 /// Free the inode and every block it points at.
 pub fn destroy(disk: *blk.Disk, ino: u32) IoMem!void {
@@ -301,32 +270,12 @@ pub fn truncate(disk: *blk.Disk, ino: u32) IoMem!void {
     try clearBlocks(disk, slot);
 }
 
-const Hit = struct { index: usize, ino: u32 };
-
-fn findName(disk: *blk.Disk, dir: u32, name: []const u8) IoMem!?Hit {
-    var i: usize = 0;
-    while (true) : (i += 1) {
-        var buf: [name_cap]u8 = undefined;
-        const ent = try readEntry(disk, dir, i, &buf) orelse return null;
-        if (ent.ino == 0) continue;
-        if (ent.name_len == name.len and std.mem.eql(u8, buf[0..ent.name_len], name)) {
-            return .{ .index = i, .ino = ent.ino };
-        }
-    }
-}
-
 fn encodeRec(dest: []u8, ino: u32, kind: Kind, name: []const u8) void {
     @memset(dest[0..rec_size], 0);
     writeU32(dest, 0, ino);
     writeU32(dest, 4, @backingInt(kind));
     writeU32(dest, 8, @intCast(name.len));
     @memcpy(dest[12..][0..name.len], name);
-}
-
-fn writeRec(disk: *blk.Disk, dir: u32, index: usize, ino: u32, kind: Kind, name: []const u8) Error!void {
-    var rec: [rec_size]u8 = @splat(0);
-    encodeRec(&rec, ino, kind, name);
-    _ = try write(disk, dir, index * rec_size, &rec);
 }
 
 fn allocBlock(disk: *blk.Disk) error{ Io, OutOfMemory }!u32 {
@@ -497,16 +446,32 @@ const WriteCount = struct {
     }
 };
 
+const Named = struct {
+    ino: u32,
+    kind: Kind,
+    name: []const u8,
+};
+
+fn publish(disk: *blk.Disk, dir: u32, recs: []const Named) Error!void {
+    var writer: DirWriter = undefined;
+    try writer.init(disk, dir);
+    for (recs) |rec| try writer.add(rec.ino, rec.kind, rec.name);
+    try writer.finish();
+}
+
 test "a directory rewrite commits a block's records and zero tail together" {
     const a = std.testing.allocator;
     const disk = try blk.Disk.memory(a, 32);
     defer disk.deinit();
     try format(disk);
 
-    const dir = try create(disk, root_ino, "d", .dir);
-    const file_a = try create(disk, dir, "a", .file);
-    const file_b = try create(disk, dir, "b", .file);
-    try std.testing.expectEqual(file_a, (try lookup(disk, dir, "a")).?);
+    const dir = try allocInode(disk, .dir);
+    const file_a = try allocInode(disk, .file);
+    const file_b = try allocInode(disk, .file);
+    try publish(disk, dir, &.{
+        .{ .ino = file_a, .kind = .file, .name = "a" },
+        .{ .ino = file_b, .kind = .file, .name = "b" },
+    });
 
     var counted: WriteCount = undefined;
     counted.install(disk);
@@ -525,8 +490,6 @@ test "a directory rewrite commits a block's records and zero tail together" {
     const hole = (try readEntry(disk, dir, 1, &name)).?;
     try std.testing.expectEqual(@as(u32, 0), hole.ino);
     try std.testing.expect(try readEntry(disk, dir, 2, &name) == null);
-    try std.testing.expect(try lookup(disk, dir, "a") == null);
-    try std.testing.expectEqual(file_b, (try lookup(disk, dir, "b")).?);
     try std.testing.expectEqual(@as(usize, rec_size * 2), try byteSize(disk, dir));
 
     counted.writes = 0;
@@ -535,7 +498,9 @@ test "a directory rewrite commits a block's records and zero tail together" {
     try std.testing.expectEqual(1, counted.writes);
     const cleared = (try readEntry(disk, dir, 0, &name)).?;
     try std.testing.expectEqual(@as(u32, 0), cleared.ino);
-    try std.testing.expect(try lookup(disk, dir, "b") == null);
+    const tail = (try readEntry(disk, dir, 1, &name)).?;
+    try std.testing.expectEqual(@as(u32, 0), tail.ino);
+    try std.testing.expect(try readEntry(disk, dir, 2, &name) == null);
 }
 
 test "a two-block directory rewrite clears the tail block" {
@@ -544,14 +509,18 @@ test "a two-block directory rewrite clears the tail block" {
     defer disk.deinit();
     try format(disk);
 
-    const dir = try create(disk, root_ino, "d", .dir);
+    const dir = try allocInode(disk, .dir);
     const count = blk.block_size / rec_size + 1;
-    var last: u32 = 0;
-    var name_buf: [8]u8 = undefined;
+    var inos: [count]u32 = undefined;
+    var names: [count][8]u8 = undefined;
+    var recs: [count]Named = undefined;
     for (0..count) |i| {
-        const name = std.fmt.bufPrint(&name_buf, "f{d}", .{i}) catch unreachable;
-        last = try create(disk, dir, name, .file);
+        inos[i] = try allocInode(disk, .file);
+        const name = std.fmt.bufPrint(&names[i], "f{d}", .{i}) catch unreachable;
+        recs[i] = .{ .ino = inos[i], .kind = .file, .name = name };
     }
+    try publish(disk, dir, &recs);
+    const last = inos[count - 1];
 
     var counted: WriteCount = undefined;
     counted.install(disk);
@@ -580,8 +549,10 @@ test "a directory written to the disk reads back from a copy of the blocks" {
     defer disk.deinit();
     try format(disk);
 
-    const dir = try create(disk, root_ino, "d", .dir);
-    const file = try create(disk, dir, "a", .file);
+    const dir = try allocInode(disk, .dir);
+    const file = try allocInode(disk, .file);
+    try publish(disk, root_ino, &.{.{ .ino = dir, .kind = .dir, .name = "d" }});
+    try publish(disk, dir, &.{.{ .ino = file, .kind = .file, .name = "a" }});
     try std.testing.expectEqual(@as(usize, 5), try write(disk, file, 0, "hello"));
 
     const image = try a.dupe(u8, disk.image);
@@ -609,7 +580,7 @@ test "an old pointer list with a zero count still reads" {
     const disk = try blk.Disk.memory(a, 8);
     defer disk.deinit();
     try format(disk);
-    const file = try create(disk, root_ino, "a", .file);
+    const file = try allocInode(disk, .file);
     try std.testing.expectEqual(@as(usize, 5), try write(disk, file, 0, "hello"));
     {
         const slot = try disk.get(file);
@@ -635,7 +606,7 @@ test "a short write keeps the tail blocks" {
     const disk = try blk.Disk.memory(a, 8);
     defer disk.deinit();
     try format(disk);
-    const file = try create(disk, root_ino, "a", .file);
+    const file = try allocInode(disk, .file);
     var page: [blk.block_size]u8 = @splat('x');
     try std.testing.expectEqual(page.len, try write(disk, file, 0, &page));
     @memset(&page, 'y');
@@ -667,7 +638,7 @@ test "a short write keeps the tail blocks" {
     try std.testing.expectEqual(@as(usize, 1), try read(disk, file, blk.block_size, &buf));
     try std.testing.expectEqual(@as(u8, 'y'), buf[0]);
     try truncate(disk, file);
-    const again = try create(disk, root_ino, "b", .file);
+    const again = try allocInode(disk, .file);
     try std.testing.expectEqual(page.len, try write(disk, again, 0, &page));
     try std.testing.expectEqual(page.len, try write(disk, again, page.len, &page));
 }
@@ -677,7 +648,7 @@ test "truncate publishes a zero size and frees the blocks" {
     const disk = try blk.Disk.memory(a, 8);
     defer disk.deinit();
     try format(disk);
-    const file = try create(disk, root_ino, "a", .file);
+    const file = try allocInode(disk, .file);
     var page: [blk.block_size]u8 = @splat('x');
     try std.testing.expectEqual(page.len, try write(disk, file, 0, &page));
     try std.testing.expectEqual(page.len, try write(disk, file, page.len, &page));
@@ -691,7 +662,7 @@ test "truncate publishes a zero size and frees the blocks" {
         try std.testing.expectEqual(@as(u32, 0), readCount(slot.data));
         try std.testing.expectEqual(@as(u32, 0), ptrAt(slot.data, 0));
     }
-    const again = try create(disk, root_ino, "b", .file);
+    const again = try allocInode(disk, .file);
     try std.testing.expectEqual(page.len, try write(disk, again, 0, &page));
     try std.testing.expectEqual(page.len, try write(disk, again, page.len, &page));
 }
